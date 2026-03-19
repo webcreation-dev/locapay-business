@@ -143,12 +143,24 @@ async function loadMessages(chatId) {
         }
 
         let finalHTML = '';
+        let lastGroupId = null;
         let lastSender = null;
         let lastTimestamp = 0;
 
         for (let i = 0; i < messages.length; i++) {
             const msg = messages[i];
             const dateStr = new Date(parseInt(msg.timestamp) * 1000).toLocaleTimeString('fr-FR', {hour: '2-digit', minute:'2-digit'});
+            
+            // Détection de changement de groupe de propriété (IA)
+            if (msg.property_group_id && msg.property_group_id !== lastGroupId && msg.property_group_id !== 'noise') {
+                finalHTML += `
+                    <div class="property-group-header">
+                        <div class="property-badge">🏠 Bien détecté par l'IA</div>
+                    </div>
+                `;
+            }
+            lastGroupId = msg.property_group_id;
+
             const isFirstInGroup = (msg.sender_id !== lastSender) || (parseInt(msg.timestamp) - lastTimestamp > 300);
             
             if (isFirstInGroup) {

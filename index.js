@@ -69,6 +69,8 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
                     media_path TEXT,
                     media_mime_type TEXT,
                     raw_data JSONB,
+                    is_analyzed BOOLEAN DEFAULT FALSE,
+                    property_group_id VARCHAR(255),
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             `);
@@ -78,6 +80,11 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
             await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_path TEXT;');
             await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_mime_type TEXT;');
             await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS raw_data JSONB;');
+            await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS is_analyzed BOOLEAN DEFAULT FALSE;');
+            await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS property_group_id VARCHAR(255);');
+            await db.query('CREATE INDEX IF NOT EXISTS idx_messages_chat_id ON messages(chat_id);');
+            await db.query('CREATE INDEX IF NOT EXISTS idx_messages_is_analyzed ON messages(is_analyzed);');
+            await db.query('CREATE INDEX IF NOT EXISTS idx_messages_property_group_id ON messages(property_group_id);');
 
             // -- ROUTES API EXPRESS (Déclarées ici car on a besoin de db prêt) --
             app.get('/api/chats', async (req, res) => {
@@ -161,6 +168,13 @@ client.on('ready', () => {
     console.log('✅ C\'est connecté ! Le client est prêt et écoute les messages !');
     botStatus = 'CONNECTED';
     currentQR = null;
+
+    // Démarrer la segmentation automatique toutes les 5 minutes
+    console.log('🤖 Activation de la segmentation IA automatique...');
+    const { runSegmentation } = require('./segmenter');
+    setInterval(() => {
+        runSegmentation().catch(err => console.error("❌ Erreur segmentation automatique:", err));
+    }, 5 * 60 * 1000); // 5 minutes
 });
 
 client.on('authenticated', () => {

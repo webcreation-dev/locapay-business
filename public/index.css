@@ -490,3 +490,40 @@ body {
     font-size: 14px;
     letter-spacing: 0.5px;
 }
+/* PROPERTY GROUPING (IA) */
+.property-group-header {
+    display: flex;
+    justify-content: center;
+    margin: 20px 0 10px 0;
+    position: relative;
+    z-index: 2;
+}
+
+.property-group-header::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: rgba(0, 168, 132, 0.2);
+    z-index: -1;
+}
+
+.property-badge {
+    background: #00a884;
+    color: white;
+    padding: 6px 16px;
+    border-radius: 100px;
+    font-size: 12px;
+    font-weight: 600;
+    box-shadow: 0 4px 12px rgba(0, 168, 132, 0.3);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border: 2px solid white;
+}
+
+.message.analyzed {
+    border-left: 3px solid #00a884;
+}

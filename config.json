@@ -1,0 +1,11 @@
+{
+  "analyzed_chats": [
+    {
+      "id": "123456789@g.us",
+      "name": "Groupe Immobilier Exemple",
+      "active": true
+    }
+  ],
+  "batch_size": 20,
+  "analysis_interval_minutes": 5
+}
