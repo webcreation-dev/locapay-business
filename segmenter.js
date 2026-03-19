@@ -48,26 +48,26 @@ async function segmentMessagesWithAI(messages) {
     const prompt = `
     Ta mission est d'analyser une liste de messages WhatsApp provenant d'un groupe immobilier et de les regrouper par "Bien Immobilier".
     
-    RÈGLES :
-    1. Un "Bien Immobilier" est défini par un texte descriptif et ses images/vidéos associées qui le suivent ou le précèdent immédiatement.
-    2. Identifie les messages qui ne décrivent PAS un bien (discussions, questions, messages système) et classe-les comme "bruit".
-    3. Si un bien semble incomplet (ex: seulement des images sans texte), marque-le comme "incomplet".
+    RÈGLES CRITIQUES :
+    1. Un "Bien Immobilier" est un groupe de messages (texte + photos/vidéos) décrivant une LOCATION.
+    2. FILTRE DE VENTE : Tout ce qui concerne une VENTE, un ACHAT, une PARCELLE à vendre, ou un TERRAIN doit être classé comme "ignored_sales".
+    3. IDENTIFICATION DU BRUIT : Les messages système, les discussions ("merci", "est-ce dispo ?"), ou les messages sans rapport sont du "noise".
+    4. GESTION DES ORPHELINS : Si un lot se termine par des messages qui semblent être le DEBUT d'une annonce (ex: un texte sans ses photos qui arrivent probablement après), classe ces IDs dans "incomplete_ids". Ils seront traités au prochain tour.
     
-    DONNÉES :
+    DONNÉES (Lot de ${messages.length} messages) :
     ${JSON.stringify(messageContext, null, 2)}
     
     RÉPONSE ATTENDUE (JSON UNIQUEMENT) :
     {
-      "properties": [
+      "groups": [
         {
-          "title_summary": "Bref titre du bien",
-          "description_msg_ids": [ids des messages texte],
-          "media_msg_ids": [ids des messages images/vidéos],
-          "estimated_price": "prix si trouvé",
-          "is_complete": true/false
+          "type": "rental" ou "ignored_sales",
+          "msg_ids": [liste des ids],
+          "summary": "bref descriptif"
         }
       ],
-      "noise_msg_ids": [ids des messages à ignorer]
+      "noise_ids": [ids des messages de discussion/bruit],
+      "incomplete_ids": [ids des messages à reporter au prochain tour car tronqués]
     }
     `;
 
@@ -116,43 +116,50 @@ async function runSegmentation() {
         if (result) {
             console.log("✨ Résultat de la segmentation reçu.");
             
-            // 1. Gérer les Propriétés détectées
-            if (result.properties && result.properties.length > 0) {
-                for (let i = 0; i < result.properties.length; i++) {
-                    const prop = result.properties[i];
-                    const groupId = `prop_${Date.now()}_${i}`;
+            // 1. Gérer les Groupes (Locations ou Ventes à ignorer)
+            if (result.groups && result.groups.length > 0) {
+                for (let i = 0; i < result.groups.length; i++) {
+                    const group = result.groups[i];
+                    const isSale = group.type === 'ignored_sales';
+                    const groupId = isSale ? `ignore_sale_${Date.now()}_${i}` : `prop_${Date.now()}_${i}`;
                     
-                    const allMsgIds = [
-                        ...(prop.description_msg_ids || []),
-                        ...(prop.media_msg_ids || [])
-                    ];
-                    
-                    if (allMsgIds.length > 0) {
+                    if (group.msg_ids && group.msg_ids.length > 0) {
                         await db.query(
                             'UPDATE messages SET is_analyzed = TRUE, property_group_id = $1 WHERE id = ANY($2)',
-                            [groupId, allMsgIds]
+                            [groupId, group.msg_ids]
                         );
-                        console.log(`🏠 Bien #${i+1} : ${allMsgIds.length} messages groupés (ID: ${groupId})`);
+                        console.log(`${isSale ? '🛑 Vente/Parcelle' : '🏠 Bien'} : ${group.msg_ids.length} messages groupés (ID: ${groupId})`);
                     }
                 }
             }
             
-            // 2. Gérer le bruit (messages à ignorer)
-            if (result.noise_msg_ids && result.noise_msg_ids.length > 0) {
+            // 2. Gérer le bruit
+            if (result.noise_ids && result.noise_ids.length > 0) {
                 await db.query(
                     'UPDATE messages SET is_analyzed = TRUE, property_group_id = \'noise\' WHERE id = ANY($1)',
-                    [result.noise_msg_ids]
+                    [result.noise_ids]
                 );
-                console.log(`🗑️ ${result.noise_msg_ids.length} messages marqués comme bruit.`);
+                console.log(`🗑️ ${result.noise_ids.length} messages marqués comme bruit.`);
             }
 
-            // 3. Marquer le reste du lot comme analysé pour ne pas boucler indéfiniment
-            // Si l'IA a oublié certains messages du lot, on les marque quand même pour avancer
-            const processedIdsInBatch = messages.map(m => m.id);
-            await db.query(
-                'UPDATE messages SET is_analyzed = TRUE WHERE id = ANY($1) AND is_analyzed = FALSE',
-                [processedIdsInBatch]
-            );
+            // 3. Gérer les Incomplets (On ne les marque PAS comme analysés pour les reprendre plus tard)
+            if (result.incomplete_ids && result.incomplete_ids.length > 0) {
+                console.log(`⏳ ${result.incomplete_ids.length} messages reportés au prochain tour (orphelins).`);
+                // On ne fait rien, is_analyzed reste à FALSE
+            }
+
+            // 4. Marquer le reste du lot (sauf les incomplets) comme analysé
+            const allIncompleteIds = result.incomplete_ids || [];
+            const idsToFinalize = messages
+                .filter(m => !allIncompleteIds.includes(m.id))
+                .map(m => m.id);
+
+            if (idsToFinalize.length > 0) {
+                await db.query(
+                    'UPDATE messages SET is_analyzed = TRUE WHERE id = ANY($1) AND is_analyzed = FALSE AND property_group_id IS NULL',
+                    [idsToFinalize]
+                );
+            }
         }
     }
 }

@@ -76,6 +76,6 @@
       "active": true
     }
   ],
-  "batch_size": 20,
+  "batch_size": 40,
   "analysis_interval_minutes": 5
 }

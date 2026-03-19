@@ -161,9 +161,11 @@ async function loadMessages(chatId) {
                 }
 
                 if (msg.property_group_id !== 'noise') {
+                    const isToIgnore = msg.property_group_id.startsWith('ignore_');
+                    const label = isToIgnore ? '🛑 À IGNORER (VENTE/PARCELLE)' : '🏠 BIEN IMMOBILIER DÉTECTÉ';
                     finalHTML += `
-                        <div class="property-group-wrapper">
-                            <div class="property-group-header-label">🏠 Bien immobilier détecté</div>
+                        <div class="property-group-wrapper ${isToIgnore ? 'to-ignore' : ''}">
+                            <div class="property-group-header-label">${label}</div>
                     `;
                     isInsidePropertyBlock = true;
                 }
