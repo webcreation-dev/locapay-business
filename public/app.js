@@ -125,6 +125,7 @@ async function selectChat(id, name) {
     // Clear last messages to force scroll to bottom on new selection
     msgsEl.innerHTML = ''; 
     lastMessagesHTML = '';
+    delete msgsEl.dataset.initialized;
     
     await loadMessages(id);
     startMessagesPolling(id);
@@ -232,10 +233,19 @@ async function loadMessages(chatId) {
 
         finalHTML += '</div>' + (isInsidePropertyBlock ? '</div>' : '');
         
+        // Gestion intelligente du scroll
+        const isAtBottom = msgsEl.scrollHeight - msgsEl.scrollTop <= msgsEl.clientHeight + 100;
+        
+        // Anti-clignotement conversation
         if (lastMessagesHTML !== finalHTML) {
             lastMessagesHTML = finalHTML;
             msgsEl.innerHTML = finalHTML;
-            msgsEl.scrollTop = msgsEl.scrollHeight;
+            
+            // On ne scrolle que si l'utilisateur était déjà en bas ou si c'est le premier chargement
+            if (isAtBottom || !msgsEl.dataset.initialized) {
+                msgsEl.scrollTop = msgsEl.scrollHeight;
+                msgsEl.dataset.initialized = 'true';
+            }
         }
 
     } catch (e) {
