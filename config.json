@@ -1,8 +1,18 @@
 {
   "analyzed_chats": [
     {
-      "id": "123456789@g.us",
-      "name": "Groupe Immobilier Exemple",
+      "id": "120363236146716087@g.us",
+      "name": "DELMAS IMMO SERVICE PLUS",
+      "active": true
+    },
+    {
+      "id": "120363423494786800@g.us",
+      "name": "NONTCHÉGBÉ SERVICES PLUS 🤝",
+      "active": true
+    },
+    {
+      "id": "22996482527-1600889848@g.us",
+      "name": "🏡 DAV AGENCE IMMO BÉNIN 🏡",
       "active": true
     }
   ],
