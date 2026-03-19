@@ -179,10 +179,14 @@ async function loadMessages(chatId) {
             const isFirstInGroup = (msg.sender_id !== lastSender) || (parseInt(msg.timestamp) - lastTimestamp > 300);
             
             if (isFirstInGroup) {
-                if (i !== 0 && !isInsidePropertyBlock) finalHTML += '</div>'; 
-                if (i !== 0) finalHTML += '</div>'; 
+                if (i !== 0) finalHTML += '</div>'; // Ferme le précédent message-group
                 finalHTML += '<div class="message-group">';
             }
+
+            // Détermination des classes spéciales pour la bulle
+            let bubbleClasses = [];
+            if (msg.property_group_id === 'noise') bubbleClasses.push('noise');
+            else if (msg.property_group_id) bubbleClasses.push('grouped');
 
             // Checkbox for RECEIVED messages (not from me)
             const showCheckbox = !msg.is_from_me;
@@ -194,7 +198,7 @@ async function loadMessages(chatId) {
 
             // Render message bubble
             let messageDivHTML = `
-                <div class="message ${msg.is_from_me ? 'out' : 'in'} ${isFirstInGroup ? 'first' : ''}" style="width:fit-content; max-width: 320px;">
+                <div class="message ${msg.is_from_me ? 'out' : 'in'} ${isFirstInGroup ? 'first' : ''} ${bubbleClasses.join(' ')}" style="width:fit-content; max-width: 320px;">
                     ${!msg.is_from_me && isFirstInGroup ? `<div class="sender-name" style="color:${getRandomColor(msg.sender_name || 'Inconnu')}">${msg.sender_name || 'Inconnu'}</div>` : ''}
                     <div class="message-content">
             `;
