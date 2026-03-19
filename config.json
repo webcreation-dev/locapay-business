@@ -76,6 +76,7 @@
       "active": true
     }
   ],
+  "ai_segmentation_enabled": false,
   "batch_size": 40,
   "analysis_interval_minutes": 5
 }

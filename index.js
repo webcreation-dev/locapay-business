@@ -105,6 +105,29 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
                 }
             });
 
+            // ROUTE DE GROUPEMENT MANUEL
+            app.post('/api/messages/manual-group', async (req, res) => {
+                const { messageIds, action } = req.body;
+                if (!messageIds || !Array.isArray(messageIds) || messageIds.length === 0) {
+                    return res.status(400).json({ error: 'Aucun message sélectionné.' });
+                }
+
+                try {
+                    if (action === 'noise') {
+                        await db.query('UPDATE messages SET is_analyzed = TRUE, property_group_id = \'noise\' WHERE id = ANY($1)', [messageIds]);
+                        res.json({ success: true, message: 'Messages marqués comme bruit.' });
+                    } else if (action === 'group') {
+                        const groupId = `manual_${Date.now()}`;
+                        await db.query('UPDATE messages SET is_analyzed = TRUE, property_group_id = $1 WHERE id = ANY($2)', [groupId, messageIds]);
+                        res.json({ success: true, message: 'Messages regroupés avec succès.', property_group_id: groupId });
+                    } else {
+                        res.status(400).json({ error: 'Action invalide.' });
+                    }
+                } catch (e) {
+                    res.status(500).json({ error: e.message });
+                }
+            });
+
             // -- ROUTES STATUS BOT --
             app.get('/api/status', (req, res) => {
                 res.json({ status: botStatus });

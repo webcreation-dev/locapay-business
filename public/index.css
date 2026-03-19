@@ -535,3 +535,62 @@ body {
 .property-group-wrapper.to-ignore .property-group-header-label {
     color: #ff4d4d;
 }
+
+/* BARRE D'ACTIONS MANUELLE */
+.manual-action-bar {
+    position: absolute;
+    bottom: 60px; /* Juste au-dessus de l'input area */
+    left: 20px;
+    right: 20px;
+    background: white;
+    padding: 12px 20px;
+    border-radius: 12px;
+    box-shadow: 0 -4px 15px rgba(0,0,0,0.1), 0 4px 15px rgba(0,0,0,0.1);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    z-index: 100;
+    border: 1px solid var(--border-lighter);
+}
+
+.selection-info {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-main);
+}
+
+.action-buttons {
+    display: flex;
+    gap: 10px;
+}
+
+.btn-action {
+    padding: 8px 16px;
+    border-radius: 8px;
+    border: none;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    transition: transform 0.1s;
+}
+
+.btn-action:active { transform: scale(0.95); }
+
+.btn-noise { background: #f0f2f5; color: #667781; }
+.btn-group { background: #00a884; color: white; }
+.btn-cancel { background: transparent; color: #ea0038; border: 1px solid #ea0038; }
+
+/* CHECKBOXES DANS LES MESSAGES */
+.message-checkbox-container {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    position: relative;
+}
+
+.msg-checkbox {
+    width: 20px;
+    height: 20px;
+    cursor: pointer;
+    accent-color: #00a884;
+}

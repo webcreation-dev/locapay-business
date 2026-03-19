@@ -97,6 +97,10 @@ async function segmentMessagesWithAI(messages) {
  * Fonction principale de segmentation
  */
 async function runSegmentation() {
+    if (config.ai_segmentation_enabled === false) {
+        console.log("⏸️ Segmentation IA désactivée dans config.json.");
+        return;
+    }
     console.log("🚀 Lancement de la segmentation IA...");
     
     for (const chat of config.analyzed_chats) {

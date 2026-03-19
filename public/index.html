@@ -61,6 +61,18 @@
                 </div>
             </div>
 
+            <!-- Barre d'actions manuelle (Barre flottante) -->
+            <div class="manual-action-bar" id="manualActionBar" style="display:none">
+                <div class="selection-info">
+                    <span id="selectedCount">0</span> message(s) sélectionné(s)
+                </div>
+                <div class="action-buttons">
+                    <button class="btn-action btn-noise" onclick="handleManualAction('noise')">🗑️ Ignorer (Bruit)</button>
+                    <button class="btn-action btn-group" onclick="handleManualAction('group')">🏠 Regrouper (Bien)</button>
+                    <button class="btn-action btn-cancel" onclick="clearSelection()">Annuler</button>
+                </div>
+            </div>
+
             <!-- Fake Input area for design -->
             <div class="chat-input-area" id="inputArea" style="display:none">
                 <svg viewBox="0 0 24 24" width="24" height="24" stroke="var(--text-muted)" stroke-width="2" fill="none"><circle cx="12" cy="12" r="10"></circle><path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"></path></svg>

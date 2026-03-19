@@ -130,6 +130,8 @@ async function selectChat(id, name) {
     startMessagesPolling(id);
 }
 
+let selectedMessageIds = [];
+
 async function loadMessages(chatId) {
     if (currentChatId !== chatId) return;
 
@@ -152,11 +154,10 @@ async function loadMessages(chatId) {
             const msg = messages[i];
             const dateStr = new Date(parseInt(msg.timestamp) * 1000).toLocaleTimeString('fr-FR', {hour: '2-digit', minute:'2-digit'});
             
-            // Détection de changement de groupe de propriété (IA)
+            // Détection de changement de groupe de propriété (IA ou Manuel)
             if (msg.property_group_id && msg.property_group_id !== lastGroupId) {
-                // Fermer le bloc précédent
                 if (isInsidePropertyBlock) {
-                    finalHTML += '</div>'; // close property-group-wrapper
+                    finalHTML += '</div>'; 
                     isInsidePropertyBlock = false;
                 }
 
@@ -170,7 +171,6 @@ async function loadMessages(chatId) {
                     isInsidePropertyBlock = true;
                 }
             } else if (!msg.property_group_id && isInsidePropertyBlock) {
-                // Message suivant sans groupe, on ferme
                 finalHTML += '</div>';
                 isInsidePropertyBlock = false;
             }
@@ -179,100 +179,55 @@ async function loadMessages(chatId) {
             const isFirstInGroup = (msg.sender_id !== lastSender) || (parseInt(msg.timestamp) - lastTimestamp > 300);
             
             if (isFirstInGroup) {
-                // Si on doit fermer une bulle de sender mais qu'on change PAS de propriété
                 if (i !== 0 && !isInsidePropertyBlock) finalHTML += '</div>'; 
-                // Note: Si on est INSIDE un property block, les message-groups se ferment normalement
-                // mais attention à la structure HTML. Les message-groups sont à l'intérieur du wrapper.
-                
-                // Correction de la fermeture si on est dans un bloc
-                if (i !== 0) {
-                    // On ne ferme QUE le message-group, pas le property-group
-                    // Sauf si isFirstInGroup a été déclenché par un changement de propriété (déjà géré haut)
-                }
-
-                // Pour simplifier : On ferme le message-group si le sender change
-                if (i !== 0) finalHTML += '</div>'; // Close previous message-group
+                if (i !== 0) finalHTML += '</div>'; 
                 finalHTML += '<div class="message-group">';
             }
 
-            // Media Grid detection logic
-            let mediaBatch = [];
-            if (msg.has_media && !msg.body) {
-                let j = i;
-                while (j < messages.length && messages[j].has_media && !messages[j].body && messages[j].sender_id === msg.sender_id) {
-                    mediaBatch.push(messages[j]);
-                    if (mediaBatch.length >= 20) break;
-                    j++;
+            // Checkbox for RECEIVED messages (not from me)
+            const showCheckbox = !msg.is_from_me;
+            const isChecked = selectedMessageIds.includes(msg.id);
+            const checkboxHTML = showCheckbox ? `
+                <div class="message-checkbox-container">
+                    <input type="checkbox" class="msg-checkbox" ${isChecked ? 'checked' : ''} onchange="toggleMessageSelection(${msg.id})">
+            ` : '';
+
+            // Render message bubble
+            let messageDivHTML = `
+                <div class="message ${msg.is_from_me ? 'out' : 'in'} ${isFirstInGroup ? 'first' : ''}" style="width:fit-content; max-width: 320px;">
+                    ${!msg.is_from_me && isFirstInGroup ? `<div class="sender-name" style="color:${getRandomColor(msg.sender_name || 'Inconnu')}">${msg.sender_name || 'Inconnu'}</div>` : ''}
+                    <div class="message-content">
+            `;
+
+            if (msg.has_media && msg.media_path) {
+                const mediaUrl = '/' + msg.media_path.replace('./', '');
+                if (msg.media_mime_type?.startsWith('image/')) {
+                    messageDivHTML += `<img src="${mediaUrl}" class="media-item large">`;
+                } else if (msg.media_mime_type?.startsWith('video/')) {
+                    messageDivHTML += `<video src="${mediaUrl}" controls class="media-item large"></video>`;
+                } else if (msg.media_mime_type?.startsWith('audio/')) {
+                    messageDivHTML += `<audio src="${mediaUrl}" controls style="width:200px; height:35px;"></audio>`;
                 }
             }
 
-            if (mediaBatch.length > 1) {
-                let gridClass = (mediaBatch.length === 2) ? 'double' : (mediaBatch.length === 3 ? 'triple' : 'quad');
-                const displayLimit = 4;
-                const visibleBatch = mediaBatch.slice(0, displayLimit);
-                const extraCount = mediaBatch.length - displayLimit;
-
-                finalHTML += `
-                    <div class="message ${msg.is_from_me ? 'out' : 'in'} ${isFirstInGroup ? 'first' : ''}" style="width: 280px; padding: 4px;">
-                        ${!msg.is_from_me && isFirstInGroup ? `<div class="sender-name" style="margin: 5px 0 0 5px; color:${getRandomColor(msg.sender_name || 'Inconnu')}">${msg.sender_name || 'Inconnu'}</div>` : ''}
-                        <div class="media-grid ${gridClass}">
-                            ${visibleBatch.map((m, idx) => {
-                                const mUrl = '/' + (m.media_path || '').replace('./', '');
-                                const isLast = idx === displayLimit - 1 && extraCount > 0;
-                                let tag = m.media_mime_type?.startsWith('video/') ? 'video' : 'img';
-                                return `
-                                    <div class="grid-item-container">
-                                        <${tag} src="${mUrl}" class="media-item"></${tag}>
-                                        ${isLast ? `<div class="media-overlay">+${extraCount + 1}</div>` : ''}
-                                    </div>
-                                `;
-                            }).join('')}
-                        </div>
-                        <div class="message-footer" style="padding: 0 5px 2px 0;"><span class="timestamp">${dateStr}</span></div>
-                    </div>
-                `;
-                i += (mediaBatch.length - 1); 
-            } else {
-                let messageHTML = `
-                    <div class="message ${msg.is_from_me ? 'out' : 'in'} ${isFirstInGroup ? 'first' : ''}" style="width:fit-content; max-width: 320px;">
-                        ${!msg.is_from_me && isFirstInGroup ? `<div class="sender-name" style="color:${getRandomColor(msg.sender_name || 'Inconnu')}">${msg.sender_name || 'Inconnu'}</div>` : ''}
-                        <div class="message-content">
-                `;
-
-                if (msg.has_media && msg.media_path) {
-                    const mediaUrl = '/' + msg.media_path.replace('./', '');
-                    if (msg.media_mime_type?.startsWith('image/')) {
-                        messageHTML += `<img src="${mediaUrl}" class="media-item large" style="margin-bottom: ${msg.body ? '5px' : '0'}">`;
-                    } else if (msg.media_mime_type?.startsWith('video/')) {
-                        messageHTML += `<video src="${mediaUrl}" controls class="media-item large" style="margin-bottom: ${msg.body ? '5px' : '0'}"></video>`;
-                    } else if (msg.media_mime_type?.startsWith('audio/')) {
-                        messageHTML += `<audio src="${mediaUrl}" controls style="width:calc(100% + 10px); margin: 5px -5px 0 -5px; border-radius:100px; height:35px;"></audio>`;
-                    } else {
-                        messageHTML += `<div style="padding:8px; background:rgba(0,0,0,0.05); border-radius:8px; margin-bottom:5px;">📄 <a href="${mediaUrl}" target="_blank" style="color:var(--accent); text-decoration:none;">Fichier joint</a></div>`;
-                    }
-                }
-
-                if (msg.body) {
-                    messageHTML += `<div style="font-size: 14.2px; line-height:1.4;">${msg.body.replace(/\n/g, '<br>')}</div>`;
-                }
-
-                messageHTML += `
-                        </div>
-                        <div class="message-footer">
-                            <span class="timestamp">${dateStr}</span>
-                        </div>
-                    </div>
-                `;
-                finalHTML += messageHTML;
+            if (msg.body) {
+                messageDivHTML += `<div style="font-size: 14.2px;">${msg.body.replace(/\n/g, '<br>')}</div>`;
             }
+
+            messageDivHTML += `
+                    </div>
+                    <div class="message-footer"><span class="timestamp">${dateStr}</span></div>
+                </div>
+            `;
+
+            finalHTML += showCheckbox ? `${checkboxHTML}${messageDivHTML}</div>` : messageDivHTML;
 
             lastSender = msg.sender_id;
             lastTimestamp = parseInt(msg.timestamp);
         }
 
-        finalHTML += '</div>';
+        finalHTML += '</div>' + (isInsidePropertyBlock ? '</div>' : '');
         
-        // Anti-clignotement conversation
         if (lastMessagesHTML !== finalHTML) {
             lastMessagesHTML = finalHTML;
             msgsEl.innerHTML = finalHTML;
@@ -284,6 +239,61 @@ async function loadMessages(chatId) {
     }
 }
 
+function toggleMessageSelection(id) {
+    const index = selectedMessageIds.indexOf(id);
+    if (index === -1) {
+        selectedMessageIds.push(id);
+    } else {
+        selectedMessageIds.splice(index, 1);
+    }
+    updateActionBar();
+}
+
+function updateActionBar() {
+    const bar = document.getElementById('manualActionBar');
+    const count = document.getElementById('selectedCount');
+    if (selectedMessageIds.length > 0) {
+        bar.style.display = 'flex';
+        count.textContent = selectedMessageIds.length;
+    } else {
+        bar.style.display = 'none';
+    }
+}
+
+async function handleManualAction(action) {
+    if (selectedMessageIds.length === 0) return;
+    
+    try {
+        const res = await fetch('/api/messages/manual-group', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                messageIds: selectedMessageIds,
+                action: action
+            })
+        });
+        
+        const data = await res.json();
+        if (data.success) {
+            selectedMessageIds = [];
+            updateActionBar();
+            await loadMessages(currentChatId);
+        } else {
+            alert(data.error || "Erreur lors de l'action");
+        }
+    } catch (e) {
+        console.error("Manual action failed:", e);
+    }
+}
+
+function clearSelection() {
+    selectedMessageIds = [];
+    updateActionBar();
+    // Refresh checkboxes visually
+    document.querySelectorAll('.msg-checkbox').forEach(cb => cb.checked = false);
+}
+
+// Polling and init
 function startMessagesPolling(id) {
     if (messagesInterval) clearInterval(messagesInterval);
     messagesInterval = setInterval(() => {
@@ -293,3 +303,9 @@ function startMessagesPolling(id) {
 
 loadChats();
 setInterval(loadChats, 4000);
+
+// Globalize functions for HTML onclick
+window.selectChat = selectChat;
+window.toggleMessageSelection = toggleMessageSelection;
+window.handleManualAction = handleManualAction;
+window.clearSelection = clearSelection;
