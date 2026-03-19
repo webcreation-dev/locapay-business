@@ -12,6 +12,8 @@ const qrOverlay = document.getElementById('qrOverlay');
 const qrCanvas = document.getElementById('qrCanvas');
 
 let lastQR = null;
+let lastChatListHTML = '';
+let lastMessagesHTML = '';
 
 async function checkStatus() {
     try {
@@ -19,7 +21,7 @@ async function checkStatus() {
         const { status } = await res.json();
         
         if (status === 'QR') {
-            qrOverlay.style.display = 'flex';
+            if (qrOverlay.style.display !== 'flex') qrOverlay.style.display = 'flex';
             const qrRes = await fetch('/api/qr');
             const { qr } = await qrRes.json();
             
@@ -30,15 +32,15 @@ async function checkStatus() {
                 });
             }
         } else if (status === 'CONNECTED') {
-            qrOverlay.style.display = 'none';
+            if (qrOverlay.style.display !== 'none') qrOverlay.style.display = 'none';
         }
     } catch (e) {
-        console.error("Status fetch error:", e);
+        console.error("Status check failed:", e);
     }
 }
 
-// Check status every 2.5s
-setInterval(checkStatus, 2500);
+// Check status every 3s (QR presence)
+setInterval(checkStatus, 3000);
 checkStatus();
 
 function getInitials(name) {
@@ -61,7 +63,7 @@ async function loadChats() {
         const chats = await res.json();
         
         if (chats.length === 0) {
-            if (!currentChatId) chatListEl.innerHTML = '<div class="loading-state" style="height:auto">Aucune conversation</div>';
+            if (!currentChatId) chatListEl.innerHTML = '<div style="padding:20px; text-align:center; color:var(--text-muted)">Aucune conversation</div>';
             return;
         }
 
@@ -72,7 +74,7 @@ async function loadChats() {
             const color = getRandomColor(chat.chat_name || chat.whatsapp_chat_id);
             
             newHTML += `
-                <div class="chat-item ${chat.whatsapp_chat_id === currentChatId ? 'active' : ''}" onclick="selectChat('${chat.whatsapp_chat_id}', '${chat.chat_name ? chat.chat_name.replace(/'/g, "\\'") : chat.whatsapp_chat_id}')">
+                <div class="chat-item ${chat.whatsapp_chat_id === currentChatId ? 'active' : ''}" onclick="selectChat('${chat.whatsapp_chat_id}', '${(chat.chat_name || '').replace(/'/g, "\\'")}')">
                     <div class="avatar" style="background:${color}">${initials}</div>
                     <div class="chat-info">
                         <div class="chat-top">
@@ -87,7 +89,10 @@ async function loadChats() {
             `;
         });
 
-        chatListEl.innerHTML = newHTML;
+        // Anti-clignotement Sidebar
+        if (chatListEl.innerHTML !== newHTML) {
+            chatListEl.innerHTML = newHTML;
+        }
     } catch (e) {
         console.error("Erreur chargement chats:", e);
     }
@@ -103,23 +108,31 @@ function formatTime(timestamp) {
 }
 
 async function selectChat(id, name) {
+    if (currentChatId === id) return; // Déjà sélectionné
+
     currentChatId = id;
     chatHeader.style.display = 'flex';
     inputArea.style.display = 'flex';
-    headerName.textContent = name;
+    headerName.textContent = name || id;
     
-    const initials = getInitials(name);
-    const color = getRandomColor(name);
+    const initials = getInitials(name || id);
+    const color = getRandomColor(name || id);
     headerAvatar.style.background = color;
     headerAvatar.textContent = initials;
     
     document.querySelectorAll('.chat-item').forEach(el => el.classList.remove('active'));
+    
+    // Clear last messages to force scroll to bottom on new selection
+    msgsEl.innerHTML = ''; 
+    lastMessagesHTML = '';
     
     await loadMessages(id);
     startMessagesPolling(id);
 }
 
 async function loadMessages(chatId) {
+    if (currentChatId !== chatId) return;
+
     try {
         const res = await fetch(`/api/messages/${chatId}`);
         const messages = await res.json();
@@ -143,7 +156,7 @@ async function loadMessages(chatId) {
                 finalHTML += '<div class="message-group">';
             }
 
-            // --- DECTECTION GRID MEDIA ---
+            // Media Grid detection logic
             let mediaBatch = [];
             if (msg.has_media && !msg.body) {
                 let j = i;
@@ -155,31 +168,22 @@ async function loadMessages(chatId) {
             }
 
             if (mediaBatch.length > 1) {
-                // Determine grid type
-                let gridClass = 'quad';
-                if (mediaBatch.length === 2) gridClass = 'double';
-                if (mediaBatch.length === 3) gridClass = 'triple';
-
+                let gridClass = (mediaBatch.length === 2) ? 'double' : (mediaBatch.length === 3 ? 'triple' : 'quad');
                 const displayLimit = 4;
                 const visibleBatch = mediaBatch.slice(0, displayLimit);
                 const extraCount = mediaBatch.length - displayLimit;
 
                 finalHTML += `
-                    <div class="message ${msg.is_from_me ? 'out' : 'in'} ${isFirstInGroup ? 'first' : ''}" style="width: 250px; padding: 4px;">
+                    <div class="message ${msg.is_from_me ? 'out' : 'in'} ${isFirstInGroup ? 'first' : ''}" style="width: 280px; padding: 4px;">
                         ${!msg.is_from_me && isFirstInGroup ? `<div class="sender-name" style="margin: 5px 0 0 5px; color:${getRandomColor(msg.sender_name || 'Inconnu')}">${msg.sender_name || 'Inconnu'}</div>` : ''}
                         <div class="media-grid ${gridClass}">
                             ${visibleBatch.map((m, idx) => {
-                                const mUrl = '/' + m.media_path.replace('./', '');
+                                const mUrl = '/' + (m.media_path || '').replace('./', '');
                                 const isLast = idx === displayLimit - 1 && extraCount > 0;
-                                
-                                let tag = 'div';
-                                let srcAttr = '';
-                                if (m.media_mime_type.startsWith('image/')) { tag = 'img'; srcAttr = `src="${mUrl}"`; }
-                                else if (m.media_mime_type.startsWith('video/')) { tag = 'video'; srcAttr = `src="${mUrl}"`; }
-
+                                let tag = m.media_mime_type?.startsWith('video/') ? 'video' : 'img';
                                 return `
                                     <div class="grid-item-container">
-                                        <${tag} ${srcAttr} class="media-item"></${tag}>
+                                        <${tag} src="${mUrl}" class="media-item"></${tag}>
                                         ${isLast ? `<div class="media-overlay">+${extraCount + 1}</div>` : ''}
                                     </div>
                                 `;
@@ -190,30 +194,27 @@ async function loadMessages(chatId) {
                 `;
                 i += (mediaBatch.length - 1); 
             } else {
-                // --- INDIVIDUAL RENDERING (CONSISTENT SIZE + CAPTION AT BOTTOM) ---
                 let messageHTML = `
                     <div class="message ${msg.is_from_me ? 'out' : 'in'} ${isFirstInGroup ? 'first' : ''}" style="width:fit-content; max-width: 320px;">
                         ${!msg.is_from_me && isFirstInGroup ? `<div class="sender-name" style="color:${getRandomColor(msg.sender_name || 'Inconnu')}">${msg.sender_name || 'Inconnu'}</div>` : ''}
                         <div class="message-content">
                 `;
 
-                // Order: MEDIA FIRST
                 if (msg.has_media && msg.media_path) {
                     const mediaUrl = '/' + msg.media_path.replace('./', '');
-                    if (msg.media_mime_type && msg.media_mime_type.startsWith('image/')) {
+                    if (msg.media_mime_type?.startsWith('image/')) {
                         messageHTML += `<img src="${mediaUrl}" class="media-item large" style="margin-bottom: ${msg.body ? '5px' : '0'}">`;
-                    } else if (msg.media_mime_type && msg.media_mime_type.startsWith('video/')) {
+                    } else if (msg.media_mime_type?.startsWith('video/')) {
                         messageHTML += `<video src="${mediaUrl}" controls class="media-item large" style="margin-bottom: ${msg.body ? '5px' : '0'}"></video>`;
-                    } else if (msg.media_mime_type && msg.media_mime_type.startsWith('audio/')) {
+                    } else if (msg.media_mime_type?.startsWith('audio/')) {
                         messageHTML += `<audio src="${mediaUrl}" controls style="width:calc(100% + 10px); margin: 5px -5px 0 -5px; border-radius:100px; height:35px;"></audio>`;
                     } else {
                         messageHTML += `<div style="padding:8px; background:rgba(0,0,0,0.05); border-radius:8px; margin-bottom:5px;">📄 <a href="${mediaUrl}" target="_blank" style="color:var(--accent); text-decoration:none;">Fichier joint</a></div>`;
                     }
                 }
 
-                // THEN TEXT AT BOTTOM
                 if (msg.body) {
-                    messageHTML += `<div style="font-size: 14px; color: var(--text-main);">${msg.body.replace(/\n/g, '<br>')}</div>`;
+                    messageHTML += `<div style="font-size: 14.2px; line-height:1.4;">${msg.body.replace(/\n/g, '<br>')}</div>`;
                 }
 
                 messageHTML += `
@@ -232,7 +233,9 @@ async function loadMessages(chatId) {
 
         finalHTML += '</div>';
         
-        if (msgsEl.innerHTML !== finalHTML) {
+        // Anti-clignotement conversation
+        if (lastMessagesHTML !== finalHTML) {
+            lastMessagesHTML = finalHTML;
             msgsEl.innerHTML = finalHTML;
             msgsEl.scrollTop = msgsEl.scrollHeight;
         }
@@ -250,4 +253,4 @@ function startMessagesPolling(id) {
 }
 
 loadChats();
-setInterval(loadChats, 3000);
+setInterval(loadChats, 4000);
