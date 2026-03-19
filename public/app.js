@@ -146,25 +146,50 @@ async function loadMessages(chatId) {
         let lastGroupId = null;
         let lastSender = null;
         let lastTimestamp = 0;
+        let isInsidePropertyBlock = false;
 
         for (let i = 0; i < messages.length; i++) {
             const msg = messages[i];
             const dateStr = new Date(parseInt(msg.timestamp) * 1000).toLocaleTimeString('fr-FR', {hour: '2-digit', minute:'2-digit'});
             
             // Détection de changement de groupe de propriété (IA)
-            if (msg.property_group_id && msg.property_group_id !== lastGroupId && msg.property_group_id !== 'noise') {
-                finalHTML += `
-                    <div class="property-group-header">
-                        <div class="property-badge">🏠 Bien détecté par l'IA</div>
-                    </div>
-                `;
+            if (msg.property_group_id && msg.property_group_id !== lastGroupId) {
+                // Fermer le bloc précédent
+                if (isInsidePropertyBlock) {
+                    finalHTML += '</div>'; // close property-group-wrapper
+                    isInsidePropertyBlock = false;
+                }
+
+                if (msg.property_group_id !== 'noise') {
+                    finalHTML += `
+                        <div class="property-group-wrapper">
+                            <div class="property-group-header-label">🏠 Bien immobilier détecté</div>
+                    `;
+                    isInsidePropertyBlock = true;
+                }
+            } else if (!msg.property_group_id && isInsidePropertyBlock) {
+                // Message suivant sans groupe, on ferme
+                finalHTML += '</div>';
+                isInsidePropertyBlock = false;
             }
             lastGroupId = msg.property_group_id;
 
             const isFirstInGroup = (msg.sender_id !== lastSender) || (parseInt(msg.timestamp) - lastTimestamp > 300);
             
             if (isFirstInGroup) {
-                if (i !== 0) finalHTML += '</div>';
+                // Si on doit fermer une bulle de sender mais qu'on change PAS de propriété
+                if (i !== 0 && !isInsidePropertyBlock) finalHTML += '</div>'; 
+                // Note: Si on est INSIDE un property block, les message-groups se ferment normalement
+                // mais attention à la structure HTML. Les message-groups sont à l'intérieur du wrapper.
+                
+                // Correction de la fermeture si on est dans un bloc
+                if (i !== 0) {
+                    // On ne ferme QUE le message-group, pas le property-group
+                    // Sauf si isFirstInGroup a été déclenché par un changement de propriété (déjà géré haut)
+                }
+
+                // Pour simplifier : On ferme le message-group si le sender change
+                if (i !== 0) finalHTML += '</div>'; // Close previous message-group
                 finalHTML += '<div class="message-group">';
             }
 
