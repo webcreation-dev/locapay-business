@@ -1,0 +1,34 @@
+services:
+  whatsapp-bot:
+    build: .
+    container_name: whatsapp-bot
+    restart: unless-stopped
+    volumes:
+      # Cette ligne sauvegarde votre connexion de manière permanente dans un dossier 'sessions' local
+      - ./sessions:/usr/src/app/.wwebjs_auth
+      # Ce dossier contiendra toutes les photos, vidéos, vocaux, etc.
+      - ./media:/usr/src/app/media
+      # Permet de modifier le frontend en direct
+      - ./public:/usr/src/app/public
+    depends_on:
+      - db
+    environment:
+      - DATABASE_URL=postgresql://postgres:password123@db:5432/whatsapp_logs
+    ports:
+      - "13000:3000"
+
+  db:
+    image: postgres:15-alpine
+    container_name: whatsapp-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password123
+      POSTGRES_DB: whatsapp_logs
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "15432:5432"
+
+volumes:
+  pgdata:
