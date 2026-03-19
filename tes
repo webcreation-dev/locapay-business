@@ -1,0 +1,1 @@
+docker exec -it whatsapp-db psql -U postgres -d whatsapp_logs -c "UPDATE messages SET is_analyzed = FALSE, property_group_id = NULL;"

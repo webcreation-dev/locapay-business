@@ -9,6 +9,7 @@ const path = require('path');
 // --- SETUP SERVEUR WEB (Frontend & API) ---
 const app = express();
 app.use(cors());
+app.use(express.json()); // Support pour le JSON dans les requêtes POST
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/media', express.static(path.join(__dirname, 'media')));
 
