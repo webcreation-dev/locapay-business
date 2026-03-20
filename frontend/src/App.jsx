@@ -286,12 +286,21 @@ function App() {
     setTimeout(() => { isManualActionRef.current = false; }, 4000);
 
     // Optimistic UI
+    const pendingGroupId = `pending_${Date.now()}`;
     setMessages(prev => prev.map(msg =>
       ids.includes(msg.id)
-        ? { ...msg, property_group_id: action === 'noise' ? 'noise' : 'manual_fixed' }
+        ? {
+            ...msg,
+            property_group_id: action === 'noise' ? 'noise' : pendingGroupId,
+            real_property_id: action === 'group' ? null : msg.real_property_id,
+            neighborhood: action === 'group' ? null : msg.neighborhood,
+            district:     action === 'group' ? null : msg.district,
+            municipality: action === 'group' ? null : msg.municipality,
+          }
         : msg
     ));
     setSelectedMessageIds([]);
+
 
     try {
       const endpoint = action === 'group' ? '/api/messages/submit-property' : '/api/messages/manual-group';
