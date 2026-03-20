@@ -216,7 +216,14 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
                         image_urls: imageUrls,
                         user_id: process.env.LOCAPAY_BOT_USER_ID || 1
                     }).then(async (response) => {
-                        const nestData = response.data;
+                        const raw = response.data;
+                        // 🔍 LOG de la réponse brute pour diagnostic
+                        console.log(`📡 Réponse NestJS brute:`, JSON.stringify(raw).substring(0, 300));
+
+                        // NestJS peut envelopper la réponse via un intercepteur global : { data: {...} }
+                        // On gère les deux formats
+                        const nestData = raw?.data || raw;
+
                         if (nestData.success) {
                             const { property_id, location } = nestData;
                             await db.query(
@@ -225,7 +232,8 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
                             );
                             console.log(`✅ Succès NestJS : Bien #${property_id} créé.`);
                         } else {
-                            console.error(`❌ Échec NestJS (Métier) :`, nestData.error || nestData.message);
+                            const errMsg = nestData.error || nestData.message || JSON.stringify(nestData).substring(0, 200);
+                            console.error(`❌ Échec NestJS (Métier) :`, errMsg);
                             await db.query(`UPDATE messages SET property_group_id = NULL, real_property_id = NULL, is_analyzed = FALSE WHERE id = ANY($1)`, [messageIds]);
                         }
                     }).catch(async (err) => {
