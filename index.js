@@ -84,6 +84,7 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
             await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS is_analyzed BOOLEAN DEFAULT FALSE;');
             await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS property_group_id VARCHAR(255);');
             await db.query('CREATE INDEX IF NOT EXISTS idx_messages_chat_id ON messages(chat_id);');
+            await db.query('CREATE INDEX IF NOT EXISTS idx_messages_chat_id_ts ON messages(chat_id, timestamp DESC);');
             await db.query('CREATE INDEX IF NOT EXISTS idx_messages_is_analyzed ON messages(is_analyzed);');
             await db.query('CREATE INDEX IF NOT EXISTS idx_messages_property_group_id ON messages(property_group_id);');
 
@@ -99,7 +100,19 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
 
             app.get('/api/messages/:chatId', async (req, res) => {
                 try {
-                    const { rows } = await db.query('SELECT * FROM messages WHERE chat_id = $1 ORDER BY timestamp ASC', [req.params.chatId]);
+                    // Optimisation: On ne sélectionne QUE les colonnes nécessaires (on évite raw_data qui est énorme)
+                    // Limite aux 120 derniers messages pour plus de rapidité tout en gardant assez d'historique
+                    const query = `
+                        SELECT * FROM (
+                            SELECT id, message_id, body, timestamp, is_from_me, is_group, chat_id, sender_id, sender_name, has_media, media_path, media_mime_type, property_group_id
+                            FROM messages 
+                            WHERE chat_id = $1 
+                            ORDER BY timestamp DESC 
+                            LIMIT 120
+                        ) AS sub 
+                        ORDER BY timestamp ASC
+                    `;
+                    const { rows } = await db.query(query, [req.params.chatId]);
                     res.json(rows);
                 } catch (e) {
                     res.status(500).json({ error: e.message });
