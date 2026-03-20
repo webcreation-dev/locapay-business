@@ -4,7 +4,8 @@ WORKDIR /app/frontend
 COPY frontend/package*.json ./
 RUN npm install
 COPY frontend/ ./
-RUN npm run build
+# Build Vite et vérifie que index.html est bien généré
+RUN npm run build && echo "✅ Build OK:" && ls dist/
 
 # --- Étape de Runtime du Bot (Backend) ---
 FROM node:20-slim
@@ -18,6 +19,8 @@ WORKDIR /usr/src/app
 COPY package*.json ./
 RUN npm install
 COPY . .
-# On remplace l'ancien dossier public par le nouveau build React optimisé
-COPY --from=frontend-build /app/frontend/dist ./public
+# Vider public/ et y mettre le build React proprement
+RUN rm -rf ./public/index.html ./public/assets
+COPY --from=frontend-build /app/frontend/dist/ ./public/
+RUN echo "✅ Public après copy React:" && ls ./public/
 CMD ["sh", "-c", "rm -f /usr/src/app/.wwebjs_auth/session*/SingletonLock && node index.js"]
