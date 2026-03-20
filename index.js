@@ -322,12 +322,11 @@ puppeteerOptions.args = [
 
 const client = new Client({
     authStrategy: new LocalAuth(),
-    puppeteer: puppeteerOptions,
-    // Utilisation d'une version très stable éprouvée par la communauté
     webVersionCache: {
         type: 'remote',
-        remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html',
-    }
+        remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-js/main/dist/wppconnect-wa.js',
+    },
+    puppeteer: puppeteerOptions
 });
 
 client.on('qr', (qr) => {
