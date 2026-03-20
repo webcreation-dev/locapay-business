@@ -289,14 +289,16 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
 connectToDbWithRetry();
 
 const puppeteerOptions = {
+    headless: true,
+    bypassCSP: true,  // ← FIX: empêche WhatsApp de rediriger pendant l'injection
     args: [
-        '--no-sandbox', 
+        '--no-sandbox',
         '--disable-setuid-sandbox',
+        '--disable-extensions',
         '--disable-dev-shm-usage',
-        '--disable-accelerated-2d-canvas',
-        '--no-first-run',
+        '--disable-gpu',
         '--no-zygote',
-        '--disable-gpu'
+        '--no-first-run'
     ]
 };
 
@@ -308,17 +310,6 @@ if (process.env.CHROME_BIN) {
         puppeteerOptions.executablePath = chromePath;
     }
 }
-
-// On fusionne les arguments optimisés dans les options de base
-puppeteerOptions.args = [
-    '--no-sandbox',
-    '--disable-setuid-sandbox',
-    '--disable-extensions',
-    '--disable-dev-shm-usage',
-    '--disable-gpu',
-    '--no-zygote',
-    '--no-first-run'
-];
 
 const client = new Client({
     authStrategy: new LocalAuth(),
