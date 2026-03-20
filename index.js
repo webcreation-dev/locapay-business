@@ -101,19 +101,38 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
 
             app.get('/api/messages/:chatId', async (req, res) => {
                 try {
-                    // Optimisation: On ne sélectionne QUE les colonnes nécessaires (on évite raw_data qui est énorme)
-                    // Limite aux 120 derniers messages pour plus de rapidité tout en gardant assez d'historique
-                    const query = `
-                        SELECT * FROM (
-                            SELECT id, message_id, body, timestamp, is_from_me, is_group, chat_id, sender_id, sender_name, has_media, media_path, media_mime_type, property_group_id
-                            FROM messages 
-                            WHERE chat_id = $1 
-                            ORDER BY timestamp DESC 
-                            LIMIT 120
-                        ) AS sub 
-                        ORDER BY timestamp ASC
-                    `;
-                    const { rows } = await db.query(query, [req.params.chatId]);
+                    const { before, limit = 30 } = req.query;
+                    const safeLimit = Math.min(parseInt(limit) || 30, 100);
+                    
+                    let query, params;
+                    if (before) {
+                        // Charger les messages AVANT un timestamp donné (pagination vers le haut)
+                        query = `
+                            SELECT * FROM (
+                                SELECT id, message_id, body, timestamp, is_from_me, is_group, chat_id, sender_id, sender_name, has_media, media_path, media_mime_type, property_group_id
+                                FROM messages 
+                                WHERE chat_id = $1 AND timestamp < $2
+                                ORDER BY timestamp DESC 
+                                LIMIT $3
+                            ) AS sub 
+                            ORDER BY timestamp ASC
+                        `;
+                        params = [req.params.chatId, before, safeLimit];
+                    } else {
+                        // Chargement initial : les N derniers messages
+                        query = `
+                            SELECT * FROM (
+                                SELECT id, message_id, body, timestamp, is_from_me, is_group, chat_id, sender_id, sender_name, has_media, media_path, media_mime_type, property_group_id
+                                FROM messages 
+                                WHERE chat_id = $1 
+                                ORDER BY timestamp DESC 
+                                LIMIT $2
+                            ) AS sub 
+                            ORDER BY timestamp ASC
+                        `;
+                        params = [req.params.chatId, safeLimit];
+                    }
+                    const { rows } = await db.query(query, params);
                     res.json(rows);
                 } catch (e) {
                     res.status(500).json({ error: e.message });

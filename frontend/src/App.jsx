@@ -1,296 +1,364 @@
 import React, { useState, useEffect, useRef, useCallback, memo, useMemo } from 'react';
 import { QRCodeCanvas } from 'qrcode.react';
 
-// Help functions (same as app.js)
+// ─── UTILITAIRES ──────────────────────────────────────────────────────────────
 const getInitials = (name) => {
   if (!name || name === 'Inconnu') return '?';
   return name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
 };
 
-const getRandomColor = (name) => {
-  const colors = ['#00a884', '#007bff', '#6610f2', '#6f42c1', '#e83e8c', '#dc3545', '#fd7e14', '#ffc107', '#28a745', '#20c997', '#17a2b8'];
+const getRandomColor = (name = '') => {
+  const colors = ['#00a884','#007bff','#6610f2','#6f42c1','#e83e8c','#dc3545','#fd7e14','#ffc107','#28a745','#20c997','#17a2b8'];
   let hash = 0;
-  for (let i = 0; i < name.length; i++) {
-    hash = name.charCodeAt(i) + ((hash << 5) - hash);
-  }
+  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
   return colors[Math.abs(hash) % colors.length];
 };
 
 const formatTime = (timestamp) => {
   const date = new Date(parseInt(timestamp) * 1000);
-  const now = new Date();
-  if (date.toDateString() === now.toDateString()) {
+  const now  = new Date();
+  if (date.toDateString() === now.toDateString())
     return date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
-  }
   return date.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
 };
 
-// -- COMPOSANT BULLE OPTIMISÉ (MEMO) --
-// Empêche le saut de message : React ne rafraîchit pas ce composant sauf si l'état de sélection change.
-const MessageBubble = memo(({ msg, isFirstInGroup, dateStr, isSelected, onSelect }) => {
-  const bubbleClasses = [];
-  if (msg.property_group_id === 'noise') bubbleClasses.push('noise');
-  else if (msg.property_group_id) bubbleClasses.push('grouped');
+const PAGE_SIZE = 30; // Messages chargés par page
 
-  const mediaUrl = msg.media_path ? '/' + msg.media_path.replace('./', '') : null;
+// ─── COMPOSANT BULLE (MÉMOÏSÉ STRICTEMENT) ────────────────────────────────────
+const MessageBubble = memo(({ msg, isFirstInGroup, dateStr, isSelected, onSelect }) => {
+  const isNoise   = msg.property_group_id === 'noise';
+  const isGrouped = msg.property_group_id && !isNoise;
+  const mediaUrl  = msg.media_path ? '/' + msg.media_path.replace('./', '') : null;
+
+  const bubbleClass = `message ${msg.is_from_me ? 'out' : 'in'} ${isFirstInGroup ? 'first' : ''} ${isNoise ? 'noise' : ''} ${isGrouped ? 'grouped' : ''}`.trim();
 
   return (
     <div className={`message-group ${isFirstInGroup ? 'first' : ''}`}>
-        <div className="message-checkbox-container">
-            {!msg.is_from_me && (
-                <input 
-                    type="checkbox" 
-                    className="msg-checkbox" 
-                    checked={isSelected}
-                    onChange={() => onSelect(msg.id)}
-                />
-            )}
-            <div className={`message ${msg.is_from_me ? 'out' : 'in'} ${isFirstInGroup ? 'first' : ''} ${bubbleClasses.join(' ')}`} 
-                 style={{ width: 'fit-content', maxWidth: '320px' }}>
-                {!msg.is_from_me && isFirstInGroup && (
-                    <div className="sender-name" style={{ color: getRandomColor(msg.sender_name || 'Inconnu') }}>
-                        {msg.sender_name || 'Inconnu'}
-                    </div>
-                )}
-                <div className="message-content">
-                    {msg.has_media && mediaUrl && (
-                        <div className="media-container" style={{ minHeight: '150px' }}>
-                            {msg.media_mime_type?.startsWith('image/') && <img src={mediaUrl} className="media-item large" loading="eager" />}
-                            {msg.media_mime_type?.startsWith('video/') && <video src={mediaUrl} controls className="media-item large" />}
-                            {msg.media_mime_type?.startsWith('audio/') && <audio src={mediaUrl} controls style={{ width: '200px', height: '35px' }} />}
-                        </div>
-                    )}
-                    {msg.body && <div style={{ fontSize: '14.2px', whiteSpace: 'pre-wrap' }}>{msg.body}</div>}
-                </div>
-                <div className="message-footer">
-                    <span className="timestamp">{dateStr}</span>
-                </div>
+      <div className="message-checkbox-container">
+        {!msg.is_from_me && (
+          <input type="checkbox" className="msg-checkbox" checked={isSelected} onChange={() => onSelect(msg.id)} />
+        )}
+        <div className={bubbleClass} style={{ width: 'fit-content', maxWidth: '320px' }}>
+          {!msg.is_from_me && isFirstInGroup && (
+            <div className="sender-name" style={{ color: getRandomColor(msg.sender_name || 'Inconnu') }}>
+              {msg.sender_name || 'Inconnu'}
             </div>
+          )}
+          <div className="message-content">
+            {msg.has_media && mediaUrl && (
+              <div className="media-container" style={{ minHeight: msg.media_mime_type?.startsWith('image/') ? '120px' : 'auto' }}>
+                {msg.media_mime_type?.startsWith('image/') && <img src={mediaUrl} className="media-item large" loading="eager" alt="" />}
+                {msg.media_mime_type?.startsWith('video/') && <video src={mediaUrl} controls className="media-item large" />}
+                {msg.media_mime_type?.startsWith('audio/') && <audio src={mediaUrl} controls style={{ width: '200px', height: '35px' }} />}
+              </div>
+            )}
+            {msg.body && <div style={{ fontSize: '14.2px', whiteSpace: 'pre-wrap' }}>{msg.body}</div>}
+          </div>
+          <div className="message-footer">
+            <span className="timestamp">{dateStr}</span>
+          </div>
         </div>
+      </div>
     </div>
   );
-}, (prev, next) => {
-  // On ne re-render QUE si l'état de sélection ou le contenu IA change.
-  return prev.isSelected === next.isSelected && 
-         prev.msg.property_group_id === next.msg.property_group_id &&
-         prev.msg.body === next.msg.body;
-});
+}, (prev, next) =>
+  prev.isSelected === next.isSelected &&
+  prev.msg.property_group_id === next.msg.property_group_id &&
+  prev.msg.body === next.msg.body
+);
 
+// ─── APP PRINCIPALE ───────────────────────────────────────────────────────────
 function App() {
-  const [chats, setChats] = useState([]);
-  const [currentChatId, setCurrentChatId] = useState(null);
-  const [messages, setMessages] = useState([]);
-  const [botStatus, setBotStatus] = useState('LOADING');
-  const [qrCode, setQrCode] = useState(null);
-  const [selectedMessageIds, setSelectedMessageIds] = useState([]);
-  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  const [chats,              setChats]              = useState([]);
+  const [currentChatId,      setCurrentChatId]      = useState(null);
+  const [messages,           setMessages]            = useState([]);
+  const [botStatus,          setBotStatus]           = useState('LOADING');
+  const [qrCode,             setQrCode]              = useState(null);
+  const [selectedMessageIds, setSelectedMessageIds]  = useState([]);
+  const [showScrollToBottom, setShowScrollToBottom]  = useState(false);
+  const [isLoadingMore,      setIsLoadingMore]       = useState(false);
+  const [hasMore,            setHasMore]             = useState(true);
 
-  const messagesContainerRef = useRef(null);
-  const isAtBottomRef = useRef(true);
-  const prevScrollHeight = useRef(0);
+  const containerRef       = useRef(null);       // ref vers la div messages-container
+  const isManualActionRef  = useRef(false);       // verrou : bloque le scroll auto après action manuelle
+  const scrollMemory       = useRef({});          // mémoire de scroll par chatId  { chatId: scrollTop }
+  const lastNewMsgCount    = useRef(0);           // nombre de messages la dernière fois
+  const currentChatIdRef   = useRef(null);        // valeur synchrone du chatId courant
+  const pollingLockRef     = useRef(false);       // évite les requêtes en double
 
-  // Polling Chats
+  // ─── POLLING CHATS ──────────────────────────────────────────────────────────
   useEffect(() => {
-    const fetchChats = async () => {
-      try {
-        const res = await fetch('/api/chats');
-        const data = await res.json();
-        setChats(data);
-      } catch (e) {
-        console.error("Chats fetch failed", e);
-      }
+    const fetch_ = async () => {
+      try { setChats(await (await fetch('/api/chats')).json()); }
+      catch(e) { console.error('chats', e); }
     };
-    fetchChats();
-    const int = setInterval(fetchChats, 4000);
-    return () => clearInterval(int);
+    fetch_();
+    const id = setInterval(fetch_, 4000);
+    return () => clearInterval(id);
   }, []);
 
-  // Polling Status & QR
+  // ─── POLLING STATUS / QR ─────────────────────────────────────────────────────
   useEffect(() => {
-    const fetchStatus = async () => {
+    const fetch_ = async () => {
       try {
-        const res = await fetch('/api/status');
-        const { status } = await res.json();
+        const { status } = await (await fetch('/api/status')).json();
         setBotStatus(status);
-        if (status === 'QR') {
-          const qrRes = await fetch('/api/qr');
-          const { qr } = await qrRes.json();
-          setQrCode(qr);
-        } else {
-          setQrCode(null);
-        }
-      } catch (e) {
-        console.error("Status fetch failed", e);
-      }
+        if (status === 'QR') { const { qr } = await (await fetch('/api/qr')).json(); setQrCode(qr); }
+        else setQrCode(null);
+      } catch(e) { console.error('status', e); }
     };
-    fetchStatus();
-    const int = setInterval(fetchStatus, 3000);
-    return () => clearInterval(int);
+    fetch_();
+    const id = setInterval(fetch_, 3000);
+    return () => clearInterval(id);
   }, []);
 
-  // Polling Messages
+  // ─── POLLING MESSAGES (NOUVEAUX SEULEMENT) ───────────────────────────────────
   useEffect(() => {
     if (!currentChatId) return;
+    currentChatIdRef.current = currentChatId;
 
-    const fetchMessages = async () => {
+    // Chargement initial
+    const loadInitial = async () => {
       try {
-        const res = await fetch(`/api/messages/${currentChatId}`);
-        const data = await res.json();
-        
-        if (messagesContainerRef.current) {
-          const el = messagesContainerRef.current;
-          isAtBottomRef.current = el.scrollHeight - el.scrollTop <= el.clientHeight + 50;
-          prevScrollHeight.current = el.scrollHeight;
-        }
-
+        const data = await (await fetch(`/api/messages/${currentChatId}?limit=${PAGE_SIZE}`)).json();
         setMessages(data);
-      } catch (e) {
-        console.error("Messages fetch failed", e);
-      }
+        setHasMore(data.length === PAGE_SIZE);
+        lastNewMsgCount.current = data.length;
+        // Après render, on scroll en bas (premier chargement) ou on restaure la position
+        setTimeout(() => {
+          const el = containerRef.current;
+          if (!el) return;
+          if (scrollMemory.current[currentChatId] != null) {
+            el.scrollTop = scrollMemory.current[currentChatId]; // restaurer position mémorisée
+          } else {
+            el.scrollTop = el.scrollHeight; // première visite → aller en bas
+          }
+        }, 50);
+      } catch(e) { console.error('init messages', e); }
     };
+    loadInitial();
 
-    fetchMessages();
-    const int = setInterval(fetchMessages, 2000);
-    return () => clearInterval(int);
+    // Polling léger : uniquement les NOUVEAUX messages (timestamp > dernier)
+    const poll = setInterval(async () => {
+      if (pollingLockRef.current) return;
+      pollingLockRef.current = true;
+      try {
+        const chatId = currentChatIdRef.current;
+        if (!chatId) return;
+        const data = await (await fetch(`/api/messages/${chatId}?limit=${PAGE_SIZE}`)).json();
+        setMessages(prev => {
+          if (data.length === prev.length) {
+            // Même nombre de messages : on met juste à jour property_group_id si changé
+            const hasChange = data.some((d, i) => d.property_group_id !== prev[i]?.property_group_id);
+            return hasChange ? data : prev;
+          }
+          if (data.length > prev.length) {
+            // Nouveaux messages arrivés
+            return data;
+          }
+          return prev;
+        });
+        setHasMore(data.length === PAGE_SIZE);
+      } catch(e) { console.error('poll messages', e); }
+      finally { pollingLockRef.current = false; }
+    }, 2500);
+
+    return () => { clearInterval(poll); currentChatIdRef.current = null; };
   }, [currentChatId]);
 
-  // Scroll logic after data change
+  // ─── SCROLL AUTO UNIQUEMENT SI DÉJÀ EN BAS ET NOUVEAU MSG ───────────────────
   useEffect(() => {
-    if (!messagesContainerRef.current) return;
-    const el = messagesContainerRef.current;
+    const el = containerRef.current;
+    if (!el) return;
+    if (isManualActionRef.current) return; // verrou action manuelle → rien
+    
+    const currentCount = messages.length;
+    const previousCount = lastNewMsgCount.current;
+    const hasNewMessages = currentCount > previousCount;
+    lastNewMsgCount.current = currentCount;
 
-    if (isAtBottomRef.current) {
+    if (!hasNewMessages) return; // Pas de nouveaux messages → on ne bouge PAS
+
+    const isAtBottom = el.scrollHeight - el.scrollTop <= el.clientHeight + 60;
+    if (isAtBottom) {
+      // L'utilisateur est déjà tout en bas → on suit le nouveau message
       el.scrollTop = el.scrollHeight;
-      setShowScrollToBottom(false);
     } else {
-      if (el.scrollHeight > prevScrollHeight.current) {
-        setShowScrollToBottom(true);
-      }
+      // L'utilisateur est en train de lire → on affiche le bouton "Nouveau"
+      setShowScrollToBottom(true);
     }
   }, [messages]);
 
-  const scrollToBottom = () => {
-    if (messagesContainerRef.current) {
-      messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
+  // ─── CHARGEMENT DES MESSAGES PLUS ANCIENS (SCROLL VERS LE HAUT) ─────────────
+  const loadOlderMessages = useCallback(async () => {
+    if (isLoadingMore || !hasMore || messages.length === 0) return;
+    setIsLoadingMore(true);
+
+    const el = containerRef.current;
+    const oldScrollHeight = el.scrollHeight;
+    const oldScrollTop    = el.scrollTop;
+    const oldestTimestamp = messages[0].timestamp;
+
+    try {
+      const older = await (await fetch(`/api/messages/${currentChatId}?limit=${PAGE_SIZE}&before=${oldestTimestamp}`)).json();
+      if (older.length === 0) { setHasMore(false); return; }
+
+      setMessages(prev => [...older, ...prev]);
+      setHasMore(older.length === PAGE_SIZE);
+
+      // Restauration précise du scroll après ajout des anciens messages
+      requestAnimationFrame(() => {
+        if (containerRef.current) {
+          const gained = containerRef.current.scrollHeight - oldScrollHeight;
+          containerRef.current.scrollTop = oldScrollTop + gained;
+        }
+      });
+    } catch(e) { console.error('load older', e); }
+    finally { setIsLoadingMore(false); }
+  }, [currentChatId, messages, isLoadingMore, hasMore]);
+
+  // ─── GESTION DU SCROLL (MÉMOIRE + CHARGE + BOUTON) ─────────────────────────
+  const handleScroll = useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    // Mémoriser la position pour ce chat
+    if (currentChatIdRef.current) {
+      scrollMemory.current[currentChatIdRef.current] = el.scrollTop;
+    }
+
+    // Masquer le bouton si on est en bas
+    if (el.scrollHeight - el.scrollTop <= el.clientHeight + 60) {
       setShowScrollToBottom(false);
     }
-  };
 
-  const handleScroll = () => {
-    if (!messagesContainerRef.current) return;
-    const el = messagesContainerRef.current;
-    const isBottom = el.scrollHeight - el.scrollTop <= el.clientHeight + 50;
-    if (isBottom) setShowScrollToBottom(false);
-  };
+    // Charger des messages plus anciens si on remonte en haut
+    if (el.scrollTop < 80) {
+      loadOlderMessages();
+    }
+  }, [loadOlderMessages]);
 
-  const handleSelectChat = (id) => {
+  // ─── SÉLECTION DE CHAT ───────────────────────────────────────────────────────
+  const handleSelectChat = useCallback((id) => {
+    // Sauvegarder la position actuelle avant de quitter
+    if (currentChatIdRef.current && containerRef.current) {
+      scrollMemory.current[currentChatIdRef.current] = containerRef.current.scrollTop;
+    }
     setCurrentChatId(id);
     setSelectedMessageIds([]);
     setMessages([]);
     setShowScrollToBottom(false);
-    isAtBottomRef.current = true;
-  };
+    setHasMore(true);
+    lastNewMsgCount.current = 0;
+  }, []);
 
-  // -- OPTIMISATION CLIC (useCallback) --
+  // ─── SÉLECTION DE MESSAGE ─────────────────────────────────────────────────────
   const toggleMessageSelection = useCallback((id) => {
     setSelectedMessageIds(prev =>
-      prev.includes(id) ? prev.filter(msgId => msgId !== id) : [...prev, id]
+      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
     );
   }, []);
 
-  const handleManualAction = async (action) => {
+  // ─── ACTION MANUELLE (CHAP-CHAP) ─────────────────────────────────────────────
+  const handleManualAction = useCallback(async (action) => {
     if (selectedMessageIds.length === 0) return;
-    const idsToProcess = [...selectedMessageIds];
+    const ids = [...selectedMessageIds];
 
-    // Optimistic UI update
-    setMessages(prev => prev.map(msg => 
-      idsToProcess.includes(msg.id) 
-        ? { ...msg, property_group_id: action === 'noise' ? 'noise' : 'manual_fixed' } 
+    // Verrou scroll : pendant 4 secondes après l'action, aucun auto-scroll
+    isManualActionRef.current = true;
+    setTimeout(() => { isManualActionRef.current = false; }, 4000);
+
+    // Optimistic UI
+    setMessages(prev => prev.map(msg =>
+      ids.includes(msg.id)
+        ? { ...msg, property_group_id: action === 'noise' ? 'noise' : 'manual_fixed' }
         : msg
     ));
     setSelectedMessageIds([]);
 
     try {
-      const res = await fetch('/api/messages/manual-group', {
+      const res  = await fetch('/api/messages/manual-group', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messageIds: idsToProcess, action })
+        body: JSON.stringify({ messageIds: ids, action })
       });
       const data = await res.json();
-      if (!data.success) {
-        alert(data.error || "Erreur lors de l'action");
-      }
-    } catch (e) {
-      console.error("Manual action failed", e);
+      if (!data.success) alert(data.error || "Erreur lors de l'action");
+    } catch(e) { console.error('manual action', e); }
+  }, [selectedMessageIds]);
+
+  // ─── SCROLL VER LE BAS ───────────────────────────────────────────────────────
+  const scrollToBottom = () => {
+    if (containerRef.current) {
+      containerRef.current.scrollTop = containerRef.current.scrollHeight;
+      setShowScrollToBottom(false);
     }
   };
 
-  // -- CALCUL DES GROUPES (useMemo) --
+  // ─── RENDU DES BULLES (MEMOÏSÉ) ──────────────────────────────────────────────
   const groupedContent = useMemo(() => {
-    let lastGroupId = null;
-    let lastSender = null;
-    let lastTimestamp = 0;
-    const groups = [];
-    let currentPropertyWrapper = null;
+    let lastGroupId = null, lastSender = null, lastTimestamp = 0;
+    const result = [];
+    let wrapper  = null;
 
     messages.forEach((msg) => {
-        const isNewSender = msg.sender_id !== lastSender || (parseInt(msg.timestamp) - lastTimestamp > 300);
-        const dateStr = new Date(parseInt(msg.timestamp) * 1000).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+      const isNewSender = msg.sender_id !== lastSender || (parseInt(msg.timestamp) - lastTimestamp > 300);
+      const dateStr = new Date(parseInt(msg.timestamp) * 1000)
+        .toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
 
-        if (msg.property_group_id && msg.property_group_id !== lastGroupId) {
-            if (currentPropertyWrapper) groups.push(currentPropertyWrapper);
-            if (msg.property_group_id !== 'noise') {
-                const isToIgnore = msg.property_group_id.startsWith('ignore_');
-                currentPropertyWrapper = {
-                    type: 'property_wrapper',
-                    label: isToIgnore ? '🛑 À IGNORER (VENTE/PARCELLE)' : '🏠 BIEN IMMOBILIER DÉTECTÉ',
-                    isToIgnore,
-                    children: []
-                };
-            } else {
-                currentPropertyWrapper = null;
-            }
-        } else if (!msg.property_group_id && lastGroupId) {
-            if (currentPropertyWrapper) groups.push(currentPropertyWrapper);
-            currentPropertyWrapper = null;
-        }
+      // Gestion des blocs propriété (IA)
+      if (msg.property_group_id && msg.property_group_id !== lastGroupId) {
+        if (wrapper) result.push(wrapper);
+        if (msg.property_group_id !== 'noise') {
+          wrapper = {
+            type: 'wrapper',
+            label: msg.property_group_id.startsWith('ignore_') ? '🛑 À IGNORER' : '🏠 BIEN DÉTECTÉ',
+            key: msg.property_group_id,
+            children: []
+          };
+        } else { wrapper = null; }
+      } else if (!msg.property_group_id && lastGroupId) {
+        if (wrapper) result.push(wrapper);
+        wrapper = null;
+      }
 
-        const bubble = (
-            <MessageBubble 
-                key={msg.id} 
-                msg={msg} 
-                isFirstInGroup={isNewSender} 
-                dateStr={dateStr}
-                isSelected={selectedMessageIds.includes(msg.id)} // Dépendance isolée
-                onSelect={toggleMessageSelection} // Callback stable
-            />
-        );
+      const bubble = (
+        <MessageBubble
+          key={msg.id}
+          msg={msg}
+          isFirstInGroup={isNewSender}
+          dateStr={dateStr}
+          isSelected={selectedMessageIds.includes(msg.id)}
+          onSelect={toggleMessageSelection}
+        />
+      );
 
-        if (currentPropertyWrapper) currentPropertyWrapper.children.push(bubble);
-        else groups.push(bubble);
+      if (wrapper) wrapper.children.push(bubble);
+      else result.push(bubble);
 
-        lastGroupId = msg.property_group_id;
-        lastSender = msg.sender_id;
-        lastTimestamp = msg.timestamp;
+      lastGroupId = msg.property_group_id;
+      lastSender  = msg.sender_id;
+      lastTimestamp = msg.timestamp;
     });
 
-    if (currentPropertyWrapper) groups.push(currentPropertyWrapper);
-    return groups;
+    if (wrapper) result.push(wrapper);
+    return result;
   }, [messages, selectedMessageIds, toggleMessageSelection]);
 
   const currentChatName = chats.find(c => c.whatsapp_chat_id === currentChatId)?.chat_name || currentChatId;
 
+  // ─── RENDU ────────────────────────────────────────────────────────────────────
   return (
     <div className="app-container">
-      {/* QR Code Overlay */}
+      {/* QR Overlay */}
       {botStatus === 'QR' && qrCode && (
-        <div className="qr-overlay" style={{ display: 'flex' }}>
+        <div className="qr-overlay">
           <div className="qr-card">
             <img src="/logo-locapay.png" alt="LocaPay" className="qr-logo" />
             <h1>Connectez WhatsApp</h1>
-            <div id="qrContainer">
-              <QRCodeCanvas value={qrCode} size={250} marginSize={2} />
-            </div>
+            <p>Scannez ce QR Code avec votre téléphone.</p>
+            <div id="qrContainer"><QRCodeCanvas value={qrCode} size={250} marginSize={2} /></div>
+            <div className="qr-status-text">Prêt pour le scan !</div>
           </div>
         </div>
       )}
@@ -299,34 +367,34 @@ function App() {
       <aside className="sidebar">
         <header className="sidebar-header">
           <div className="avatar" style={{ borderRadius: '50%', overflow: 'hidden' }}>
-            <img src="/logo-locapay.png" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            <img src="/logo-locapay.png" style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" />
           </div>
           <h2>Conversations</h2>
         </header>
         <div className="chat-list">
-          {chats.map(chat => {
-            const isActive = chat.whatsapp_chat_id === currentChatId;
-            return (
-              <div key={chat.whatsapp_chat_id}
-                className={`chat-item ${isActive ? 'active' : ''}`} 
-                onClick={() => handleSelectChat(chat.whatsapp_chat_id)}
-              >
-                <div className="avatar" style={{ background: getRandomColor(chat.chat_name || chat.whatsapp_chat_id) }}>
-                  {getInitials(chat.chat_name || chat.whatsapp_chat_id)}
+          {chats.map(chat => (
+            <div key={chat.whatsapp_chat_id}
+              className={`chat-item ${chat.whatsapp_chat_id === currentChatId ? 'active' : ''}`}
+              onClick={() => handleSelectChat(chat.whatsapp_chat_id)}
+            >
+              <div className="avatar" style={{ background: getRandomColor(chat.chat_name || chat.whatsapp_chat_id) }}>
+                {getInitials(chat.chat_name || chat.whatsapp_chat_id)}
+              </div>
+              <div className="chat-info">
+                <div className="chat-top">
+                  <div className="chat-title">{chat.chat_name || chat.whatsapp_chat_id}</div>
+                  <div className="chat-time">{formatTime(chat.last_message_timestamp)}</div>
                 </div>
-                <div className="chat-info">
-                   <div className="chat-top">
-                      <div className="chat-title">{chat.chat_name || chat.whatsapp_chat_id}</div>
-                      <div className="chat-time">{formatTime(chat.last_message_timestamp)}</div>
-                    </div>
+                <div className="chat-bottom">
+                  <div className="chat-preview">{chat.is_group ? 'Groupe' : 'Conversation'}</div>
                 </div>
               </div>
-            );
-          })}
+            </div>
+          ))}
         </div>
       </aside>
 
-      {/* Main Content */}
+      {/* Zone principale */}
       <main className="chat-view">
         {currentChatId ? (
           <>
@@ -336,14 +404,30 @@ function App() {
               </div>
               <div className="chat-header-info">
                 <div className="name">{currentChatName}</div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                  {isLoadingMore ? 'Chargement...' : 'En ligne'}
+                </div>
               </div>
             </header>
 
-            <div className="messages-container" ref={messagesContainerRef} onScroll={handleScroll}>
+            <div className="messages-container" ref={containerRef} onScroll={handleScroll}>
+              {/* Indicateur de chargement en haut */}
+              {isLoadingMore && (
+                <div style={{ textAlign: 'center', padding: '12px', color: 'var(--text-muted)', fontSize: '13px' }}>
+                  ⏳ Chargement des messages précédents...
+                </div>
+              )}
+              {!hasMore && messages.length > 0 && (
+                <div style={{ textAlign: 'center', padding: '12px', color: 'var(--text-muted)', fontSize: '12px' }}>
+                  — Début de la conversation —
+                </div>
+              )}
+
+              {/* Bulles */}
               {groupedContent.map((item, idx) => {
-                if (item.type === 'property_wrapper') {
+                if (item?.type === 'wrapper') {
                   return (
-                    <div key={idx} className={`property-group-wrapper ${item.isToIgnore ? 'to-ignore' : ''}`}>
+                    <div key={item.key || idx} className="property-group-wrapper">
                       <div className="property-group-header-label">{item.label}</div>
                       {item.children}
                     </div>
@@ -353,23 +437,36 @@ function App() {
               })}
             </div>
 
-            {showScrollToBottom && <button className="scroll-to-bottom-btn" onClick={scrollToBottom}>👇 Nouveau</button>}
+            {/* Bouton nouveaux messages */}
+            {showScrollToBottom && (
+              <button className="scroll-to-bottom-btn" onClick={scrollToBottom}>
+                👇 Nouveaux messages
+              </button>
+            )}
 
+            {/* Barre d'action manuelle */}
             {selectedMessageIds.length > 0 && (
               <div className="manual-action-bar">
-                <div className="selection-info"><span>{selectedMessageIds.length}</span> sélectionné(s)</div>
+                <div className="selection-info">
+                  <span>{selectedMessageIds.length}</span> sélectionné(s)
+                </div>
                 <div className="action-buttons">
-                  <button className="btn-action btn-noise" onClick={() => handleManualAction('noise')}>🗑️ Bruit</button>
-                  <button className="btn-action btn-group" onClick={() => handleManualAction('group')}>🏠 Regrouper</button>
-                  <button className="btn-action btn-cancel" onClick={() => setSelectedMessageIds([])}>X</button>
+                  <button className="btn-action btn-noise"  onClick={() => handleManualAction('noise')}>🗑️ Ignorer</button>
+                  <button className="btn-action btn-group"  onClick={() => handleManualAction('group')}>🏠 Regrouper</button>
+                  <button className="btn-action btn-cancel" onClick={() => setSelectedMessageIds([])}>✕</button>
                 </div>
               </div>
             )}
-            
-            <div className="chat-input-area"><input type="text" placeholder="Écrire un message" disabled /></div>
+
+            <div className="chat-input-area">
+              <input type="text" placeholder="Écrire un message" disabled />
+            </div>
           </>
         ) : (
-          <div className="empty-state"><h3>WhatsApp Web Bot</h3><p>Sélectionnez une conversation.</p></div>
+          <div className="empty-state">
+            <h1>WhatsApp Bot Dashboard</h1>
+            <p>Sélectionnez une conversation pour commencer.</p>
+          </div>
         )}
       </main>
     </div>
