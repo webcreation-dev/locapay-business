@@ -6,6 +6,7 @@ const { Pool } = require('pg');
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const axios = require('axios');
 
 // --- SETUP SERVEUR WEB (Frontend & API) ---
 const app = express();
@@ -97,10 +98,16 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
             await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS raw_data JSONB;');
             await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS is_analyzed BOOLEAN DEFAULT FALSE;');
             await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS property_group_id VARCHAR(255);');
+            await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS real_property_id INTEGER;');
+            await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS neighborhood VARCHAR(255);');
+            await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS district VARCHAR(255);');
+            await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS municipality VARCHAR(255);');
+            
             await db.query('CREATE INDEX IF NOT EXISTS idx_messages_chat_id ON messages(chat_id);');
             await db.query('CREATE INDEX IF NOT EXISTS idx_messages_chat_id_ts ON messages(chat_id, timestamp DESC);');
             await db.query('CREATE INDEX IF NOT EXISTS idx_messages_is_analyzed ON messages(is_analyzed);');
             await db.query('CREATE INDEX IF NOT EXISTS idx_messages_property_group_id ON messages(property_group_id);');
+            await db.query('CREATE INDEX IF NOT EXISTS idx_messages_real_property_id ON messages(real_property_id);');
 
             // -- ROUTES API EXPRESS (Déclarées ici car on a besoin de db prêt) --
             app.get('/api/chats', async (req, res) => {
@@ -122,7 +129,7 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
                         // Charger les messages AVANT un timestamp donné (pagination vers le haut)
                         query = `
                             SELECT * FROM (
-                                SELECT id, message_id, body, timestamp, is_from_me, is_group, chat_id, sender_id, sender_name, has_media, media_path, media_mime_type, property_group_id
+                                SELECT id, message_id, body, timestamp, is_from_me, is_group, chat_id, sender_id, sender_name, has_media, media_path, media_mime_type, property_group_id, real_property_id, neighborhood, district, municipality
                                 FROM messages 
                                 WHERE chat_id = $1 AND timestamp < $2
                                 ORDER BY timestamp DESC 
@@ -135,7 +142,7 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
                         // Chargement initial : les N derniers messages
                         query = `
                             SELECT * FROM (
-                                SELECT id, message_id, body, timestamp, is_from_me, is_group, chat_id, sender_id, sender_name, has_media, media_path, media_mime_type, property_group_id
+                                SELECT id, message_id, body, timestamp, is_from_me, is_group, chat_id, sender_id, sender_name, has_media, media_path, media_mime_type, property_group_id, real_property_id, neighborhood, district, municipality
                                 FROM messages 
                                 WHERE chat_id = $1 
                                 ORDER BY timestamp DESC 
@@ -152,7 +159,98 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
                 }
             });
 
-            // ROUTE DE GROUPEMENT MANUEL
+            // ROUTE DE GROUPEMENT MANUEL + SOUMISSION À NESTJS
+            app.post('/api/messages/submit-property', async (req, res) => {
+                const { messageIds } = req.body;
+                if (!messageIds || !Array.isArray(messageIds) || messageIds.length === 0) {
+                    return res.status(400).json({ error: 'Aucun message sélectionné.' });
+                }
+
+                try {
+                    // 1. Récupérer les détails des messages depuis la BD
+                    const { rows: fetchedMessages } = await db.query(
+                        'SELECT * FROM messages WHERE id = ANY($1) ORDER BY timestamp ASC',
+                        [messageIds]
+                    );
+
+                    if (fetchedMessages.length === 0) {
+                        return res.status(404).json({ error: 'Messages introuvables.' });
+                    }
+
+                    // 2. Fusionner les textes et collecter les images
+                    let combinedText = "";
+                    const imageUrls = [];
+                    let senderPhone = "";
+                    
+                    // Trouver le premier numéro d'expéditeur valide (non "me")
+                    const externalMsg = fetchedMessages.find(m => !m.is_from_me);
+                    if (externalMsg) {
+                        // Extraire le numéro (ex: 22890123456@s.whatsapp.net -> +22890123456)
+                        senderPhone = externalMsg.sender_id.split('@')[0];
+                        if (!senderPhone.startsWith('+')) senderPhone = '+' + senderPhone;
+                    }
+
+                    fetchedMessages.forEach(msg => {
+                        if (msg.body) combinedText += msg.body + "\n";
+                        if (msg.has_media && msg.media_path && msg.media_mime_type?.startsWith('image/')) {
+                            // Construire l'URL publique accessible par NestJS
+                            // Note: En mode local/Docker, localhost peut être trompeur. 
+                            // On utilise l'adresse IP du serveur ou le nom du service Docker.
+                            // Pour simplifier on suppose que NestJS peut accéder au bot.
+                            const botHost = process.env.BOT_PUBLIC_URL || 'http://whatsapp-bot:3000';
+                            const cleanPath = msg.media_path.replace('./', '');
+                            imageUrls.push(`${botHost}/${cleanPath}`);
+                        }
+                    });
+
+                    // 3. Envoyer à NestJS
+                    const nestUrl = process.env.NESTJS_API_URL || 'http://locapay-backend:4000/properties/create-from-whatsapp';
+                    
+                    // On répond 202 car le traitement IA dans NestJS est lent
+                    res.status(202).json({ success: true, message: 'Analyse et création en cours...' });
+
+                    // Traitement asynchrone (NestJS)
+                    axios.post(nestUrl, {
+                        description: combinedText,
+                        manager_phone: senderPhone,
+                        image_urls: imageUrls,
+                        user_id: process.env.LOCAPAY_BOT_USER_ID || 1
+                    }).then(async (response) => {
+                        const nestData = response.data;
+                        if (nestData.success) {
+                            const { property_id, location } = nestData;
+                            // Mettre à jour les messages avec l'ID du bien et la localisation
+                            await db.query(
+                                `UPDATE messages 
+                                 SET property_group_id = $1, 
+                                     real_property_id = $2,
+                                     neighborhood = $3,
+                                     district = $4,
+                                     municipality = $5,
+                                     is_analyzed = TRUE 
+                                 WHERE id = ANY($6)`,
+                                [
+                                    `real_prop_${property_id}`, 
+                                    property_id, 
+                                    location?.neighborhood || '',
+                                    location?.district || '',
+                                    location?.municipality || '',
+                                    messageIds
+                                ]
+                            );
+                            console.log(`✅ Bien #${property_id} crée et lié aux messages.`);
+                        }
+                    }).catch(err => {
+                        console.error("❌ Erreur lors de l'appel à NestJS:", err.message);
+                    });
+
+                } catch (e) {
+                    console.error("❌ Submit error:", e);
+                    res.status(500).json({ error: e.message });
+                }
+            });
+
+            // ROUTE DE GROUPEMENT MANUEL (BRUIT SEULEMENT MAINTENANT)
             app.post('/api/messages/manual-group', async (req, res) => {
                 const { messageIds, action } = req.body;
                 if (!messageIds || !Array.isArray(messageIds) || messageIds.length === 0) {
@@ -163,12 +261,8 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
                     if (action === 'noise') {
                         await db.query('UPDATE messages SET is_analyzed = TRUE, property_group_id = \'noise\' WHERE id = ANY($1)', [messageIds]);
                         res.json({ success: true, message: 'Messages marqués comme bruit.' });
-                    } else if (action === 'group') {
-                        const groupId = `manual_${Date.now()}`;
-                        await db.query('UPDATE messages SET is_analyzed = TRUE, property_group_id = $1 WHERE id = ANY($2)', [groupId, messageIds]);
-                        res.json({ success: true, message: 'Messages regroupés avec succès.', property_group_id: groupId });
                     } else {
-                        res.status(400).json({ error: 'Action invalide.' });
+                        res.status(400).json({ error: 'Action invalide via cet endpoint.' });
                     }
                 } catch (e) {
                     res.status(500).json({ error: e.message });

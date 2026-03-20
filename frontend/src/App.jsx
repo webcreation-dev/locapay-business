@@ -294,13 +294,18 @@ function App() {
     setSelectedMessageIds([]);
 
     try {
-      const res  = await fetch('/api/messages/manual-group', {
+      const endpoint = action === 'group' ? '/api/messages/submit-property' : '/api/messages/manual-group';
+      const res  = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messageIds: ids, action })
       });
       const data = await res.json();
       if (!data.success) alert(data.error || "Erreur lors de l'action");
+      else if (action === 'group') {
+          // Si c'est une soumission, on peut afficher un petit toast ou message informatif
+          console.log("Bien soumis avec succès, en cours de création...");
+      }
     } catch(e) { console.error('manual action', e); }
   }, [selectedMessageIds]);
 
@@ -323,14 +328,24 @@ function App() {
       const dateStr = new Date(parseInt(msg.timestamp) * 1000)
         .toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
 
-      // Gestion des blocs propriété (IA)
+      // Gestion des blocs propriété (IA ou Soumis)
       if (msg.property_group_id && msg.property_group_id !== lastGroupId) {
         if (wrapper) result.push(wrapper);
         if (msg.property_group_id !== 'noise') {
+          const isRealProp = !!msg.real_property_id;
+          let label = isRealProp ? `✅ BIEN CRÉÉ #${msg.real_property_id}` : '🏠 BIEN DÉTECTÉ (En attente)';
+          
+          // Ajouter la localisation si disponible
+          if (isRealProp && (msg.neighborhood || msg.district)) {
+              const locParts = [msg.neighborhood, msg.district, msg.municipality].filter(Boolean);
+              if (locParts.length > 0) label += ` — 📍 ${locParts.join(' - ')}`;
+          }
+
           wrapper = {
             type: 'wrapper',
-            label: msg.property_group_id.startsWith('ignore_') ? '🛑 À IGNORER' : '🏠 BIEN DÉTECTÉ',
+            label: msg.property_group_id.startsWith('ignore_') ? '🛑 À IGNORER' : label,
             key: msg.property_group_id,
+            isCreated: isRealProp,
             children: []
           };
         } else { wrapper = null; }
@@ -444,7 +459,7 @@ function App() {
               {groupedContent.map((item, idx) => {
                 if (item?.type === 'wrapper') {
                   return (
-                    <div key={item.key || idx} className="property-group-wrapper">
+                    <div key={item.key || idx} className={`property-group-wrapper ${item.isCreated ? 'created' : ''}`}>
                       <div className="property-group-header-label">{item.label}</div>
                       {item.children}
                     </div>
@@ -469,7 +484,7 @@ function App() {
                 </div>
                 <div className="action-buttons">
                   <button className="btn-action btn-noise"  onClick={() => handleManualAction('noise')}>🗑️ Ignorer</button>
-                  <button className="btn-action btn-group"  onClick={() => handleManualAction('group')}>🏠 Regrouper</button>
+                  <button className="btn-action btn-group"  onClick={() => handleManualAction('group')}>🚀 Créer le BIEN</button>
                   <button className="btn-action btn-cancel" onClick={() => setSelectedMessageIds([])}>✕</button>
                 </div>
               </div>
