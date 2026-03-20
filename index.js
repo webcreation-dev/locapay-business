@@ -309,13 +309,27 @@ if (process.env.CHROME_BIN) {
     }
 }
 
+// On fusionne les arguments optimisés dans les options de base
+puppeteerOptions.args = [
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--disable-extensions',
+    '--disable-dev-shm-usage',
+    '--disable-accelerated-2d-canvas',
+    '--no-first-run',
+    '--no-zygote',
+    '--single-process',
+    '--disable-gpu'
+];
+
 const client = new Client({
     authStrategy: new LocalAuth(),
+    puppeteer: puppeteerOptions,
+    // Forcer une version stable de WhatsApp Web pour éviter le crash
     webVersionCache: {
         type: 'remote',
-        remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-js/main/dist/wppconnect-wa.js',
-    },
-    puppeteer: puppeteerOptions
+        remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.3000.1018905389-alpha.html',
+    }
 });
 
 client.on('qr', (qr) => {
