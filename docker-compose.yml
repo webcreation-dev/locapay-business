@@ -3,6 +3,7 @@ services:
     build: .
     container_name: whatsapp-bot
     restart: unless-stopped
+    env_file: .env
     volumes:
       # Cette ligne sauvegarde votre connexion de manière permanente dans un dossier 'sessions' local
       - ./sessions:/usr/src/app/.wwebjs_auth
@@ -12,10 +13,10 @@ services:
       - ./public:/usr/src/app/public
     depends_on:
       - db
-    environment:
-      - DATABASE_URL=postgresql://postgres:password123@db:5432/whatsapp_logs
     ports:
       - "13000:3000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   db:
     image: postgres:15-alpine

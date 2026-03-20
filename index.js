@@ -49,7 +49,7 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
         try {
             await db.query('SELECT 1'); // Vérifie l'état de la connexion
             console.log('✅ Connecté avec succès à PostgreSQL !');
-            
+
             // Création automatique de la base 'chats' (Sert de tableau de bord / liste des conversations)
             await db.query(`
                 CREATE TABLE IF NOT EXISTS chats (
@@ -63,7 +63,7 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
                 );
             `);
             console.log('✅ Table "chats" prête dans PostgreSQL.');
-            
+
             // Création automatique de la table "messages" si elle n'existe pas
             await db.query(`
                 CREATE TABLE IF NOT EXISTS messages (
@@ -91,7 +91,7 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
                 );
             `);
             console.log('✅ Table "messages" prête dans PostgreSQL.');
-            
+
             // On s'assure d'ajouter de nouvelles colonnes si elles n'existent pas encore (pour les tables existantes)
             await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_path TEXT;');
             await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_mime_type TEXT;');
@@ -103,7 +103,7 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
             await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS district VARCHAR(255);');
             await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS municipality VARCHAR(255);');
             await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS analysis_error TEXT;');
-            
+
             await db.query('CREATE INDEX IF NOT EXISTS idx_messages_chat_id ON messages(chat_id);');
             await db.query('CREATE INDEX IF NOT EXISTS idx_messages_chat_id_ts ON messages(chat_id, timestamp DESC);');
             await db.query('CREATE INDEX IF NOT EXISTS idx_messages_is_analyzed ON messages(is_analyzed);');
@@ -113,7 +113,8 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
             // -- ROUTES API EXPRESS (Déclarées ici car on a besoin de db prêt) --
             app.get('/api/chats', async (req, res) => {
                 try {
-                    const { rows } = await db.query('SELECT * FROM chats ORDER BY updated_at DESC');
+                    // Filtrer pour n'afficher que les groupes
+                    const { rows } = await db.query('SELECT * FROM chats WHERE is_group = true ORDER BY updated_at DESC');
                     res.json(rows);
                 } catch (e) {
                     res.status(500).json({ error: e.message });
@@ -124,7 +125,7 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
                 try {
                     const { before, limit = 30 } = req.query;
                     const safeLimit = Math.min(parseInt(limit) || 30, 100);
-                    
+
                     let query, params;
                     if (before) {
                         // Charger les messages AVANT un timestamp donné (pagination vers le haut)
@@ -182,7 +183,7 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
                     const texts = [];
                     const imageUrls = [];
                     let senderPhone = "";
-                    
+
                     // Trouver le premier numéro d'expéditeur valide (non "me")
                     const externalMsg = fetchedMessages.find(m => !m.is_from_me);
                     if (externalMsg) {
@@ -195,20 +196,44 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
                         if (msg.body && msg.body.trim()) {
                             texts.push(msg.body.trim());
                         }
-                        if (msg.has_media && msg.media_path && msg.media_mime_type?.startsWith('image/')) {
-                            // Construire l'URL publique accessible par NestJS
-                            const botHost = process.env.BOT_PUBLIC_URL || 'http://whatsapp-bot:3000';
-                            const cleanPath = msg.media_path.replace('./', '');
-                            imageUrls.push(`${botHost}/${cleanPath}`);
+                        const isImageOrVideo = msg.media_mime_type?.startsWith('image/') || msg.media_mime_type?.startsWith('video/');
+                        if (msg.has_media && msg.media_path && isImageOrVideo) {
+                            // Vérifier que le fichier existe réellement sur disque
+                            const localPath = msg.media_path.startsWith('./') ? msg.media_path : `./${msg.media_path}`;
+                            if (fs.existsSync(localPath)) {
+                                // Construire l'URL publique accessible par NestJS
+                                const botHost = process.env.BOT_PUBLIC_URL || 'http://whatsapp-bot:3000';
+                                const cleanPath = msg.media_path.replace('./', '');
+                                imageUrls.push(`${botHost}/${cleanPath}`);
+                            } else {
+                                console.warn(`⚠️ Média manquant sur disque: ${localPath}`);
+                            }
                         }
                     });
 
                     // 3. Fusionner le texte
                     const finalDescription = texts.join('\n\n').trim() || '(Annonce immobilière WhatsApp - Sans texte)';
 
-                    // 3. Envoyer à NestJS
-                    const nestUrl = process.env.NESTJS_API_URL || 'http://locapay-backend:4000/properties/create-from-whatsapp';
-                    
+                    // --- VÉRIFICATION DES MÉDIAS (images ou vidéos) ---
+                    if (imageUrls.length === 0) {
+                        // Compter combien de messages avaient has_media = true (image ou vidéo)
+                        const mediaMessages = fetchedMessages.filter(m =>
+                            m.has_media && (m.media_mime_type?.startsWith('image/') || m.media_mime_type?.startsWith('video/'))
+                        );
+                        let errMsg;
+                        if (mediaMessages.length === 0) {
+                            errMsg = "Au moins une image ou vidéo est requise. Veuillez sélectionner le(s) message(s) contenant les photos/vidéos en plus du texte.";
+                        } else {
+                            errMsg = `${mediaMessages.length} média(s) détecté(s) mais aucun n'est téléchargeable. Les fichiers n'existent pas sur le serveur.`;
+                        }
+                        console.error(`❌ Échec de soumission: ${errMsg}`);
+                        await db.query(`UPDATE messages SET analysis_error = $1 WHERE id = ANY($2)`, [errMsg, messageIds]);
+                        return res.status(400).json({ success: false, error: errMsg });
+                    }
+
+                    // 4. Envoyer à NestJS
+                    const nestUrl = process.env.NESTJS_API_URL || 'http://host.docker.internal:4000/properties/create-from-whatsapp';
+
                     // On répond 202 car le traitement IA dans NestJS est lent
                     res.status(202).json({ success: true, message: 'Analyse et création en cours...' });
 
@@ -235,7 +260,12 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
                             );
                             console.log(`✅ Succès NestJS : Bien #${property_id} créé.`);
                         } else {
-                            const errMsg = nestData.error || nestData.message || JSON.stringify(nestData).substring(0, 200);
+                            // Construire un message d'erreur détaillé avec les champs manquants
+                            let errMsg = nestData.error || nestData.message || "Erreur inconnue";
+                            if (nestData.missingFields && Array.isArray(nestData.missingFields) && nestData.missingFields.length > 0) {
+                                const fieldsList = nestData.missingFields.map(f => f.field).join(', ');
+                                errMsg = `Champs manquants: ${fieldsList}`;
+                            }
                             console.error(`❌ Échec NestJS (Métier) :`, errMsg);
                             await db.query(`UPDATE messages SET property_group_id = NULL, real_property_id = NULL, is_analyzed = FALSE, analysis_error = $1 WHERE id = ANY($2)`, [errMsg, messageIds]);
                         }
@@ -289,7 +319,7 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
             app.get('/api/qr', (req, res) => {
                 res.json({ qr: currentQR });
             });
-            
+
             return;
         } catch (err) {
             console.log(`⚠️ En attente de PostgreSQL... Postgres est peut-être en train de démarrer (tentative ${i + 1}/${retries}).`);
@@ -333,7 +363,7 @@ client.on('qr', (qr) => {
     // Generate and display in terminal too
     qrcode.generate(qr, { small: true });
     console.log('NOUVEAU QR CODE : Scannez ce QR avec votre application WhatsApp.');
-    
+
     // Save for UI
     botStatus = 'QR';
     currentQR = qr;
@@ -389,12 +419,12 @@ client.on('message_create', async msg => {
                     const ext = media.mimetype.split('/')[1]?.split(';')[0] || 'bin';
                     const filename = `media_${msg.id.id}_${msg.timestamp}.${ext}`;
                     const dirPath = './media';
-                    
+
                     if (!fs.existsSync(dirPath)) fs.mkdirSync(dirPath, { recursive: true });
-                    
+
                     savedMediaPath = `${dirPath}/${filename}`;
                     savedMediaMimeType = media.mimetype;
-                    
+
                     fs.writeFileSync(savedMediaPath, Buffer.from(media.data, 'base64'));
                     console.log(`📸 Média sauvegardé avec succès: ${savedMediaPath}`);
                 }
@@ -445,7 +475,7 @@ client.on('message_create', async msg => {
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
             ON CONFLICT (message_id) DO NOTHING;
         `;
-        
+
         const values = [
             messageData.messageId, messageData.body, messageData.timestamp, messageData.isFromMe,
             messageData.isGroup, messageData.chatId, messageData.chatName, messageData.senderId,

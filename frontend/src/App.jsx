@@ -24,6 +24,113 @@ const formatTime = (timestamp) => {
 
 const PAGE_SIZE = 30; // Messages chargés par page
 
+// ─── TRADUCTION DES CHAMPS MANQUANTS ─────────────────────────────────────────
+const translateFieldName = (field) => ({
+  'rent_price': 'Prix du loyer',
+  'type': 'Type de bien',
+  'localisation': 'Localisation',
+  'number_rooms': 'Nombre de chambres',
+  'number_living_rooms': 'Nombre de salons',
+  'description': 'Description',
+  'location': 'Localisation',
+  'price': 'Prix',
+  'rooms': 'Chambres'
+}[field] || field);
+
+// ─── COMPOSANT OVERLAY DE SOUMISSION ─────────────────────────────────────────
+const SubmissionOverlay = memo(({ state, onClose, onRetry }) => {
+  if (!state.isSubmitting && state.status === 'idle') return null;
+
+  const statusConfig = {
+    verifying:  { icon: '🔍', text: 'Vérification des médias...', color: '#667781' },
+    sending:    { icon: '📤', text: 'Envoi au serveur...', color: '#667781' },
+    processing: { icon: '🤖', text: 'Analyse IA en cours...', color: '#00a884' },
+    success:    { icon: '✅', text: '', color: '#00a884' },
+    error:      { icon: '❌', text: 'Échec de la création', color: '#ea0038' }
+  };
+
+  const config = statusConfig[state.status] || statusConfig.verifying;
+
+  // Succès : bannière verte avec info propriété
+  if (state.status === 'success' && state.successData) {
+    const locParts = [
+      state.successData.neighborhood,
+      state.successData.district,
+      state.successData.municipality
+    ].filter(Boolean);
+    const locationStr = locParts.length > 0 ? ` — 📍 ${locParts.join(' - ')}` : '';
+
+    return (
+      <div className="submission-overlay">
+        <div className="submission-banner success">
+          <div className="banner-content">
+            <span className="banner-icon">✅</span>
+            <span className="banner-text">
+              Bien #{state.successData.propertyId} créé{locationStr}
+            </span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Erreur : bannière rouge avec liste des champs manquants
+  if (state.status === 'error') {
+    return (
+      <div className="submission-overlay error-overlay">
+        <div className="submission-banner error">
+          <div className="banner-header">
+            <span className="banner-icon">❌</span>
+            <span className="banner-title">Échec de la création</span>
+          </div>
+          {state.errors.length > 0 && (
+            <div className="error-details">
+              <div className="error-subtitle">Champs manquants ou invalides :</div>
+              <ul className="error-list">
+                {state.errors.map((err, idx) => (
+                  <li key={idx}>
+                    <span className="error-field">{translateFieldName(err.field || err)}</span>
+                    {err.message && <span className="error-message"> — {err.message}</span>}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {state.errors.length === 0 && state.errorMessage && (
+            <div className="error-details">
+              <div className="error-generic">{state.errorMessage}</div>
+            </div>
+          )}
+          <div className="banner-actions">
+            <button className="btn-retry" onClick={onRetry}>🔄 Réessayer</button>
+            <button className="btn-close" onClick={onClose}>Fermer</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // États de chargement : verifying, sending, processing
+  return (
+    <div className="submission-overlay">
+      <div className="submission-banner processing">
+        <div className="banner-content">
+          <span className="banner-icon">{config.icon}</span>
+          <span className="banner-text">{config.text}</span>
+        </div>
+        {state.status === 'processing' && (
+          <div className="progress-bar-container">
+            <div
+              className="progress-bar"
+              style={{ width: `${state.progress}%` }}
+            />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+});
+
 // ─── COMPOSANT BULLE (MÉMOÏSÉ STRICTEMENT) ────────────────────────────────────
 const MessageBubble = memo(({ msg, isFirstInGroup, dateStr, isSelected, onSelect }) => {
   // Conversion robuste de is_from_me en vrai booléen
@@ -43,7 +150,8 @@ const MessageBubble = memo(({ msg, isFirstInGroup, dateStr, isSelected, onSelect
           width: '100%'
         }}
       >
-        {!isFromMe && (
+        {/* Checkbox masquée si message déjà groupé (bien détecté/créé) */}
+        {!isFromMe && !isGrouped && (
           <input type="checkbox" className="msg-checkbox" checked={isSelected} onChange={() => onSelect(msg.id)} />
         )}
         <div className={bubbleClass} style={{ width: 'fit-content', maxWidth: '320px' }}>
@@ -87,14 +195,23 @@ function App() {
   const [isLoadingMore,      setIsLoadingMore]       = useState(false);
   const [hasMore,            setHasMore]             = useState(true);
   const [toast,              setToast]              = useState(null); // { message: string, type: 'error'|'success' }
+  const [submissionState,    setSubmissionState]   = useState({
+    isSubmitting: false,
+    status: 'idle', // 'verifying' | 'sending' | 'processing' | 'success' | 'error'
+    progress: 0,
+    errors: [],     // [{ field: 'rent_price', message: 'Prix requis' }]
+    successData: null // { propertyId, location }
+  });
 
   const containerRef       = useRef(null);       // ref vers la div messages-container
+  const scrollPositionBeforeSubmit = useRef(null); // Position scroll avant soumission
   const isManualActionRef  = useRef(false);       // verrou : bloque le scroll auto après action manuelle
   const isInitialLoadingRef = useRef(false);      // verrou : bloque loadOlderMessages pendant le chargement initial
   const scrollMemory       = useRef({});          // mémoire de scroll par chatId  { chatId: scrollTop }
   const lastNewMsgCount    = useRef(0);           // nombre de messages la dernière fois
   const currentChatIdRef   = useRef(null);        // valeur synchrone du chatId courant
   const pollingLockRef     = useRef(false);       // évite les requêtes en double
+  const shownErrorIdsRef   = useRef(new Set());   // IDs des messages dont l'erreur a déjà été affichée
 
   // ─── POLLING CHATS ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -171,11 +288,16 @@ function App() {
         if (!chatId) return;
         const data = await (await fetch(`/api/messages/${chatId}?limit=${PAGE_SIZE}`)).json();
         setMessages(prev => {
-          // Détection d'erreurs NestJS pour le toast
-          const errorMsg = data.find(m => m.analysis_error)?.analysis_error;
-          if (errorMsg) {
-              setToast({ message: `❌ Échec Création : ${errorMsg}`, type: 'error' });
-              // Optionnel : On pourrait appeler une API ici pour "acknowledgé" l'erreur sur le serveur
+          // Détection d'erreurs NestJS pour le toast (une seule fois par message, et seulement si récent < 5 min)
+          const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
+          const errorMessage = data.find(m =>
+            m.analysis_error &&
+            !shownErrorIdsRef.current.has(m.id) &&
+            m.timestamp * 1000 > fiveMinutesAgo
+          );
+          if (errorMessage) {
+              shownErrorIdsRef.current.add(errorMessage.id);
+              setToast({ message: `❌ Échec Création : ${errorMessage.analysis_error}`, type: 'error' });
           }
 
           if (data.length === prev.length) {
@@ -292,47 +414,272 @@ function App() {
     );
   }, []);
 
-  // ─── ACTION MANUELLE (CHAP-CHAP) ─────────────────────────────────────────────
+  // ─── POLLING POUR RÉSULTAT DE CRÉATION ─────────────────────────────────────
+  const pollForResult = useCallback(async (messageIds, maxAttempts = 60) => {
+    const chatId = currentChatIdRef.current;
+    if (!chatId) return { success: false, error: 'Chat non sélectionné' };
+
+    let attempts = 0;
+    const pollInterval = 2000; // 2 secondes
+
+    while (attempts < maxAttempts) {
+      attempts++;
+      // Mise à jour progressive de la barre de progression (50% → 95%)
+      const progress = Math.min(50 + (attempts / maxAttempts) * 45, 95);
+      setSubmissionState(prev => ({ ...prev, progress }));
+
+      try {
+        const res = await fetch(`/api/messages/${chatId}?limit=50`);
+        const data = await res.json();
+
+        // Filtrer uniquement les messages concernés par cette soumission
+        const relevantMsgs = data.filter(msg => messageIds.includes(msg.id));
+
+        // PRIORITÉ 1 : Chercher un SUCCÈS (real_property_id présent)
+        // On vérifie d'abord TOUS les messages pour un succès avant de regarder les erreurs
+        const successMsg = relevantMsgs.find(msg => msg.real_property_id);
+        if (successMsg) {
+          return {
+            success: true,
+            propertyId: successMsg.real_property_id,
+            neighborhood: successMsg.neighborhood,
+            district: successMsg.district,
+            municipality: successMsg.municipality
+          };
+        }
+
+        // PRIORITÉ 2 : Chercher une ERREUR seulement si pas de succès
+        const errorMsg = relevantMsgs.find(msg => msg.analysis_error);
+        if (errorMsg) {
+          // Parser les champs manquants si présents
+          const errors = [];
+          const match = errorMsg.analysis_error.match(/Champs manquants:\s*(.+)/i);
+          if (match) {
+            const fields = match[1].split(',').map(f => f.trim());
+            fields.forEach(f => errors.push({ field: f }));
+          }
+          return {
+            success: false,
+            error: errorMsg.analysis_error,
+            errors: errors
+          };
+        }
+      } catch (e) {
+        console.error('Polling error:', e);
+      }
+
+      await new Promise(resolve => setTimeout(resolve, pollInterval));
+    }
+
+    return { success: false, error: 'Timeout: La création prend trop de temps. Vérifiez plus tard.' };
+  }, []);
+
+  // ─── VÉRIFICATION DES MÉDIAS ─────────────────────────────────────────────────
+  const verifyMediaFiles = useCallback(async (messageIds) => {
+    // Récupérer les messages sélectionnés pour vérifier leurs médias
+    const selectedMsgs = messages.filter(m => messageIds.includes(m.id));
+    const mediaUrls = selectedMsgs
+      .filter(m => m.has_media && m.media_path && m.media_mime_type?.startsWith('image/'))
+      .map(m => '/' + m.media_path.replace('./', ''));
+
+    const missingMedia = [];
+    for (const url of mediaUrls) {
+      try {
+        const res = await fetch(url, { method: 'HEAD' });
+        if (!res.ok) missingMedia.push(url);
+      } catch {
+        missingMedia.push(url);
+      }
+    }
+
+    return { valid: missingMedia.length === 0, missingCount: missingMedia.length };
+  }, [messages]);
+
+  // ─── RESET DE L'ÉTAT DE SOUMISSION ────────────────────────────────────────────
+  const resetSubmissionState = useCallback(() => {
+    setSubmissionState({
+      isSubmitting: false,
+      status: 'idle',
+      progress: 0,
+      errors: [],
+      successData: null,
+      errorMessage: null
+    });
+    // Restaurer la position de scroll
+    if (scrollPositionBeforeSubmit.current != null && containerRef.current) {
+      containerRef.current.scrollTop = scrollPositionBeforeSubmit.current;
+      scrollPositionBeforeSubmit.current = null;
+    }
+  }, []);
+
+  // ─── ACTION MANUELLE (AVEC OVERLAY UX AMÉLIORÉ) ──────────────────────────────
   const handleManualAction = useCallback(async (action) => {
     if (selectedMessageIds.length === 0) return;
     const ids = [...selectedMessageIds];
 
-    // Verrou scroll : pendant 4 secondes après l'action, aucun auto-scroll
-    isManualActionRef.current = true;
-    setTimeout(() => { isManualActionRef.current = false; }, 4000);
+    // Pour l'action "noise", on garde l'ancienne logique simple
+    if (action === 'noise') {
+      isManualActionRef.current = true;
+      setTimeout(() => { isManualActionRef.current = false; }, 4000);
 
-    // Optimistic UI
+      setMessages(prev => prev.map(msg =>
+        ids.includes(msg.id)
+          ? { ...msg, property_group_id: 'noise' }
+          : msg
+      ));
+      setSelectedMessageIds([]);
+
+      try {
+        const res = await fetch('/api/messages/manual-group', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ messageIds: ids, action })
+        });
+        const data = await res.json();
+        if (!data.success) setToast({ message: data.error || "Erreur", type: 'error' });
+      } catch(e) { console.error('noise action', e); }
+      return;
+    }
+
+    // ─── CRÉATION DE BIEN (action === 'group') ─────────────────────────────────
+    // 1. Sauvegarder la position scroll
+    if (containerRef.current) {
+      scrollPositionBeforeSubmit.current = containerRef.current.scrollTop;
+    }
+
+    // 2. Verrou scroll
+    isManualActionRef.current = true;
+    setSelectedMessageIds([]);
+
+    // 3. Afficher overlay + état "verifying"
+    setSubmissionState({
+      isSubmitting: true,
+      status: 'verifying',
+      progress: 0,
+      errors: [],
+      successData: null,
+      errorMessage: null
+    });
+
+    // 4. Vérifier les médias
+    const mediaCheck = await verifyMediaFiles(ids);
+    if (!mediaCheck.valid) {
+      setSubmissionState(prev => ({
+        ...prev,
+        status: 'error',
+        errorMessage: `${mediaCheck.missingCount} image(s) introuvable(s). Veuillez recharger la page.`
+      }));
+      isManualActionRef.current = false;
+      return;
+    }
+
+    // 5. Appliquer l'UI optimiste et passer à "sending"
     const pendingGroupId = `pending_${Date.now()}`;
     setMessages(prev => prev.map(msg =>
       ids.includes(msg.id)
         ? {
             ...msg,
-            property_group_id: action === 'noise' ? 'noise' : pendingGroupId,
-            real_property_id: action === 'group' ? null : msg.real_property_id,
-            neighborhood: action === 'group' ? null : msg.neighborhood,
-            district:     action === 'group' ? null : msg.district,
-            municipality: action === 'group' ? null : msg.municipality,
+            property_group_id: pendingGroupId,
+            real_property_id: null,
+            neighborhood: null,
+            district: null,
+            municipality: null,
+            analysis_error: null
           }
         : msg
     ));
-    setSelectedMessageIds([]);
 
+    setSubmissionState(prev => ({ ...prev, status: 'sending', progress: 10 }));
 
     try {
-      const endpoint = action === 'group' ? '/api/messages/submit-property' : '/api/messages/manual-group';
-      const res  = await fetch(endpoint, {
+      // 6. Envoyer au backend
+      const res = await fetch('/api/messages/submit-property', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messageIds: ids, action })
+        body: JSON.stringify({ messageIds: ids, action: 'group' })
       });
-      const data = await res.json();
-      if (!data.success) alert(data.error || "Erreur lors de l'action");
-      else if (action === 'group') {
-          // Si c'est une soumission, on peut afficher un petit toast ou message informatif
-          console.log("Bien soumis avec succès, en cours de création...");
+
+      if (res.status === 202 || res.ok) {
+        // 7. Passer à "processing" et commencer le polling
+        setSubmissionState(prev => ({ ...prev, status: 'processing', progress: 50 }));
+
+        const result = await pollForResult(ids);
+
+        if (result.success) {
+          // 8. Succès : afficher bannière verte
+          setSubmissionState(prev => ({
+            ...prev,
+            status: 'success',
+            progress: 100,
+            successData: {
+              propertyId: result.propertyId,
+              neighborhood: result.neighborhood,
+              district: result.district,
+              municipality: result.municipality
+            }
+          }));
+
+          // Mettre à jour les messages avec les données du bien
+          setMessages(prev => prev.map(msg =>
+            ids.includes(msg.id)
+              ? {
+                  ...msg,
+                  property_group_id: `real_prop_${result.propertyId}`,
+                  real_property_id: result.propertyId,
+                  neighborhood: result.neighborhood,
+                  district: result.district,
+                  municipality: result.municipality,
+                  analysis_error: null
+                }
+              : msg
+          ));
+
+          // Fermer l'overlay après 3 secondes
+          setTimeout(() => {
+            resetSubmissionState();
+          }, 3000);
+        } else {
+          // 9. Erreur : afficher bannière rouge
+          // Retirer l'UI optimiste
+          setMessages(prev => prev.map(msg =>
+            ids.includes(msg.id)
+              ? {
+                  ...msg,
+                  property_group_id: null,
+                  real_property_id: null,
+                  analysis_error: result.error
+                }
+              : msg
+          ));
+
+          setSubmissionState(prev => ({
+            ...prev,
+            status: 'error',
+            errors: result.errors || [],
+            errorMessage: result.error
+          }));
+        }
+      } else {
+        const data = await res.json();
+        throw new Error(data.error || 'Erreur serveur');
       }
-    } catch(e) { console.error('manual action', e); }
-  }, [selectedMessageIds]);
+    } catch(e) {
+      console.error('submit error', e);
+      // Retirer l'UI optimiste
+      setMessages(prev => prev.map(msg =>
+        ids.includes(msg.id)
+          ? { ...msg, property_group_id: null, real_property_id: null }
+          : msg
+      ));
+      setSubmissionState(prev => ({
+        ...prev,
+        status: 'error',
+        errorMessage: e.message || 'Erreur de connexion au serveur'
+      }));
+    } finally {
+      isManualActionRef.current = false;
+    }
+  }, [selectedMessageIds, messages, verifyMediaFiles, pollForResult, resetSubmissionState]);
 
   // ─── SCROLL VER LE BAS ───────────────────────────────────────────────────────
   const scrollToBottom = () => {
@@ -348,7 +695,14 @@ function App() {
     const result = [];
     let wrapper  = null;
 
-    messages.forEach((msg) => {
+    // Filtrer les messages envoyés (is_from_me) et les messages ignorés (noise)
+    const filteredMessages = messages.filter(msg => {
+      const isFromMe = msg.is_from_me === true || msg.is_from_me === 1 || msg.is_from_me === "true";
+      const isNoise = msg.property_group_id === 'noise';
+      return !isFromMe && !isNoise;
+    });
+
+    filteredMessages.forEach((msg) => {
       const isNewSender = msg.sender_id !== lastSender || (parseInt(msg.timestamp) - lastTimestamp > 300);
       const dateStr = new Date(parseInt(msg.timestamp) * 1000)
         .toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
@@ -356,24 +710,26 @@ function App() {
       // Gestion des blocs propriété (IA ou Soumis)
       if (msg.property_group_id && msg.property_group_id !== lastGroupId) {
         if (wrapper) result.push(wrapper);
-        if (msg.property_group_id !== 'noise') {
-          const isRealProp = !!msg.real_property_id;
-          let label = isRealProp ? `✅ BIEN CRÉÉ #${msg.real_property_id}` : '🏠 BIEN DÉTECTÉ (En attente)';
-          
-          // Ajouter la localisation si disponible
-          if (isRealProp && (msg.neighborhood || msg.district)) {
-              const locParts = [msg.neighborhood, msg.district, msg.municipality].filter(Boolean);
-              if (locParts.length > 0) label += ` — 📍 ${locParts.join(' - ')}`;
-          }
+        const isRealProp = !!msg.real_property_id;
+        let label = isRealProp ? `✅ BIEN CRÉÉ #${msg.real_property_id}` : '🏠 BIEN DÉTECTÉ (En attente)';
 
-          wrapper = {
-            type: 'wrapper',
-            label: msg.property_group_id.startsWith('ignore_') ? '🛑 À IGNORER' : label,
-            key: msg.property_group_id,
-            isCreated: isRealProp,
-            children: []
-          };
-        } else { wrapper = null; }
+        // Ajouter la localisation si disponible
+        if (isRealProp && (msg.neighborhood || msg.district)) {
+            const locParts = [msg.neighborhood, msg.district, msg.municipality].filter(Boolean);
+            if (locParts.length > 0) label += ` — 📍 ${locParts.join(' - ')}`;
+        }
+
+        wrapper = {
+          type: 'wrapper',
+          label: msg.property_group_id.startsWith('ignore_') ? '🛑 À IGNORER' : label,
+          key: msg.property_group_id,
+          isCreated: isRealProp,
+          propertyId: isRealProp ? msg.real_property_id : null,
+          locationLabel: isRealProp && (msg.neighborhood || msg.district)
+            ? ` — 📍 ${[msg.neighborhood, msg.district, msg.municipality].filter(Boolean).join(' - ')}`
+            : '',
+          children: []
+        };
       } else if (!msg.property_group_id && lastGroupId) {
         if (wrapper) result.push(wrapper);
         wrapper = null;
@@ -404,6 +760,16 @@ function App() {
 
   const currentChatName = chats.find(c => c.whatsapp_chat_id === currentChatId)?.chat_name || currentChatId;
 
+  // ─── HANDLERS POUR L'OVERLAY DE SOUMISSION ────────────────────────────────────
+  const handleCloseSubmission = useCallback(() => {
+    resetSubmissionState();
+  }, [resetSubmissionState]);
+
+  const handleRetrySubmission = useCallback(() => {
+    resetSubmissionState();
+    // L'utilisateur devra resélectionner les messages et réessayer
+  }, [resetSubmissionState]);
+
   // ─── RENDU ────────────────────────────────────────────────────────────────────
   return (
     <div className="app-container">
@@ -429,6 +795,13 @@ function App() {
           </div>
         </div>
       )}
+
+      {/* Overlay de Soumission (Création de Bien) */}
+      <SubmissionOverlay
+        state={submissionState}
+        onClose={handleCloseSubmission}
+        onRetry={handleRetrySubmission}
+      />
 
       {/* Sidebar */}
       <aside className="sidebar">
@@ -495,7 +868,24 @@ function App() {
                 if (item?.type === 'wrapper') {
                   return (
                     <div key={item.key || idx} className={`property-group-wrapper ${item.isCreated ? 'created' : ''}`}>
-                      <div className="property-group-header-label">{item.label}</div>
+                      <div className="property-group-header-label">
+                        {item.propertyId ? (
+                          <>
+                            ✅ BIEN CRÉÉ{' '}
+                            <a
+                              href={`https://test-business-locapay.vercel.app/admin/proprietes/${item.propertyId}/details`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="property-link"
+                            >
+                              #{item.propertyId}
+                            </a>
+                            {item.locationLabel}
+                          </>
+                        ) : (
+                          item.label
+                        )}
+                      </div>
                       {item.children}
                     </div>
                   );
@@ -511,15 +901,15 @@ function App() {
               </button>
             )}
 
-            {/* Barre d'action manuelle */}
-            {selectedMessageIds.length > 0 && (
+            {/* Barre d'action manuelle (masquée pendant soumission) */}
+            {selectedMessageIds.length > 0 && !submissionState.isSubmitting && (
               <div className="manual-action-bar">
                 <div className="selection-info">
                   <span>{selectedMessageIds.length}</span> sélectionné(s)
                 </div>
                 <div className="action-buttons">
-                  <button className="btn-action btn-noise"  onClick={() => handleManualAction('noise')}>🗑️ Ignorer</button>
-                  <button className="btn-action btn-group"  onClick={() => handleManualAction('group')}>🚀 Créer le BIEN</button>
+                  <button className="btn-action btn-noise" onClick={() => handleManualAction('noise')}>🗑️ Ignorer</button>
+                  <button className="btn-action btn-group" onClick={() => handleManualAction('group')}>🚀 Créer le BIEN</button>
                   <button className="btn-action btn-cancel" onClick={() => setSelectedMessageIds([])}>✕</button>
                 </div>
               </div>

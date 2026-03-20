@@ -436,6 +436,19 @@ body {
     color: #00a884;
 }
 
+.property-link {
+    color: #0066cc;
+    text-decoration: underline;
+    font-weight: 700;
+    cursor: pointer;
+    transition: color 0.2s ease;
+}
+
+.property-link:hover {
+    color: #004499;
+    text-decoration: underline;
+}
+
 /* BULLES DE MESSAGES : ÉTATS MANUELS */
 .message {
     transition: background-color 0.4s ease, border-color 0.4s ease;
@@ -600,4 +613,224 @@ body {
     0%, 100% { transform: translateX(0); }
     20%, 60% { transform: translateX(-5px); }
     40%, 80% { transform: translateX(5px); }
+}
+
+/* ─── OVERLAY DE SOUMISSION (CRÉATION DE BIEN) ────────────────────────────────── */
+.submission-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(11, 20, 26, 0.6);
+    backdrop-filter: blur(4px);
+    z-index: 9998;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    animation: fadeIn 0.3s ease;
+}
+
+.submission-overlay.error-overlay {
+    background: rgba(11, 20, 26, 0.75);
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+/* Bannière en haut */
+.submission-banner {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    padding: 20px 30px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    z-index: 9999;
+    animation: slideDown 0.4s ease-out;
+}
+
+@keyframes slideDown {
+    from { transform: translateY(-100%); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+}
+
+/* États de la bannière */
+.submission-banner.processing {
+    background: linear-gradient(135deg, #f0f2f5 0%, #e8ecef 100%);
+    border-bottom: 3px solid #00a884;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+}
+
+.submission-banner.success {
+    background: linear-gradient(135deg, #00a884 0%, #00c49a 100%);
+    color: white;
+    border-bottom: 3px solid #00875a;
+    box-shadow: 0 4px 20px rgba(0, 168, 132, 0.4);
+}
+
+.submission-banner.error {
+    background: linear-gradient(135deg, #ffffff 0%, #fff5f5 100%);
+    border-bottom: 3px solid #ea0038;
+    box-shadow: 0 4px 30px rgba(234, 0, 56, 0.2);
+    padding: 25px 30px;
+    max-width: 500px;
+    margin: 80px auto 0;
+    border-radius: 16px;
+    position: relative;
+    top: auto;
+}
+
+/* Contenu de la bannière */
+.banner-content {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 16px;
+    font-weight: 500;
+    color: #111b21;
+}
+
+.submission-banner.success .banner-content {
+    color: white;
+    font-size: 18px;
+}
+
+.banner-icon {
+    font-size: 24px;
+}
+
+.banner-text {
+    letter-spacing: 0.3px;
+}
+
+/* En-tête d'erreur */
+.banner-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.banner-title {
+    font-size: 18px;
+    font-weight: 600;
+    color: #ea0038;
+}
+
+/* Détails des erreurs */
+.error-details {
+    width: 100%;
+    padding: 15px;
+    background: #fff0f0;
+    border-radius: 10px;
+    margin: 10px 0;
+}
+
+.error-subtitle {
+    font-size: 13px;
+    font-weight: 600;
+    color: #667781;
+    margin-bottom: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.error-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.error-list li {
+    padding: 8px 12px;
+    background: white;
+    border-radius: 6px;
+    margin-bottom: 6px;
+    font-size: 14px;
+    border-left: 3px solid #ea0038;
+}
+
+.error-field {
+    font-weight: 600;
+    color: #111b21;
+}
+
+.error-message {
+    color: #667781;
+    font-size: 13px;
+}
+
+.error-generic {
+    font-size: 14px;
+    color: #111b21;
+    line-height: 1.5;
+}
+
+/* Boutons d'action */
+.banner-actions {
+    display: flex;
+    gap: 12px;
+    margin-top: 15px;
+    width: 100%;
+    justify-content: center;
+}
+
+.btn-retry {
+    background: #00a884;
+    color: white;
+    border: none;
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-retry:hover {
+    background: #00875a;
+    transform: translateY(-1px);
+}
+
+.btn-close {
+    background: transparent;
+    color: #667781;
+    border: 1px solid #e9edef;
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-close:hover {
+    background: #f0f2f5;
+    color: #111b21;
+}
+
+/* Barre de progression */
+.progress-bar-container {
+    width: 300px;
+    max-width: 80%;
+    height: 6px;
+    background: rgba(0, 0, 0, 0.1);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, #00a884 0%, #00c49a 100%);
+    border-radius: 3px;
+    transition: width 0.5s ease;
+    animation: progressPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes progressPulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
 }
