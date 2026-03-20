@@ -322,10 +322,6 @@ puppeteerOptions.args = [
 
 const client = new Client({
     authStrategy: new LocalAuth(),
-    webVersionCache: {
-        type: 'remote',
-        remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-js/main/dist/wppconnect-wa.js',
-    },
     puppeteer: puppeteerOptions
 });
 
