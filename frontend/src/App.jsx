@@ -89,6 +89,7 @@ function App() {
 
   const containerRef       = useRef(null);       // ref vers la div messages-container
   const isManualActionRef  = useRef(false);       // verrou : bloque le scroll auto après action manuelle
+  const isInitialLoadingRef = useRef(false);      // verrou : bloque loadOlderMessages pendant le chargement initial
   const scrollMemory       = useRef({});          // mémoire de scroll par chatId  { chatId: scrollTop }
   const lastNewMsgCount    = useRef(0);           // nombre de messages la dernière fois
   const currentChatIdRef   = useRef(null);        // valeur synchrone du chatId courant
@@ -128,21 +129,27 @@ function App() {
     // Chargement initial
     const loadInitial = async () => {
       try {
+        // 🔒 Activer le verrou : empêche loadOlderMessages de se déclencher pendant le chargement
+        isInitialLoadingRef.current = true;
+
         const data = await (await fetch(`/api/messages/${currentChatId}?limit=${PAGE_SIZE}`)).json();
         setMessages(data);
         setHasMore(data.length === PAGE_SIZE);
         lastNewMsgCount.current = data.length;
-        // Après render, on scroll en bas (premier chargement) ou on restaure la position
+
+        // Après render, scroll en bas ou restaure la position
         setTimeout(() => {
           const el = containerRef.current;
           if (!el) return;
           if (scrollMemory.current[currentChatId] != null) {
-            el.scrollTop = scrollMemory.current[currentChatId]; // restaurer position mémorisée
+            el.scrollTop = scrollMemory.current[currentChatId];
           } else {
-            el.scrollTop = el.scrollHeight; // première visite → aller en bas
+            el.scrollTop = el.scrollHeight;
           }
-        }, 50);
-      } catch(e) { console.error('init messages', e); }
+          // 🔓 Désactiver le verrou après que le scroll est restauré
+          setTimeout(() => { isInitialLoadingRef.current = false; }, 500);
+        }, 80);
+      } catch(e) { console.error('init messages', e); isInitialLoadingRef.current = false; }
     };
     loadInitial();
 
@@ -199,6 +206,8 @@ function App() {
 
   // ─── CHARGEMENT DES MESSAGES PLUS ANCIENS (SCROLL VERS LE HAUT) ─────────────
   const loadOlderMessages = useCallback(async () => {
+    // 🔒 Bloqué pendant le chargement initial (sinon scrollTop=0 le déclenche par erreur)
+    if (isInitialLoadingRef.current) return;
     if (isLoadingMore || !hasMore || messages.length === 0) return;
     setIsLoadingMore(true);
 
