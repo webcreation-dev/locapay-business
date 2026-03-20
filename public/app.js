@@ -234,17 +234,34 @@ async function loadMessages(chatId) {
         finalHTML += '</div>' + (isInsidePropertyBlock ? '</div>' : '');
         
         // Gestion intelligente du scroll
-        const isAtBottom = msgsEl.scrollHeight - msgsEl.scrollTop <= msgsEl.clientHeight + 100;
+        const threshold = 50; // Seuil plus strict pour éviter les sauts intempestifs
+        const isAtBottom = msgsEl.scrollHeight - msgsEl.scrollTop <= msgsEl.clientHeight + threshold;
+        const oldScrollTop = msgsEl.scrollTop;
+        const oldScrollHeight = msgsEl.scrollHeight;
         
         // Anti-clignotement conversation
         if (lastMessagesHTML !== finalHTML) {
             lastMessagesHTML = finalHTML;
             msgsEl.innerHTML = finalHTML;
             
-            // On ne scrolle que si l'utilisateur était déjà en bas ou si c'est le premier chargement
-            if (isAtBottom || !msgsEl.dataset.initialized) {
+            // Si c'est le premier chargement du chat, on va en bas d'office
+            if (!msgsEl.dataset.initialized) {
                 msgsEl.scrollTop = msgsEl.scrollHeight;
                 msgsEl.dataset.initialized = 'true';
+            } 
+            // Sinon, si on était déjà en bas, on suit le flux
+            else if (isAtBottom) {
+                msgsEl.scrollTop = msgsEl.scrollHeight;
+            } 
+            // Sinon (on est remonté), on RESTE là où on était (on restaure le scroll)
+            // et on pourrait afficher un indicateur "Nouveaux messages"
+            else {
+                msgsEl.scrollTop = oldScrollTop;
+                
+                // Si la taille a augmenté significativement (nouveaux messages)
+                if (msgsEl.scrollHeight > oldScrollHeight) {
+                    showNewMessageToast();
+                }
             }
         }
 
@@ -252,6 +269,27 @@ async function loadMessages(chatId) {
         console.error("Erreur chargement messages:", e);
     }
 }
+
+function showNewMessageToast() {
+    const btn = document.getElementById('scrollToBottomBtn');
+    if (btn) btn.style.display = 'flex';
+}
+
+function scrollToBottom() {
+    msgsEl.scrollTop = msgsEl.scrollHeight;
+    const btn = document.getElementById('scrollToBottomBtn');
+    if (btn) btn.style.display = 'none';
+}
+
+// Hide button when manually scrolling to bottom
+msgsEl.addEventListener('scroll', () => {
+    const threshold = 50;
+    const isAtBottom = msgsEl.scrollHeight - msgsEl.scrollTop <= msgsEl.clientHeight + threshold;
+    if (isAtBottom) {
+        const btn = document.getElementById('scrollToBottomBtn');
+        if (btn) btn.style.display = 'none';
+    }
+});
 
 function toggleMessageSelection(id) {
     const index = selectedMessageIds.indexOf(id);
@@ -323,3 +361,4 @@ window.selectChat = selectChat;
 window.toggleMessageSelection = toggleMessageSelection;
 window.handleManualAction = handleManualAction;
 window.clearSelection = clearSelection;
+window.scrollToBottom = scrollToBottom;
