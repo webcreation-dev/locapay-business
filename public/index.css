@@ -207,6 +207,7 @@ body {
     display: flex;
     flex-direction: column;
     z-index: 1;
+    overflow-anchor: none; /* Désactive le comportement automatique du navigateur pour éviter les sauts */
 }
 
 .messages-container::-webkit-scrollbar {
@@ -345,8 +346,8 @@ body {
 .media-item.large {
     aspect-ratio: auto;
     height: auto;
-    max-height: 300px;
-    max-width: 300px;
+    max-height: 220px; /* Taille réduite */
+    max-width: 220px;  /* Taille réduite */
     object-fit: contain;
     border-radius: 4px;
 }
@@ -525,15 +526,17 @@ body {
     transition: background-color 0.4s ease, border-color 0.4s ease;
 }
 
-/* Style pour messages ignorés (Bruit) */
+/* Style pour messages ignorés (Bruit) - PLUS ACCENTUÉ */
 .message.noise {
-    background-color: rgba(255, 77, 77, 0.08) !important; /* Rouge très léger */
-    border: 1px solid rgba(255, 77, 77, 0.2);
-    opacity: 0.85;
+    background-color: #fff1f0 !important; /* Fond rosé plus visible */
+    border: 1px solid #ffa39e !important; /* Bordure rouge clair */
+    opacity: 0.8;
 }
 
 .message.noise .message-content {
-    color: #667781;
+    color: #8c8c8c;
+    text-decoration: line-through; /* Optionnel: barré pour bien montrer que c'est ignoré */
+    font-size: 13px;
 }
 
 /* Style pour messages déjà groupés */

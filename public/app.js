@@ -199,7 +199,7 @@ async function loadMessages(chatId) {
 
             // Render message bubble
             let messageDivHTML = `
-                <div class="message ${msg.is_from_me ? 'out' : 'in'} ${isFirstInGroup ? 'first' : ''} ${bubbleClasses.join(' ')}" style="width:fit-content; max-width: 320px;">
+                <div id="msg-${msg.id}" class="message ${msg.is_from_me ? 'out' : 'in'} ${isFirstInGroup ? 'first' : ''} ${bubbleClasses.join(' ')}" style="width:fit-content; max-width: 320px;">
                     ${!msg.is_from_me && isFirstInGroup ? `<div class="sender-name" style="color:${getRandomColor(msg.sender_name || 'Inconnu')}">${msg.sender_name || 'Inconnu'}</div>` : ''}
                     <div class="message-content">
             `;
@@ -241,6 +241,9 @@ async function loadMessages(chatId) {
         
         // Anti-clignotement conversation
         if (lastMessagesHTML !== finalHTML) {
+            // Empêche le "saut" de scroll si le contenu est temporairement plus court (ex: images en cours)
+            msgsEl.style.minHeight = msgsEl.scrollHeight + 'px';
+            
             lastMessagesHTML = finalHTML;
             msgsEl.innerHTML = finalHTML;
             
@@ -248,15 +251,21 @@ async function loadMessages(chatId) {
             if (!msgsEl.dataset.initialized) {
                 msgsEl.scrollTop = msgsEl.scrollHeight;
                 msgsEl.dataset.initialized = 'true';
+                msgsEl.style.minHeight = '';
             } 
             // Sinon, si on était déjà en bas, on suit le flux
             else if (isAtBottom) {
                 msgsEl.scrollTop = msgsEl.scrollHeight;
+                msgsEl.style.minHeight = '';
             } 
             // Sinon (on est remonté), on RESTE là où on était (on restaure le scroll)
-            // et on pourrait afficher un indicateur "Nouveaux messages"
             else {
                 msgsEl.scrollTop = oldScrollTop;
+                // On retire le minHeight après un court délai pour laisser le temps au moteur de rendu 
+                // mais sans affecter le scroll en cours
+                setTimeout(() => {
+                    msgsEl.style.minHeight = '';
+                }, 100);
                 
                 // Si la taille a augmenté significativement (nouveaux messages)
                 if (msgsEl.scrollHeight > oldScrollHeight) {
@@ -315,24 +324,42 @@ function updateActionBar() {
 async function handleManualAction(action) {
     if (selectedMessageIds.length === 0) return;
     
+    // UI OPTIMISTE (Chap-chap)
+    const idsToProcess = [...selectedMessageIds];
+    idsToProcess.forEach(id => {
+        const el = document.getElementById(`msg-${id}`);
+        if (el) {
+            if (action === 'noise') {
+                el.classList.add('noise');
+                el.classList.remove('grouped');
+            } else {
+                el.classList.add('grouped');
+                el.classList.remove('noise');
+            }
+        }
+    });
+
+    // On vide tout de suite pour pouvoir sélectionner la suite
+    selectedMessageIds = [];
+    updateActionBar();
+    document.querySelectorAll('.msg-checkbox').forEach(cb => cb.checked = false);
+
     try {
         const res = await fetch('/api/messages/manual-group', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                messageIds: selectedMessageIds,
+                messageIds: idsToProcess,
                 action: action
             })
         });
         
         const data = await res.json();
-        if (data.success) {
-            selectedMessageIds = [];
-            updateActionBar();
-            await loadMessages(currentChatId);
-        } else {
+        if (!data.success) {
             alert(data.error || "Erreur lors de l'action");
+            await loadMessages(currentChatId); // Recharger en cas d'erreur
         }
+        // Pas besoin de recharger si tout va bien, le prochain polling s'en chargera
     } catch (e) {
         console.error("Manual action failed:", e);
     }
