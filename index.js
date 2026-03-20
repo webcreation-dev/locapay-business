@@ -219,7 +219,7 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
                         const nestData = response.data;
                         if (nestData.success) {
                             const { property_id, location } = nestData;
-                            // Mettre à jour les messages avec l'ID du bien et la localisation
+                            // ✅ CAS 1 : Bien créé → on le lie aux messages
                             await db.query(
                                 `UPDATE messages 
                                  SET property_group_id = $1, 
@@ -238,10 +238,38 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
                                     messageIds
                                 ]
                             );
-                            console.log(`✅ Bien #${property_id} crée et lié aux messages.`);
+                            console.log(`✅ Bien #${property_id} créé et lié aux messages.`);
+                        } else {
+                            // ❌ CAS 2 : NestJS répond mais échec (description insuffisante, etc.)
+                            // → On dé-groupe pour permettre de réessayer
+                            const reason = nestData.error || 'Informations insuffisantes';
+                            const missingFields = nestData.missingFields?.map(f => f.field).join(', ') || '';
+                            console.error(`❌ Création échouée: ${reason}${missingFields ? ` | Champs manquants: ${missingFields}` : ''}`);
+                            
+                            await db.query(
+                                `UPDATE messages 
+                                 SET property_group_id = NULL,
+                                     real_property_id = NULL,
+                                     is_analyzed = FALSE 
+                                 WHERE id = ANY($1)`,
+                                [messageIds]
+                            );
+                            console.log(`↩️ Messages dégroupés — l'utilisateur peut réessayer.`);
                         }
-                    }).catch(err => {
-                        console.error("❌ Erreur lors de l'appel à NestJS:", err.message);
+                    }).catch(async (err) => {
+                        // ❌ CAS 3 : Erreur réseau / NestJS down
+                        console.error("❌ Erreur réseau lors de l'appel à NestJS:", err.message);
+                        
+                        // Dé-grouper pour permettre de réessayer
+                        await db.query(
+                            `UPDATE messages 
+                             SET property_group_id = NULL,
+                                 real_property_id = NULL,
+                                 is_analyzed = FALSE 
+                             WHERE id = ANY($1)`,
+                            [messageIds]
+                        ).catch(dbErr => console.error('❌ Erreur dé-groupement:', dbErr.message));
+                        console.log(`↩️ Messages dégroupés suite à l'erreur réseau.`);
                     });
 
                 } catch (e) {
