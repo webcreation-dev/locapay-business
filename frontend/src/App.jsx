@@ -86,6 +86,7 @@ function App() {
   const [showScrollToBottom, setShowScrollToBottom]  = useState(false);
   const [isLoadingMore,      setIsLoadingMore]       = useState(false);
   const [hasMore,            setHasMore]             = useState(true);
+  const [toast,              setToast]              = useState(null); // { message: string, type: 'error'|'success' }
 
   const containerRef       = useRef(null);       // ref vers la div messages-container
   const isManualActionRef  = useRef(false);       // verrou : bloque le scroll auto après action manuelle
@@ -120,6 +121,14 @@ function App() {
     const id = setInterval(fetch_, 3000);
     return () => clearInterval(id);
   }, []);
+
+  // ─── EFFACER TOAST APRÈS 8s ────────────────────────────────────────────────
+  useEffect(() => {
+    if (toast) {
+      const id = setTimeout(() => setToast(null), 8000);
+      return () => clearTimeout(id);
+    }
+  }, [toast]);
 
   // ─── POLLING MESSAGES (NOUVEAUX SEULEMENT) ───────────────────────────────────
   useEffect(() => {
@@ -162,6 +171,13 @@ function App() {
         if (!chatId) return;
         const data = await (await fetch(`/api/messages/${chatId}?limit=${PAGE_SIZE}`)).json();
         setMessages(prev => {
+          // Détection d'erreurs NestJS pour le toast
+          const errorMsg = data.find(m => m.analysis_error)?.analysis_error;
+          if (errorMsg) {
+              setToast({ message: `❌ Échec Création : ${errorMsg}`, type: 'error' });
+              // Optionnel : On pourrait appeler une API ici pour "acknowledgé" l'erreur sur le serveur
+          }
+
           if (data.length === prev.length) {
             // Même nombre de messages : on met juste à jour property_group_id si changé
             const hasChange = data.some((d, i) => d.property_group_id !== prev[i]?.property_group_id);
@@ -391,6 +407,16 @@ function App() {
   // ─── RENDU ────────────────────────────────────────────────────────────────────
   return (
     <div className="app-container">
+      {/* Toast Notification */}
+      {toast && (
+        <div className={`toast-container ${toast.type}`}>
+          <div className="toast-content">
+            {toast.message}
+            <button className="toast-close" onClick={() => setToast(null)}>✕</button>
+          </div>
+        </div>
+      )}
+
       {/* QR Overlay */}
       {botStatus === 'QR' && qrCode && (
         <div className="qr-overlay">

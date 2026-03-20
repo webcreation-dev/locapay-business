@@ -6,3 +6,5 @@ sessions
 Dockerfile
 .dockerignore
 docker-compose.yml
+media/
+public/

@@ -102,6 +102,7 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
             await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS neighborhood VARCHAR(255);');
             await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS district VARCHAR(255);');
             await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS municipality VARCHAR(255);');
+            await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS analysis_error TEXT;');
             
             await db.query('CREATE INDEX IF NOT EXISTS idx_messages_chat_id ON messages(chat_id);');
             await db.query('CREATE INDEX IF NOT EXISTS idx_messages_chat_id_ts ON messages(chat_id, timestamp DESC);');
@@ -129,7 +130,7 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
                         // Charger les messages AVANT un timestamp donné (pagination vers le haut)
                         query = `
                             SELECT * FROM (
-                                SELECT id, message_id, body, timestamp, is_from_me, is_group, chat_id, sender_id, sender_name, has_media, media_path, media_mime_type, property_group_id, real_property_id, neighborhood, district, municipality
+                                SELECT id, message_id, body, timestamp, is_from_me, is_group, chat_id, sender_id, sender_name, has_media, media_path, media_mime_type, property_group_id, real_property_id, neighborhood, district, municipality, analysis_error
                                 FROM messages 
                                 WHERE chat_id = $1 AND timestamp < $2
                                 ORDER BY timestamp DESC 
@@ -142,7 +143,7 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
                         // Chargement initial : les N derniers messages
                         query = `
                             SELECT * FROM (
-                                SELECT id, message_id, body, timestamp, is_from_me, is_group, chat_id, sender_id, sender_name, has_media, media_path, media_mime_type, property_group_id, real_property_id, neighborhood, district, municipality
+                                SELECT id, message_id, body, timestamp, is_from_me, is_group, chat_id, sender_id, sender_name, has_media, media_path, media_mime_type, property_group_id, real_property_id, neighborhood, district, municipality, analysis_error
                                 FROM messages 
                                 WHERE chat_id = $1 
                                 ORDER BY timestamp DESC 
@@ -178,7 +179,7 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
                     }
 
                     // 2. Fusionner les textes et collecter les images
-                    let combinedText = "";
+                    const texts = [];
                     const imageUrls = [];
                     let senderPhone = "";
                     
@@ -191,17 +192,19 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
                     }
 
                     fetchedMessages.forEach(msg => {
-                        if (msg.body) combinedText += msg.body + "\n";
+                        if (msg.body && msg.body.trim()) {
+                            texts.push(msg.body.trim());
+                        }
                         if (msg.has_media && msg.media_path && msg.media_mime_type?.startsWith('image/')) {
                             // Construire l'URL publique accessible par NestJS
-                            // Note: En mode local/Docker, localhost peut être trompeur. 
-                            // On utilise l'adresse IP du serveur ou le nom du service Docker.
-                            // Pour simplifier on suppose que NestJS peut accéder au bot.
                             const botHost = process.env.BOT_PUBLIC_URL || 'http://whatsapp-bot:3000';
                             const cleanPath = msg.media_path.replace('./', '');
                             imageUrls.push(`${botHost}/${cleanPath}`);
                         }
                     });
+
+                    // 3. Fusionner le texte
+                    const finalDescription = texts.join('\n\n').trim() || '(Annonce immobilière WhatsApp - Sans texte)';
 
                     // 3. Envoyer à NestJS
                     const nestUrl = process.env.NESTJS_API_URL || 'http://locapay-backend:4000/properties/create-from-whatsapp';
@@ -211,7 +214,7 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
 
                     // Traitement asynchrone (NestJS)
                     axios.post(nestUrl, {
-                        description: combinedText,
+                        description: finalDescription,
                         manager_phone: senderPhone,
                         image_urls: imageUrls,
                         user_id: process.env.LOCAPAY_BOT_USER_ID || 1
@@ -227,28 +230,28 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
                         if (nestData.success) {
                             const { property_id, location } = nestData;
                             await db.query(
-                                `UPDATE messages SET property_group_id = $1, real_property_id = $2, neighborhood = $3, district = $4, municipality = $5, is_analyzed = TRUE WHERE id = ANY($6)`,
+                                `UPDATE messages SET property_group_id = $1, real_property_id = $2, neighborhood = $3, district = $4, municipality = $5, is_analyzed = TRUE, analysis_error = NULL WHERE id = ANY($6)`,
                                 [`real_prop_${property_id}`, property_id, location?.neighborhood || '', location?.district || '', location?.municipality || '', messageIds]
                             );
                             console.log(`✅ Succès NestJS : Bien #${property_id} créé.`);
                         } else {
                             const errMsg = nestData.error || nestData.message || JSON.stringify(nestData).substring(0, 200);
                             console.error(`❌ Échec NestJS (Métier) :`, errMsg);
-                            await db.query(`UPDATE messages SET property_group_id = NULL, real_property_id = NULL, is_analyzed = FALSE WHERE id = ANY($1)`, [messageIds]);
+                            await db.query(`UPDATE messages SET property_group_id = NULL, real_property_id = NULL, is_analyzed = FALSE, analysis_error = $1 WHERE id = ANY($2)`, [errMsg, messageIds]);
                         }
                     }).catch(async (err) => {
-                        // 🔍 LOG ULTRA DÉTAILLÉ
+                        let errMsg = "Erreur inconnue";
                         if (err.response) {
-                            console.error(`❌ NestJS a répondu avec ERREUR ${err.response.status}:`, err.response.data);
+                            errMsg = `NestJS Error ${err.response.status}: ${JSON.stringify(err.response.data).substring(0, 100)}`;
                         } else if (err.request) {
-                            console.error(`❌ NestJS INJOIGNABLE (Pas de réponse) sur ${nestUrl}. Vérifiez le réseau Docker.`);
+                            errMsg = `NestJS INJOIGNABLE sur ${nestUrl}`;
                         } else {
-                            console.error(`❌ Erreur configuration Axios:`, err.message);
+                            errMsg = `Axios error: ${err.message}`;
                         }
-                        
+                        console.error(`❌ ${errMsg}`);
                         await db.query(
-                            `UPDATE messages SET property_group_id = NULL, real_property_id = NULL, is_analyzed = FALSE WHERE id = ANY($1)`,
-                            [messageIds]
+                            `UPDATE messages SET property_group_id = NULL, real_property_id = NULL, is_analyzed = FALSE, analysis_error = $1 WHERE id = ANY($2)`,
+                            [errMsg, messageIds]
                         );
                         console.log(`↩️ Messages dégroupés suite à l'erreur.`);
                     });
@@ -300,6 +303,7 @@ connectToDbWithRetry();
 const puppeteerOptions = {
     headless: true,
     bypassCSP: true,  // ← FIX: empêche WhatsApp de rediriger pendant l'injection
+    protocolTimeout: 60000, // ⏳ Augmentation du timeout (60s) pour les VPS lents
     args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
