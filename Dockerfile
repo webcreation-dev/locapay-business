@@ -19,8 +19,7 @@ WORKDIR /usr/src/app
 COPY package*.json ./
 RUN npm install
 COPY . .
-# Vider public/ et y mettre le build React proprement
-RUN rm -rf ./public/index.html ./public/assets
-COPY --from=frontend-build /app/frontend/dist/ ./public/
-RUN echo "✅ Public après copy React:" && ls ./public/
+# Copier le build React dans un dossier dédié (séparé de public/)
+COPY --from=frontend-build /app/frontend/dist/ ./frontend-dist/
+RUN echo "✅ React build dans frontend-dist:" && ls ./frontend-dist/
 CMD ["sh", "-c", "rm -f /usr/src/app/.wwebjs_auth/session*/SingletonLock && node index.js"]

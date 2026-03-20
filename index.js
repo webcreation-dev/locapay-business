@@ -11,12 +11,20 @@ const path = require('path');
 const app = express();
 app.use(cors());
 app.use(express.json()); // Support pour le JSON dans les requêtes POST
+app.use(express.static(path.join(__dirname, 'frontend-dist')));
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/media', express.static(path.join(__dirname, 'media')));
 
-// Fallback SPA : toute route non-API renvoie index.html (nécessaire pour React Router)
-app.get(/^(?!\/api).*/, (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+// Fallback SPA : renvoie index.html de React pour toute route non-API
+app.get(/^\/(?!api).*/, (req, res) => {
+    const indexPath = path.join(__dirname, 'frontend-dist', 'index.html');
+    const fs = require('fs');
+    if (fs.existsSync(indexPath)) {
+        res.sendFile(indexPath);
+    } else {
+        // Fallback si React n'est pas buildé (dev local)
+        res.sendFile(path.join(__dirname, 'public', 'index.html'));
+    }
 });
 
 // État global du bot pour le frontend
