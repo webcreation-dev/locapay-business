@@ -234,14 +234,19 @@ async function loadMessages(chatId) {
         finalHTML += '</div>' + (isInsidePropertyBlock ? '</div>' : '');
         
         // Gestion intelligente du scroll
-        const threshold = 50; // Seuil plus strict pour éviter les sauts intempestifs
+        const threshold = 50; 
         const isAtBottom = msgsEl.scrollHeight - msgsEl.scrollTop <= msgsEl.clientHeight + threshold;
         const oldScrollTop = msgsEl.scrollTop;
         const oldScrollHeight = msgsEl.scrollHeight;
         
-        // Anti-clignotement conversation
-        if (lastMessagesHTML !== finalHTML) {
-            // Empêche le "saut" de scroll si le contenu est temporairement plus court (ex: images en cours)
+        // --- OPTIMISATION CRITIQUE : Comparaison de contenu (hors checkboxes) ---
+        // On crée une signature du contenu qui ignore si les cases sont cochées ou non
+        const contentHash = finalHTML.replace(/checked/g, "").replace(/onchange="[^"]*"/g, "");
+        
+        if (msgsEl.dataset.contentHash !== contentHash) {
+            msgsEl.dataset.contentHash = contentHash;
+            
+            // Empêche le "saut" de scroll si le contenu est temporairement plus court
             msgsEl.style.minHeight = msgsEl.scrollHeight + 'px';
             
             lastMessagesHTML = finalHTML;
@@ -261,17 +266,17 @@ async function loadMessages(chatId) {
             // Sinon (on est remonté), on RESTE là où on était (on restaure le scroll)
             else {
                 msgsEl.scrollTop = oldScrollTop;
-                // On retire le minHeight après un court délai pour laisser le temps au moteur de rendu 
-                // mais sans affecter le scroll en cours
                 setTimeout(() => {
                     msgsEl.style.minHeight = '';
                 }, 100);
                 
-                // Si la taille a augmenté significativement (nouveaux messages)
                 if (msgsEl.scrollHeight > oldScrollHeight) {
                     showNewMessageToast();
                 }
             }
+        } else {
+            // Le contenu n'a pas changé (seulement peut-être les checkboxes)
+            // On ne touche à RIEN au DOM. Le scroll restera fixe au pixel près !
         }
 
     } catch (e) {
