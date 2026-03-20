@@ -26,20 +26,28 @@ const PAGE_SIZE = 30; // Messages chargés par page
 
 // ─── COMPOSANT BULLE (MÉMOÏSÉ STRICTEMENT) ────────────────────────────────────
 const MessageBubble = memo(({ msg, isFirstInGroup, dateStr, isSelected, onSelect }) => {
+  // Conversion robuste de is_from_me en vrai booléen
+  const isFromMe  = msg.is_from_me === true || msg.is_from_me === 1 || msg.is_from_me === "true";
   const isNoise   = msg.property_group_id === 'noise';
   const isGrouped = msg.property_group_id && !isNoise;
   const mediaUrl  = msg.media_path ? '/' + msg.media_path.replace('./', '') : null;
 
-  const bubbleClass = `message ${msg.is_from_me ? 'out' : 'in'} ${isFirstInGroup ? 'first' : ''} ${isNoise ? 'noise' : ''} ${isGrouped ? 'grouped' : ''}`.trim();
+  const bubbleClass = `message ${isFromMe ? 'out' : 'in'} ${isFirstInGroup ? 'first' : ''} ${isNoise ? 'noise' : ''} ${isGrouped ? 'grouped' : ''}`.trim();
 
   return (
     <div className={`message-group ${isFirstInGroup ? 'first' : ''}`}>
-      <div className="message-checkbox-container">
-        {!msg.is_from_me && (
+      <div 
+        className="message-checkbox-container" 
+        style={{ 
+          justifyContent: isFromMe ? 'flex-end' : 'flex-start',
+          width: '100%'
+        }}
+      >
+        {!isFromMe && (
           <input type="checkbox" className="msg-checkbox" checked={isSelected} onChange={() => onSelect(msg.id)} />
         )}
         <div className={bubbleClass} style={{ width: 'fit-content', maxWidth: '320px' }}>
-          {!msg.is_from_me && isFirstInGroup && (
+          {!isFromMe && isFirstInGroup && (
             <div className="sender-name" style={{ color: getRandomColor(msg.sender_name || 'Inconnu') }}>
               {msg.sender_name || 'Inconnu'}
             </div>
