@@ -14,6 +14,11 @@ app.use(express.json()); // Support pour le JSON dans les requêtes POST
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/media', express.static(path.join(__dirname, 'media')));
 
+// Fallback SPA : toute route non-API renvoie index.html (nécessaire pour React Router)
+app.get(/^(?!\/api).*/, (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
 // État global du bot pour le frontend
 let botStatus = 'LOADING'; // LOADING, QR, CONNECTED, DISCONNECTED
 let currentQR = null;
