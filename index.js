@@ -315,20 +315,18 @@ puppeteerOptions.args = [
     '--disable-setuid-sandbox',
     '--disable-extensions',
     '--disable-dev-shm-usage',
-    '--disable-accelerated-2d-canvas',
-    '--no-first-run',
+    '--disable-gpu',
     '--no-zygote',
-    '--single-process',
-    '--disable-gpu'
+    '--no-first-run'
 ];
 
 const client = new Client({
     authStrategy: new LocalAuth(),
     puppeteer: puppeteerOptions,
-    // Forcer une version stable de WhatsApp Web pour éviter le crash
+    // Utilisation d'une version très stable éprouvée par la communauté
     webVersionCache: {
         type: 'remote',
-        remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.3000.1018905389-alpha.html',
+        remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html',
     }
 });
 
