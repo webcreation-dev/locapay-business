@@ -273,12 +273,15 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
                             );
                             console.log(`✅ Succès NestJS : Bien #${property_id} créé.`);
                         } else {
-                            // Construire un message d'erreur détaillé avec les champs manquants
-                            let errMsg = nestData.error || nestData.message || "Erreur inconnue";
+                            // On affiche d'abord le message d'erreur principal
+                            let errMsg = nestData.error || nestData.message || "Erreur de traitement";
+                            
+                            // On ajoute les précisions sur les champs si elles existent
                             if (nestData.missingFields && Array.isArray(nestData.missingFields) && nestData.missingFields.length > 0) {
                                 const fieldsList = nestData.missingFields.map(f => f.field).join(', ');
-                                errMsg = `Champs manquants: ${fieldsList}`;
+                                errMsg += ` (${fieldsList})`;
                             }
+                            
                             console.error(`❌ Échec NestJS (Métier) :`, errMsg);
                             await db.query(`UPDATE messages SET property_group_id = NULL, real_property_id = NULL, is_analyzed = FALSE, analysis_error = $1 WHERE id = ANY($2)`, [errMsg, messageIds]);
                         }
