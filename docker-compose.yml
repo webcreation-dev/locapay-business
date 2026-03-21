@@ -11,6 +11,9 @@ services:
       - ./media:/usr/src/app/media
       # Permet de modifier le frontend en direct test
       - ./public:/usr/src/app/public
+    networks:
+      - default
+      - locapay-network
     depends_on:
       - db
     shm_size: '512mb'
@@ -28,9 +31,13 @@ services:
       POSTGRES_PASSWORD: password123
       POSTGRES_DB: whatsapp_logs
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - db-data:/var/lib/postgresql/data
     ports:
       - "15432:5432"
 
 volumes:
-  pgdata:
+  db-data:
+
+networks:
+  locapay-network:
+    external: true
