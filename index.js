@@ -265,7 +265,8 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
                         const nestData = raw?.data || raw;
 
                         if (nestData.success) {
-                            const { property_id, location } = nestData;
+                            const property_id = nestData.property_id || nestData.propertyId;
+                            const { location } = nestData;
                             await db.query(
                                 `UPDATE messages SET property_group_id = $1, real_property_id = $2, neighborhood = $3, district = $4, municipality = $5, is_analyzed = TRUE, analysis_error = NULL WHERE id = ANY($6)`,
                                 [`real_prop_${property_id}`, property_id, location?.neighborhood || '', location?.district || '', location?.municipality || '', messageIds]
