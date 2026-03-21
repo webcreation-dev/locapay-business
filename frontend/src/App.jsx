@@ -22,6 +22,32 @@ const formatTime = (timestamp) => {
   return date.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
 };
 
+const getDateLabel = (timestamp) => {
+  const date = new Date(parseInt(timestamp) * 1000);
+  const now = new Date();
+  
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  
+  const msgDate = new Date(date);
+  msgDate.setHours(0, 0, 0, 0);
+
+  if (msgDate.getTime() === today.getTime()) return "AUJOURD'HUI";
+  if (msgDate.getTime() === yesterday.getTime()) return "HIER";
+  
+  const sevenDaysAgo = new Date(today);
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+  
+  if (msgDate.getTime() > sevenDaysAgo.getTime()) {
+    return date.toLocaleDateString('fr-FR', { weekday: 'long' }).toUpperCase();
+  }
+  
+  return date.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }).toUpperCase();
+};
+
 const PAGE_SIZE = 30; // Messages chargés par page
 
 // ─── TRADUCTION DES CHAMPS MANQUANTS ─────────────────────────────────────────
@@ -37,99 +63,6 @@ const translateFieldName = (field) => ({
   'rooms': 'Chambres'
 }[field] || field);
 
-// ─── COMPOSANT OVERLAY DE SOUMISSION ─────────────────────────────────────────
-const SubmissionOverlay = memo(({ state, onClose, onRetry }) => {
-  if (!state.isSubmitting && state.status === 'idle') return null;
-
-  const statusConfig = {
-    verifying: { icon: '🔍', text: 'Vérification des médias...', color: '#667781' },
-    sending: { icon: '📤', text: 'Envoi au serveur...', color: '#667781' },
-    processing: { icon: '🤖', text: 'Analyse IA en cours...', color: '#00a884' },
-    success: { icon: '✅', text: '', color: '#00a884' },
-    error: { icon: '❌', text: 'Échec de la création', color: '#ea0038' }
-  };
-
-  const config = statusConfig[state.status] || statusConfig.verifying;
-
-  // Succès : bannière verte avec info propriété
-  if (state.status === 'success' && state.successData) {
-    const locParts = [
-      state.successData.neighborhood,
-      state.successData.district,
-      state.successData.municipality
-    ].filter(Boolean);
-    const locationStr = locParts.length > 0 ? ` — 📍 ${locParts.join(' - ')}` : '';
-
-    return (
-      <div className="submission-overlay">
-        <div className="submission-banner success">
-          <div className="banner-content">
-            <span className="banner-icon">✅</span>
-            <span className="banner-text">
-              Bien #{state.successData.propertyId} créé{locationStr}
-            </span>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Erreur : bannière rouge avec liste des champs manquants
-  if (state.status === 'error') {
-    return (
-      <div className="submission-overlay error-overlay">
-        <div className="submission-banner error">
-          <div className="banner-header">
-            <span className="banner-icon">❌</span>
-            <span className="banner-title">Échec de la création</span>
-          </div>
-          {state.errors.length > 0 && (
-            <div className="error-details">
-              <div className="error-subtitle">Champs manquants ou invalides :</div>
-              <ul className="error-list">
-                {state.errors.map((err, idx) => (
-                  <li key={idx}>
-                    <span className="error-field">{translateFieldName(err.field || err)}</span>
-                    {err.message && <span className="error-message"> — {err.message}</span>}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-          {state.errors.length === 0 && state.errorMessage && (
-            <div className="error-details">
-              <div className="error-generic">{state.errorMessage}</div>
-            </div>
-          )}
-          <div className="banner-actions">
-            <button className="btn-retry" onClick={onRetry}>🔄 Réessayer</button>
-            <button className="btn-close" onClick={onClose}>Fermer</button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // États de chargement : verifying, sending, processing
-  return (
-    <div className="submission-overlay">
-      <div className="submission-banner processing">
-        <div className="banner-content">
-          <span className="banner-icon">{config.icon}</span>
-          <span className="banner-text">{config.text}</span>
-        </div>
-        {state.status === 'processing' && (
-          <div className="progress-bar-container">
-            <div
-              className="progress-bar"
-              style={{ width: `${state.progress}%` }}
-            />
-          </div>
-        )}
-      </div>
-    </div>
-  );
-});
 
 // ─── COMPOSANT BULLE (MÉMOÏSÉ STRICTEMENT) ────────────────────────────────────
 const MessageBubble = memo(({ msg, isFirstInGroup, dateStr, isSelected, onSelect }) => {
@@ -195,13 +128,7 @@ function App() {
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [toast, setToast] = useState(null); // { message: string, type: 'error'|'success' }
-  const [submissionState, setSubmissionState] = useState({
-    isSubmitting: false,
-    status: 'idle', // 'verifying' | 'sending' | 'processing' | 'success' | 'error'
-    progress: 0,
-    errors: [],     // [{ field: 'rent_price', message: 'Prix requis' }]
-    successData: null // { propertyId, location }
-  });
+  const [activeSubmissions, setActiveSubmissions] = useState({}); // { [pendingGroupId]: { status, progress, errors, successData } }
 
   const containerRef = useRef(null);       // ref vers la div messages-container
   const scrollPositionBeforeSubmit = useRef(null); // Position scroll avant soumission
@@ -429,8 +356,20 @@ function App() {
     );
   }, []);
 
+  const toggleMultipleSelection = useCallback((ids) => {
+    setSelectedMessageIds(prev => {
+      const allIncluded = ids.every(id => prev.includes(id));
+      if (allIncluded) {
+        return prev.filter(x => !ids.includes(x));
+      } else {
+        const toAdd = ids.filter(x => !prev.includes(x));
+        return [...prev, ...toAdd];
+      }
+    });
+  }, []);
+
   // ─── POLLING POUR RÉSULTAT DE CRÉATION ─────────────────────────────────────
-  const pollForResult = useCallback(async (messageIds, maxAttempts = 60) => {
+  const pollForResult = useCallback(async (messageIds, groupId, maxAttempts = 60) => {
     const chatId = currentChatIdRef.current;
     if (!chatId) return { success: false, error: 'Chat non sélectionné' };
 
@@ -441,7 +380,10 @@ function App() {
       attempts++;
       // Mise à jour progressive de la barre de progression (50% → 95%)
       const progress = Math.min(50 + (attempts / maxAttempts) * 45, 95);
-      setSubmissionState(prev => ({ ...prev, progress }));
+      setActiveSubmissions(prev => ({
+        ...prev,
+        [groupId]: { ...prev[groupId], progress }
+      }));
 
       try {
         const res = await fetch(`/api/messages/${chatId}?limit=50`);
@@ -451,7 +393,6 @@ function App() {
         const relevantMsgs = data.filter(msg => messageIds.includes(msg.id));
 
         // PRIORITÉ 1 : Chercher un SUCCÈS (real_property_id présent)
-        // On vérifie d'abord TOUS les messages pour un succès avant de regarder les erreurs
         const successMsg = relevantMsgs.find(msg => msg.real_property_id);
         if (successMsg) {
           return {
@@ -466,7 +407,6 @@ function App() {
         // PRIORITÉ 2 : Chercher une ERREUR seulement si pas de succès
         const errorMsg = relevantMsgs.find(msg => msg.analysis_error);
         if (errorMsg) {
-          // Parser les champs manquants si présents
           const errors = [];
           const match = errorMsg.analysis_error.match(/Champs manquants:\s*(.+)/i);
           if (match) {
@@ -510,22 +450,6 @@ function App() {
     return { valid: missingMedia.length === 0, missingCount: missingMedia.length };
   }, [messages]);
 
-  // ─── RESET DE L'ÉTAT DE SOUMISSION ────────────────────────────────────────────
-  const resetSubmissionState = useCallback(() => {
-    setSubmissionState({
-      isSubmitting: false,
-      status: 'idle',
-      progress: 0,
-      errors: [],
-      successData: null,
-      errorMessage: null
-    });
-    // Restaurer la position de scroll
-    if (scrollPositionBeforeSubmit.current != null && containerRef.current) {
-      containerRef.current.scrollTop = scrollPositionBeforeSubmit.current;
-      scrollPositionBeforeSubmit.current = null;
-    }
-  }, []);
 
   // ─── ACTION MANUELLE (AVEC OVERLAY UX AMÉLIORÉ) ──────────────────────────────
   const handleManualAction = useCallback(async (action) => {
@@ -557,39 +481,33 @@ function App() {
     }
 
     // ─── CRÉATION DE BIEN (action === 'group') ─────────────────────────────────
-    // 1. Sauvegarder la position scroll
-    if (containerRef.current) {
-      scrollPositionBeforeSubmit.current = containerRef.current.scrollTop;
-    }
-
-    // 2. Verrou scroll
+    // 1. Verrou scroll (léger)
     isManualActionRef.current = true;
+    setTimeout(() => { isManualActionRef.current = false; }, 2000);
     setSelectedMessageIds([]);
 
-    // 3. Afficher overlay + état "verifying"
-    setSubmissionState({
-      isSubmitting: true,
-      status: 'verifying',
-      progress: 0,
-      errors: [],
-      successData: null,
-      errorMessage: null
-    });
+    // 2. Générer un ID de groupe temporaire
+    const pendingGroupId = `pending_${Date.now()}`;
+
+    // 3. Ajouter à activeSubmissions (mode non-bloquant)
+    setActiveSubmissions(prev => ({
+      ...prev,
+      [pendingGroupId]: { status: 'verifying', progress: 0 }
+    }));
 
     // 4. Vérifier les médias
     const mediaCheck = await verifyMediaFiles(ids);
     if (!mediaCheck.valid) {
-      setSubmissionState(prev => ({
-        ...prev,
-        status: 'error',
-        errorMessage: `${mediaCheck.missingCount} image(s) introuvable(s). Veuillez recharger la page.`
-      }));
-      isManualActionRef.current = false;
+      setToast({ message: `❌ Échec : ${mediaCheck.missingCount} image(s) introuvables.`, type: 'error' });
+      setActiveSubmissions(prev => {
+        const newOnes = { ...prev };
+        delete newOnes[pendingGroupId];
+        return newOnes;
+      });
       return;
     }
 
-    // 5. Appliquer l'UI optimiste et passer à "sending"
-    const pendingGroupId = `pending_${Date.now()}`;
+    // 5. Appliquer l'UI optimiste
     setMessages(prev => prev.map(msg =>
       ids.includes(msg.id)
         ? {
@@ -604,7 +522,10 @@ function App() {
         : msg
     ));
 
-    setSubmissionState(prev => ({ ...prev, status: 'sending', progress: 10 }));
+    setActiveSubmissions(prev => ({
+      ...prev,
+      [pendingGroupId]: { ...prev[pendingGroupId], status: 'sending', progress: 10 }
+    }));
 
     try {
       // 6. Envoyer au backend
@@ -616,25 +537,15 @@ function App() {
 
       if (res.status === 202 || res.ok) {
         // 7. Passer à "processing" et commencer le polling
-        setSubmissionState(prev => ({ ...prev, status: 'processing', progress: 50 }));
+        setActiveSubmissions(prev => ({
+          ...prev,
+          [pendingGroupId]: { ...prev[pendingGroupId], status: 'processing', progress: 50 }
+        }));
 
-        const result = await pollForResult(ids);
+        const result = await pollForResult(ids, pendingGroupId);
 
         if (result.success) {
-          // 8. Succès : afficher bannière verte
-          setSubmissionState(prev => ({
-            ...prev,
-            status: 'success',
-            progress: 100,
-            successData: {
-              propertyId: result.propertyId,
-              neighborhood: result.neighborhood,
-              district: result.district,
-              municipality: result.municipality
-            }
-          }));
-
-          // Mettre à jour les messages avec les données du bien
+          // 8. Succès : transformer optimistic UI en real UI
           setMessages(prev => prev.map(msg =>
             ids.includes(msg.id)
               ? {
@@ -649,13 +560,20 @@ function App() {
               : msg
           ));
 
-          // Fermer l'overlay après 3 secondes
+          setToast({ message: `✅ Bien #${result.propertyId} créé avec succès !`, type: 'success' });
+          
+          // Nettoyer après 1s
           setTimeout(() => {
-            resetSubmissionState();
-          }, 3000);
+            setActiveSubmissions(prev => {
+              const newOnes = { ...prev };
+              delete newOnes[pendingGroupId];
+              return newOnes;
+            });
+          }, 1000);
         } else {
-          // 9. Erreur : afficher bannière rouge
-          // Retirer l'UI optimiste
+          // 9. Erreur : RESET demandé par l'utilisateur
+          setToast({ message: `❌ Échec Création : ${result.error}`, type: 'error' });
+          
           setMessages(prev => prev.map(msg =>
             ids.includes(msg.id)
               ? {
@@ -667,12 +585,11 @@ function App() {
               : msg
           ));
 
-          setSubmissionState(prev => ({
-            ...prev,
-            status: 'error',
-            errors: result.errors || [],
-            errorMessage: result.error
-          }));
+          setActiveSubmissions(prev => {
+            const newOnes = { ...prev };
+            delete newOnes[pendingGroupId];
+            return newOnes;
+          });
         }
       } else {
         const data = await res.json();
@@ -680,21 +597,20 @@ function App() {
       }
     } catch (e) {
       console.error('submit error', e);
-      // Retirer l'UI optimiste
+      setToast({ message: `❌ Erreur : ${e.message}`, type: 'error' });
+      // RESET sur erreur réseau aussi
       setMessages(prev => prev.map(msg =>
         ids.includes(msg.id)
           ? { ...msg, property_group_id: null, real_property_id: null }
           : msg
       ));
-      setSubmissionState(prev => ({
-        ...prev,
-        status: 'error',
-        errorMessage: e.message || 'Erreur de connexion au serveur'
-      }));
-    } finally {
-      isManualActionRef.current = false;
+      setActiveSubmissions(prev => {
+        const newOnes = { ...prev };
+        delete newOnes[pendingGroupId];
+        return newOnes;
+      });
     }
-  }, [selectedMessageIds, messages, verifyMediaFiles, pollForResult, resetSubmissionState]);
+  }, [selectedMessageIds, messages, verifyMediaFiles, pollForResult]);
 
   // ─── SCROLL VER LE BAS ───────────────────────────────────────────────────────
   const scrollToBottom = () => {
@@ -744,38 +660,100 @@ function App() {
       }
     });
 
-    // 3. Construction du rendu en conservant l'ordre chronologique du "premier élément"
-    let lastSender = null, lastTimestamp = 0;
+    // 3. Aggregation des medias consécutifs
+    const aggregatedMessages = [];
+    let mediaBuffer = [];
 
-    filteredMessages.forEach((msg) => {
-      const isNewSender = msg.sender_id !== lastSender || (parseInt(msg.timestamp) - lastTimestamp > 300);
-      const dateStr = new Date(parseInt(msg.timestamp) * 1000)
-        .toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
-
-      const bubble = (
-        <MessageBubble
-          key={msg.id}
-          msg={msg}
-          isFirstInGroup={isNewSender}
-          dateStr={dateStr}
-          isSelected={selectedMessageIds.includes(msg.id)}
-          onSelect={toggleMessageSelection}
-        />
-      );
-
-      if (msg.property_group_id) {
-        // C'est un message groupé
-        const wrapper = groupWrappers.get(msg.property_group_id);
-        wrapper.children.push(bubble);
-
-        // On n'ajoute le wrapper au résultat final que lors de sa PREMIÈRE rencontre
-        if (!processedGroupIds.has(msg.property_group_id)) {
-          result.push(wrapper);
-          processedGroupIds.add(msg.property_group_id);
-        }
+    filteredMessages.forEach((msg, index) => {
+      const isPureMedia = msg.has_media && (!msg.body || msg.body.trim() === '') && !msg.property_group_id;
+      
+      if (isPureMedia) {
+        mediaBuffer.push(msg);
       } else {
-        // C'est un message normal (orphelin)
-        result.push(bubble);
+        if (mediaBuffer.length > 2) {
+          aggregatedMessages.push({ type: 'media-batch', messages: [...mediaBuffer], id: `batch-${mediaBuffer[0].id}` });
+        } else {
+          mediaBuffer.forEach(m => aggregatedMessages.push(m));
+        }
+        mediaBuffer = [];
+        aggregatedMessages.push(msg);
+      }
+
+      // Si c'est le dernier message et qu'il y a des medias dans le buffer
+      if (index === filteredMessages.length - 1 && mediaBuffer.length > 0) {
+        if (mediaBuffer.length > 2) {
+          aggregatedMessages.push({ type: 'media-batch', messages: [...mediaBuffer], id: `batch-${mediaBuffer[0].id}` });
+        } else {
+          mediaBuffer.forEach(m => aggregatedMessages.push(m));
+        }
+      }
+    });
+
+    // 4. Construction du rendu en conservant l'ordre chronologique
+    let lastSender = null, lastTimestamp = 0;
+    let lastDateLabel = null;
+
+    aggregatedMessages.forEach((item) => {
+      const msg = item.type === 'media-batch' ? item.messages[0] : item;
+      const dateLabel = getDateLabel(msg.timestamp);
+      
+      if (dateLabel !== lastDateLabel) {
+        result.push({ type: 'date-header', label: dateLabel, key: `date-${msg.timestamp}` });
+        lastDateLabel = dateLabel;
+      }
+
+      const isNewSender = msg.sender_id !== lastSender || (parseInt(msg.timestamp) - lastTimestamp > 300);
+      const dateStr = new Date(parseInt(msg.timestamp) * 1000).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+
+      if (item.type === 'media-batch') {
+        const ids = item.messages.map(m => m.id);
+        const allSelected = ids.every(id => selectedMessageIds.includes(id));
+
+        result.push(
+          <div key={item.id} className="media-batch-container">
+            <input 
+              type="checkbox" 
+              className="msg-checkbox" 
+              checked={allSelected} 
+              onChange={() => toggleMultipleSelection(ids)} 
+            />
+            <div className="media-batch-grid">
+              {item.messages.slice(0, 4).map((m, idx) => (
+                <div key={m.id} className="media-batch-item">
+                  {m.media_mime_type?.startsWith('image/') && <img src={'/' + m.media_path.replace('./', '')} alt="" />}
+                  {idx === 3 && item.messages.length > 4 && (
+                    <div className="media-batch-more">+{item.messages.length - 4}</div>
+                  )}
+                </div>
+              ))}
+            </div>
+            <div className="media-batch-footer">
+               Album: {item.messages.length} images
+            </div>
+          </div>
+        );
+      } else {
+        const bubble = (
+          <MessageBubble
+            key={msg.id}
+            msg={msg}
+            isFirstInGroup={isNewSender}
+            dateStr={dateStr}
+            isSelected={selectedMessageIds.includes(msg.id)}
+            onSelect={toggleMessageSelection}
+          />
+        );
+
+        if (msg.property_group_id) {
+          const wrapper = groupWrappers.get(msg.property_group_id);
+          wrapper.children.push(bubble);
+          if (!processedGroupIds.has(msg.property_group_id)) {
+            result.push(wrapper);
+            processedGroupIds.add(msg.property_group_id);
+          }
+        } else {
+          result.push(bubble);
+        }
       }
 
       lastSender = msg.sender_id;
@@ -783,19 +761,10 @@ function App() {
     });
 
     return result;
-  }, [messages, selectedMessageIds, toggleMessageSelection]);
+  }, [messages, selectedMessageIds, toggleMessageSelection, toggleMultipleSelection]);
 
   const currentChatName = chats.find(c => c.whatsapp_chat_id === currentChatId)?.chat_name || currentChatId;
 
-  // ─── HANDLERS POUR L'OVERLAY DE SOUMISSION ────────────────────────────────────
-  const handleCloseSubmission = useCallback(() => {
-    resetSubmissionState();
-  }, [resetSubmissionState]);
-
-  const handleRetrySubmission = useCallback(() => {
-    resetSubmissionState();
-    // L'utilisateur devra resélectionner les messages et réessayer
-  }, [resetSubmissionState]);
 
   // ─── RENDU ────────────────────────────────────────────────────────────────────
   return (
@@ -823,12 +792,6 @@ function App() {
         </div>
       )}
 
-      {/* Overlay de Soumission (Création de Bien) */}
-      <SubmissionOverlay
-        state={submissionState}
-        onClose={handleCloseSubmission}
-        onRetry={handleRetrySubmission}
-      />
 
       {/* Sidebar */}
       <aside className="sidebar">
@@ -854,6 +817,9 @@ function App() {
                 </div>
                 <div className="chat-bottom">
                   <div className="chat-preview">{chat.is_group ? 'Groupe' : 'Conversation'}</div>
+                  {parseInt(chat.unread_count) > 0 && (
+                    <div className="unread-badge">{chat.unread_count}</div>
+                  )}
                 </div>
               </div>
             </div>
@@ -890,11 +856,18 @@ function App() {
                 </div>
               )}
 
-              {/* Bulles */}
-              {groupedContent.map((item, idx) => {
-                if (item?.type === 'wrapper') {
+               {/* Bulles */}
+               {groupedContent.map((item, idx) => {
+                 if (item?.type === 'date-header') {
+                   return (
+                     <div key={item.key || idx} className="date-header">
+                       <span>{item.label}</span>
+                     </div>
+                   );
+                 }
+                 if (item?.type === 'wrapper') {
                   return (
-                    <div key={item.key || idx} className={`property-group-wrapper ${item.isCreated ? 'created' : ''}`}>
+                    <div key={item.key || idx} className={`property-group-wrapper ${item.isCreated ? 'created' : ''} ${item.key?.startsWith('pending_') ? 'pending' : ''}`}>
                       <div className="property-group-header-label">
                         {item.propertyId ? (
                           <>
@@ -909,6 +882,20 @@ function App() {
                             </a>
                             {item.locationLabel}
                           </>
+                        ) : item.key?.startsWith('pending_') ? (
+                          <div className="pending-indicator">
+                            <span className="pending-icon">
+                              {activeSubmissions[item.key]?.status === 'verifying' ? '🔍' :
+                               activeSubmissions[item.key]?.status === 'sending' ? '📤' : '🤖'}
+                            </span>
+                            <span className="pending-text">
+                              {activeSubmissions[item.key]?.status === 'verifying' ? 'Vérification...' :
+                               activeSubmissions[item.key]?.status === 'sending' ? 'Envoi...' : 'Analyse IA en cours...'}
+                            </span>
+                            <div className="pending-progress-container">
+                              <div className="pending-progress-bar" style={{ width: `${activeSubmissions[item.key]?.progress || 0}%` }} />
+                            </div>
+                          </div>
                         ) : (
                           item.label
                         )}
@@ -931,8 +918,8 @@ function App() {
               </button>
             )}
 
-            {/* Barre d'action manuelle (masquée pendant soumission) */}
-            {selectedMessageIds.length > 0 && !submissionState.isSubmitting && (
+            {/* Barre d'action manuelle */}
+            {selectedMessageIds.length > 0 && (
               <div className="manual-action-bar">
                 <div className="selection-info">
                   <span>{selectedMessageIds.length}</span> sélectionné(s)

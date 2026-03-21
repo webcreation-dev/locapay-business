@@ -113,8 +113,18 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
             // -- ROUTES API EXPRESS (Déclarées ici car on a besoin de db prêt) --
             app.get('/api/chats', async (req, res) => {
                 try {
-                    // Filtrer pour n'afficher que les groupes
-                    const { rows } = await db.query('SELECT * FROM chats WHERE is_group = true ORDER BY updated_at DESC');
+                    // Calculer le nombre de messages non traités (is_analyzed = false) pour chaque groupe
+                    const query = `
+                        SELECT c.*, 
+                        (SELECT COUNT(*) FROM messages m 
+                         WHERE m.chat_id = c.whatsapp_chat_id 
+                         AND m.is_analyzed = FALSE 
+                         AND m.is_from_me = FALSE) as unread_count
+                        FROM chats c 
+                        WHERE c.is_group = true 
+                        ORDER BY c.updated_at DESC
+                    `;
+                    const { rows } = await db.query(query);
                     res.json(rows);
                 } catch (e) {
                     res.status(500).json({ error: e.message });
