@@ -450,6 +450,12 @@ body {
     border-left: 4px solid var(--accent-color);
 }
 
+.property-group-content {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
 .property-group-wrapper.created {
     border-left: 4px solid #00a884;
     background: rgba(0, 168, 132, 0.05);
@@ -530,25 +536,8 @@ body {
 
 .property-group-wrapper.pending {
     border-left: 4px solid #007bff;
-    background: rgba(0, 123, 255, 0.05);
+    background: rgba(32, 44, 51, 0.4); /* Fond sombre comme les autres */
     position: relative;
-    overflow: hidden;
-}
-
-.property-group-wrapper.pending::after {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 200%;
-    height: 100%;
-    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
-    animation: placeholderShimmer 1.5s infinite;
-}
-
-@keyframes placeholderShimmer {
-    0% { transform: translateX(-100%); }
-    100% { transform: translateX(100%); }
 }
 
 .pending-indicator {
@@ -556,10 +545,10 @@ body {
     align-items: center;
     gap: 12px;
     width: 100%;
-    background: rgba(255, 255, 255, 0.8);
-    padding: 8px 12px;
+    background: rgba(255, 255, 255, 0.1); /* Plus discret */
+    padding: 6px 12px;
     border-radius: 8px;
-    box-shadow: 0 2px 8px rgba(0, 123, 255, 0.15);
+    border: 1px solid rgba(0, 123, 255, 0.3);
 }
 
 .pending-icon {

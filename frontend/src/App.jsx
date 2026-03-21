@@ -904,46 +904,49 @@ function App() {
                      </div>
                    );
                  }
-                 if (item?.type === 'wrapper') {
-                  return (
-                    <div key={item.key || idx} className={`property-group-wrapper ${item.isCreated ? 'created' : ''} ${item.key?.startsWith('pending_') ? 'pending' : ''}`}>
-                      <div className="property-group-header-label">
-                        {item.propertyId ? (
-                          <>
-                            ✅ BIEN CRÉÉ{' '}
-                            <a
-                              href={`https://admin-locapay.vercel.app/properties/${item.propertyId}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="property-link"
-                            >
-                              #{item.propertyId}
-                            </a>
-                            {item.locationLabel}
-                          </>
-                        ) : item.key?.startsWith('pending_') ? (
-                          <div className="pending-indicator">
-                            <span className="pending-icon">
-                              {activeSubmissions[item.key]?.status === 'verifying' ? '🔍' :
-                               activeSubmissions[item.key]?.status === 'sending' ? '📤' : '🤖'}
-                            </span>
-                            <span className="pending-text">
-                              {activeSubmissions[item.key]?.status === 'verifying' ? 'Vérification...' :
-                               activeSubmissions[item.key]?.status === 'sending' ? 'Envoi...' : 'Analyse IA en cours...'}
-                            </span>
-                            <div className="pending-progress-container">
-                              <div className="pending-progress-bar" style={{ width: `${activeSubmissions[item.key]?.progress || 0}%` }} />
+                  if (item?.type === 'wrapper') {
+                    const isPending = item.key?.startsWith('pending_');
+                    return (
+                      <div key={item.key || idx} className={`property-group-wrapper ${item.isCreated ? 'created' : ''} ${isPending ? 'pending' : ''}`}>
+                        <div className="property-group-header-label">
+                          {item.propertyId ? (
+                            <>
+                              ✅ BIEN CRÉÉ{' '}
+                              <a
+                                href={`https://admin-locapay.vercel.app/properties/${item.propertyId}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="property-link"
+                              >
+                                #{item.propertyId}
+                              </a>
+                              {item.locationLabel}
+                            </>
+                          ) : isPending ? (
+                            <div className="pending-indicator">
+                              <span className="pending-icon">
+                                {activeSubmissions[item.key]?.status === 'verifying' ? '🔍' :
+                                 activeSubmissions[item.key]?.status === 'sending' ? '📤' : '🤖'}
+                              </span>
+                              <span className="pending-text">
+                                {activeSubmissions[item.key]?.status === 'verifying' ? 'Vérification...' :
+                                 activeSubmissions[item.key]?.status === 'sending' ? 'Envoi...' : 'Analyse IA en cours...'}
+                              </span>
+                              <div className="pending-progress-container">
+                                <div className="pending-progress-bar" style={{ width: `${activeSubmissions[item.key]?.progress || 0}%` }} />
+                              </div>
                             </div>
-                          </div>
-                        ) : (
-                          item.label
-                        )}
+                          ) : (
+                            item.label
+                          )}
+                        </div>
+                        <div className="property-group-content">
+                          {item.children}
+                        </div>
                       </div>
-                      {item.children}
-                    </div>
-                  );
-                }
-                return item;
+                    );
+                  }
+                 return item;
               })}
             </div>
 
