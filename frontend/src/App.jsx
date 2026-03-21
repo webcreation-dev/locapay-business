@@ -660,29 +660,43 @@ function App() {
       }
     });
 
-    // 3. Aggregation des medias consécutifs
+    // 3. Aggregation des medias consécutifs (en respectant les groupes)
     const aggregatedMessages = [];
     let mediaBuffer = [];
+    let lastGroupId = null;
 
     filteredMessages.forEach((msg, index) => {
-      const isPureMedia = msg.has_media && (!msg.body || msg.body.trim() === '') && !msg.property_group_id;
+      const isPureMedia = msg.has_media && (!msg.body || msg.body.trim() === '');
+      const currentGroupId = msg.property_group_id;
       
-      if (isPureMedia) {
+      // On groupe si c'est pur media ET que c'est le même "parent" (groupe ou null)
+      if (isPureMedia && (mediaBuffer.length === 0 || currentGroupId === lastGroupId)) {
         mediaBuffer.push(msg);
+        lastGroupId = currentGroupId;
       } else {
         if (mediaBuffer.length > 2) {
-          aggregatedMessages.push({ type: 'media-batch', messages: [...mediaBuffer], id: `batch-${mediaBuffer[0].id}` });
+          aggregatedMessages.push({ 
+            type: 'media-batch', 
+            messages: [...mediaBuffer], 
+            id: `batch-${mediaBuffer[0].id}`,
+            property_group_id: lastGroupId 
+          });
         } else {
           mediaBuffer.forEach(m => aggregatedMessages.push(m));
         }
-        mediaBuffer = [];
-        aggregatedMessages.push(msg);
+        mediaBuffer = isPureMedia ? [msg] : [];
+        lastGroupId = isPureMedia ? currentGroupId : null;
+        if (!isPureMedia) aggregatedMessages.push(msg);
       }
 
-      // Si c'est le dernier message et qu'il y a des medias dans le buffer
       if (index === filteredMessages.length - 1 && mediaBuffer.length > 0) {
         if (mediaBuffer.length > 2) {
-          aggregatedMessages.push({ type: 'media-batch', messages: [...mediaBuffer], id: `batch-${mediaBuffer[0].id}` });
+          aggregatedMessages.push({ 
+            type: 'media-batch', 
+            messages: [...mediaBuffer], 
+            id: `batch-${mediaBuffer[0].id}`,
+            property_group_id: lastGroupId
+          });
         } else {
           mediaBuffer.forEach(m => aggregatedMessages.push(m));
         }
@@ -708,15 +722,18 @@ function App() {
       if (item.type === 'media-batch') {
         const ids = item.messages.map(m => m.id);
         const allSelected = ids.every(id => selectedMessageIds.includes(id));
+        const isGrouped = !!item.property_group_id;
 
-        result.push(
+        const batchElement = (
           <div key={item.id} className="media-batch-container">
-            <input 
-              type="checkbox" 
-              className="msg-checkbox" 
-              checked={allSelected} 
-              onChange={() => toggleMultipleSelection(ids)} 
-            />
+            {!isGrouped && (
+              <input 
+                type="checkbox" 
+                className="msg-checkbox" 
+                checked={allSelected} 
+                onChange={() => toggleMultipleSelection(ids)} 
+              />
+            )}
             <div className="media-batch-grid">
               {item.messages.slice(0, 4).map((m, idx) => (
                 <div key={m.id} className="media-batch-item">
@@ -732,6 +749,17 @@ function App() {
             </div>
           </div>
         );
+
+        if (isGrouped) {
+          const wrapper = groupWrappers.get(item.property_group_id);
+          wrapper.children.push(batchElement);
+          if (!processedGroupIds.has(item.property_group_id)) {
+            result.push(wrapper);
+            processedGroupIds.add(item.property_group_id);
+          }
+        } else {
+          result.push(batchElement);
+        }
       } else {
         const bubble = (
           <MessageBubble
