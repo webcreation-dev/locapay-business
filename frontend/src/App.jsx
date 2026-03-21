@@ -301,8 +301,13 @@ function App() {
           }
 
           if (data.length === prev.length) {
-            // Même nombre de messages : on met juste à jour property_group_id si changé
-            const hasChange = data.some((d, i) => d.property_group_id !== prev[i]?.property_group_id);
+            // Même nombre de messages : vérifier si property_group_id ou real_property_id a changé (par ID, pas par index)
+            const hasChange = data.some((d) => {
+              const prevMsg = prev.find(p => p.id === d.id);
+              return !prevMsg ||
+                     d.property_group_id !== prevMsg.property_group_id ||
+                     d.real_property_id !== prevMsg.real_property_id;
+            });
             return hasChange ? data : prev;
           }
           if (data.length > prev.length) {
