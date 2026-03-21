@@ -923,7 +923,10 @@ function App() {
 
             {/* Bouton nouveaux messages */}
             {showScrollToBottom && (
-              <button className="scroll-to-bottom-btn" onClick={scrollToBottom}>
+              <button
+                className={`scroll-to-bottom-btn ${selectedMessageIds.length > 0 ? 'shifted' : ''}`}
+                onClick={scrollToBottom}
+              >
                 👇 Nouveaux messages
               </button>
             )}

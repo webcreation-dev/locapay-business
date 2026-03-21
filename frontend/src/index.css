@@ -548,6 +548,11 @@ body {
     display: flex;
     align-items: center;
     gap: 8px;
+    transition: bottom 0.3s ease;
+}
+
+.scroll-to-bottom-btn.shifted {
+    bottom: 140px;
 }
 
 .scroll-to-bottom-btn:hover {
