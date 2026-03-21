@@ -13,7 +13,8 @@ services:
       - ./public:/usr/src/app/public
     networks:
       - default
-      - locapay-network
+      - locapay_dev_default   # Réseau NestJS DEV
+      - locapay_default       # Réseau NestJS PROD
     depends_on:
       - db
     shm_size: '512mb'
@@ -39,5 +40,7 @@ volumes:
   db-data:
 
 networks:
-  locapay-network:
+  locapay_dev_default:
+    external: true
+  locapay_default:
     external: true
