@@ -289,7 +289,7 @@ function App() {
         if (!chatId) return;
         const data = await (await fetch(`/api/messages/${chatId}?limit=${PAGE_SIZE}`)).json();
         setMessages(prev => {
-          // Détection d'erreurs NestJS pour le toast (une seule fois par message, et seulement si récent < 5 min)
+          // 1. Détection d'erreurs NestJS pour le toast (une seule fois par message)
           const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
           const errorMessage = data.find(m =>
             m.analysis_error &&
@@ -297,27 +297,36 @@ function App() {
             m.timestamp * 1000 > fiveMinutesAgo
           );
           if (errorMessage) {
-              shownErrorIdsRef.current.add(errorMessage.id);
-              setToast({ message: `❌ Échec Création : ${errorMessage.analysis_error}`, type: 'error' });
+            shownErrorIdsRef.current.add(errorMessage.id);
+            setToast({ message: `❌ Échec Création : ${errorMessage.analysis_error}`, type: 'error' });
           }
 
-          if (data.length === prev.length) {
-            // Même nombre de messages : vérifier si property_group_id ou real_property_id a changé (par ID, pas par index)
-            const hasChange = data.some((d) => {
-              const prevMsg = prev.find(p => p.id === d.id);
-              return !prevMsg ||
-                     d.property_group_id !== prevMsg.property_group_id ||
-                     d.real_property_id !== prevMsg.real_property_id;
-            });
-            return hasChange ? data : prev;
+          // 2. FUSION INTELLIGENTE (Fix : Ne pas perdre les messages chargés en scrollant)
+          // On crée une map des nouveaux messages par ID
+          const dataMap = new Map(data.map(m => [m.id, m]));
+          
+          // On met à jour les messages existants et on ajoute les nouveaux
+          const updatedPrev = prev.map(p => {
+            const fresh = dataMap.get(p.id);
+            if (!fresh) return p;
+            // On ne met à jour que si les champs importants ont changé (IA, bien créé, etc)
+            if (p.property_group_id !== fresh.property_group_id || p.real_property_id !== fresh.real_property_id || p.analysis_error !== fresh.analysis_error) {
+                return { ...p, ...fresh };
+            }
+            return p;
+          });
+
+          // Trouver les messages dans 'data' qui ne sont pas encore dans 'updatedPrev'
+          const existingIds = new Set(updatedPrev.map(p => p.id));
+          const newOnly = data.filter(d => !existingIds.has(d.id));
+
+          // Si rien n'a changé du tout, retourner prev (évite les re-renders inutiles)
+          if (newOnly.length === 0 && updatedPrev.every((msg, i) => msg === prev[i])) {
+              return prev;
           }
-          if (data.length > prev.length) {
-            // Nouveaux messages arrivés
-            return data;
-          }
-          return prev;
+
+          return [...updatedPrev, ...newOnly].sort((a, b) => a.timestamp - b.timestamp);
         });
-        setHasMore(data.length === PAGE_SIZE);
       } catch(e) { console.error('poll messages', e); }
       finally { pollingLockRef.current = false; }
     }, 2500);
@@ -697,49 +706,51 @@ function App() {
 
   // ─── RENDU DES BULLES (MEMOÏSÉ) ──────────────────────────────────────────────
   const groupedContent = useMemo(() => {
-    let lastGroupId = null, lastSender = null, lastTimestamp = 0;
     const result = [];
-    let wrapper  = null;
+    const groupWrappers = new Map(); // Map<groupId, WrapperObject>
+    const processedGroupIds = new Set();
 
-    // Filtrer les messages envoyés (is_from_me) et les messages ignorés (noise)
+    // 1. Filtrer les messages (exclure moi et le bruit)
     const filteredMessages = messages.filter(msg => {
       const isFromMe = msg.is_from_me === true || msg.is_from_me === 1 || msg.is_from_me === "true";
       const isNoise = msg.property_group_id === 'noise';
       return !isFromMe && !isNoise;
     });
 
+    // 2. Pré-calculer les groupes pour ceux qui ont un property_group_id
+    filteredMessages.forEach(msg => {
+      if (msg.property_group_id) {
+        if (!groupWrappers.has(msg.property_group_id)) {
+          const isRealProp = !!msg.real_property_id;
+          let label = isRealProp ? `✅ BIEN CRÉÉ #${msg.real_property_id}` : '🏠 BIEN DÉTECTÉ (En attente)';
+
+          if (isRealProp && (msg.neighborhood || msg.district)) {
+            const locParts = [msg.neighborhood, msg.district, msg.municipality].filter(Boolean);
+            if (locParts.length > 0) label += ` — 📍 ${locParts.join(' - ')}`;
+          }
+
+          groupWrappers.set(msg.property_group_id, {
+            type: 'wrapper',
+            label: msg.property_group_id.startsWith('ignore_') ? '🛑 À IGNORER' : label,
+            key: msg.property_group_id,
+            isCreated: isRealProp,
+            propertyId: isRealProp ? msg.real_property_id : null,
+            locationLabel: isRealProp && (msg.neighborhood || msg.district)
+              ? ` — 📍 ${[msg.neighborhood, msg.district, msg.municipality].filter(Boolean).join(' - ')}`
+              : '',
+            children: []
+          });
+        }
+      }
+    });
+
+    // 3. Construction du rendu en conservant l'ordre chronologique du "premier élément"
+    let lastSender = null, lastTimestamp = 0;
+
     filteredMessages.forEach((msg) => {
       const isNewSender = msg.sender_id !== lastSender || (parseInt(msg.timestamp) - lastTimestamp > 300);
       const dateStr = new Date(parseInt(msg.timestamp) * 1000)
         .toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
-
-      // Gestion des blocs propriété (IA ou Soumis)
-      if (msg.property_group_id && msg.property_group_id !== lastGroupId) {
-        if (wrapper) result.push(wrapper);
-        const isRealProp = !!msg.real_property_id;
-        let label = isRealProp ? `✅ BIEN CRÉÉ #${msg.real_property_id}` : '🏠 BIEN DÉTECTÉ (En attente)';
-
-        // Ajouter la localisation si disponible
-        if (isRealProp && (msg.neighborhood || msg.district)) {
-            const locParts = [msg.neighborhood, msg.district, msg.municipality].filter(Boolean);
-            if (locParts.length > 0) label += ` — 📍 ${locParts.join(' - ')}`;
-        }
-
-        wrapper = {
-          type: 'wrapper',
-          label: msg.property_group_id.startsWith('ignore_') ? '🛑 À IGNORER' : label,
-          key: msg.property_group_id,
-          isCreated: isRealProp,
-          propertyId: isRealProp ? msg.real_property_id : null,
-          locationLabel: isRealProp && (msg.neighborhood || msg.district)
-            ? ` — 📍 ${[msg.neighborhood, msg.district, msg.municipality].filter(Boolean).join(' - ')}`
-            : '',
-          children: []
-        };
-      } else if (!msg.property_group_id && lastGroupId) {
-        if (wrapper) result.push(wrapper);
-        wrapper = null;
-      }
 
       const bubble = (
         <MessageBubble
@@ -752,15 +763,25 @@ function App() {
         />
       );
 
-      if (wrapper) wrapper.children.push(bubble);
-      else result.push(bubble);
+      if (msg.property_group_id) {
+        // C'est un message groupé
+        const wrapper = groupWrappers.get(msg.property_group_id);
+        wrapper.children.push(bubble);
 
-      lastGroupId = msg.property_group_id;
-      lastSender  = msg.sender_id;
+        // On n'ajoute le wrapper au résultat final que lors de sa PREMIÈRE rencontre
+        if (!processedGroupIds.has(msg.property_group_id)) {
+          result.push(wrapper);
+          processedGroupIds.add(msg.property_group_id);
+        }
+      } else {
+        // C'est un message normal (orphelin)
+        result.push(bubble);
+      }
+
+      lastSender = msg.sender_id;
       lastTimestamp = msg.timestamp;
     });
 
-    if (wrapper) result.push(wrapper);
     return result;
   }, [messages, selectedMessageIds, toggleMessageSelection]);
 
