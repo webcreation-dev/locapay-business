@@ -214,6 +214,18 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
                     // 3. Fusionner le texte
                     const finalDescription = texts.join('\n\n').trim() || '(Annonce immobilière WhatsApp - Sans texte)';
 
+                    // --- NOUVEAUX FILTRES DE SÉCURITÉ ---
+                    const forbiddenKeywords = ['vendre', 'vente', 'parcelle', 'terrain', 'titre foncier', ' tf ', ' tf\n'];
+                    const descriptionLower = finalDescription.toLowerCase();
+                    const foundKeyword = forbiddenKeywords.find(kw => descriptionLower.includes(kw));
+
+                    if (foundKeyword) {
+                        const errMsg = `Désolé, nous n'acceptons que les locations. Ce message semble concerner une vente ou un terrain (${foundKeyword}).`;
+                        console.warn(`🚫 Rejet local : Mot-clé interdit détecté : ${foundKeyword}`);
+                        await db.query(`UPDATE messages SET analysis_error = $1 WHERE id = ANY($2)`, [errMsg, messageIds]);
+                        return res.status(400).json({ success: false, error: errMsg });
+                    }
+
                     // --- VÉRIFICATION DES MÉDIAS (images ou vidéos) ---
                     if (imageUrls.length === 0) {
                         // Compter combien de messages avaient has_media = true (image ou vidéo)
@@ -270,13 +282,15 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
                             await db.query(`UPDATE messages SET property_group_id = NULL, real_property_id = NULL, is_analyzed = FALSE, analysis_error = $1 WHERE id = ANY($2)`, [errMsg, messageIds]);
                         }
                     }).catch(async (err) => {
-                        let errMsg = "Erreur inconnue";
+                        let errMsg = "Erreur backend inconnue";
                         if (err.response) {
-                            errMsg = `NestJS Error ${err.response.status}: ${JSON.stringify(err.response.data).substring(0, 100)}`;
+                            // On essaie d'extraire le message d'erreur spécifique renvoyé par Nest
+                            const data = err.response.data;
+                            errMsg = data.error || data.message || `Erreur ${err.response.status}`;
                         } else if (err.request) {
-                            errMsg = `NestJS INJOIGNABLE sur ${nestUrl}`;
+                            errMsg = `Serveur NestJS INJOIGNABLE sur ${nestUrl}`;
                         } else {
-                            errMsg = `Axios error: ${err.message}`;
+                            errMsg = `Erreur lors de la requête : ${err.message}`;
                         }
                         console.error(`❌ ${errMsg}`);
                         await db.query(
