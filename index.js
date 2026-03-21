@@ -341,7 +341,10 @@ const puppeteerOptions = {
         '--disable-dev-shm-usage',
         '--disable-gpu',
         '--no-zygote',
-        '--no-first-run'
+        '--no-first-run',
+        '--disable-features=IsolateOrigins,site-per-process',
+        '--disable-web-security',
+        '--disable-site-isolation-trials'
     ]
 };
 
