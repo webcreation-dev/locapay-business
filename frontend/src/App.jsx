@@ -141,15 +141,21 @@ function App() {
   const shownErrorIdsRef = useRef(new Set());   // IDs des messages dont l'erreur a déjà été affichée
 
   // ─── POLLING CHATS ──────────────────────────────────────────────────────────
-  useEffect(() => {
-    const fetch_ = async () => {
-      try { setChats(await (await fetch('/api/chats')).json()); }
-      catch (e) { console.error('chats', e); }
-    };
-    fetch_();
-    const id = setInterval(fetch_, 4000);
-    return () => clearInterval(id);
+  const fetchChats = useCallback(async () => {
+    try {
+      const response = await fetch('/api/chats');
+      const data = await response.json();
+      setChats(data);
+    } catch (e) {
+      console.error('fetchChats error', e);
+    }
   }, []);
+
+  useEffect(() => {
+    fetchChats();
+    const id = setInterval(fetchChats, 4000);
+    return () => clearInterval(id);
+  }, [fetchChats]);
 
   // ─── POLLING STATUS / QR ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -476,6 +482,9 @@ function App() {
         });
         const data = await res.json();
         if (!data.success) setToast({ message: data.error || "Erreur", type: 'error' });
+        
+        // Rafraîchir les compteurs non lus après l'action
+        fetchChats();
       } catch (e) { console.error('noise action', e); }
       return;
     }
@@ -562,6 +571,8 @@ function App() {
 
           setToast({ message: `✅ Bien #${result.propertyId} créé avec succès !`, type: 'success' });
           
+          // Rafraîchir les compteurs non lus immédiatement
+          fetchChats();
           // Nettoyer après 1s
           setTimeout(() => {
             setActiveSubmissions(prev => {
