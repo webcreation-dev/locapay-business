@@ -282,6 +282,7 @@ function App() {
     // Polling léger : uniquement les NOUVEAUX messages (timestamp > dernier)
     const poll = setInterval(async () => {
       if (pollingLockRef.current) return;
+      if (isManualActionRef.current) return; // Ne pas poll pendant une soumission
       pollingLockRef.current = true;
       try {
         const chatId = currentChatIdRef.current;
