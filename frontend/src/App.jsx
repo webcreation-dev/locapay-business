@@ -8,7 +8,7 @@ const getInitials = (name) => {
 };
 
 const getRandomColor = (name = '') => {
-  const colors = ['#00a884','#007bff','#6610f2','#6f42c1','#e83e8c','#dc3545','#fd7e14','#ffc107','#28a745','#20c997','#17a2b8'];
+  const colors = ['#00a884', '#007bff', '#6610f2', '#6f42c1', '#e83e8c', '#dc3545', '#fd7e14', '#ffc107', '#28a745', '#20c997', '#17a2b8'];
   let hash = 0;
   for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
   return colors[Math.abs(hash) % colors.length];
@@ -16,7 +16,7 @@ const getRandomColor = (name = '') => {
 
 const formatTime = (timestamp) => {
   const date = new Date(parseInt(timestamp) * 1000);
-  const now  = new Date();
+  const now = new Date();
   if (date.toDateString() === now.toDateString())
     return date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
   return date.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
@@ -42,11 +42,11 @@ const SubmissionOverlay = memo(({ state, onClose, onRetry }) => {
   if (!state.isSubmitting && state.status === 'idle') return null;
 
   const statusConfig = {
-    verifying:  { icon: '🔍', text: 'Vérification des médias...', color: '#667781' },
-    sending:    { icon: '📤', text: 'Envoi au serveur...', color: '#667781' },
+    verifying: { icon: '🔍', text: 'Vérification des médias...', color: '#667781' },
+    sending: { icon: '📤', text: 'Envoi au serveur...', color: '#667781' },
     processing: { icon: '🤖', text: 'Analyse IA en cours...', color: '#00a884' },
-    success:    { icon: '✅', text: '', color: '#00a884' },
-    error:      { icon: '❌', text: 'Échec de la création', color: '#ea0038' }
+    success: { icon: '✅', text: '', color: '#00a884' },
+    error: { icon: '❌', text: 'Échec de la création', color: '#ea0038' }
   };
 
   const config = statusConfig[state.status] || statusConfig.verifying;
@@ -134,18 +134,18 @@ const SubmissionOverlay = memo(({ state, onClose, onRetry }) => {
 // ─── COMPOSANT BULLE (MÉMOÏSÉ STRICTEMENT) ────────────────────────────────────
 const MessageBubble = memo(({ msg, isFirstInGroup, dateStr, isSelected, onSelect }) => {
   // Conversion robuste de is_from_me en vrai booléen
-  const isFromMe  = msg.is_from_me === true || msg.is_from_me === 1 || msg.is_from_me === "true";
-  const isNoise   = msg.property_group_id === 'noise';
+  const isFromMe = msg.is_from_me === true || msg.is_from_me === 1 || msg.is_from_me === "true";
+  const isNoise = msg.property_group_id === 'noise';
   const isGrouped = msg.property_group_id && !isNoise;
-  const mediaUrl  = msg.media_path ? '/' + msg.media_path.replace('./', '') : null;
+  const mediaUrl = msg.media_path ? '/' + msg.media_path.replace('./', '') : null;
 
   const bubbleClass = `message ${isFromMe ? 'out' : 'in'} ${isFirstInGroup ? 'first' : ''} ${isNoise ? 'noise' : ''} ${isGrouped ? 'grouped' : ''}`.trim();
 
   return (
     <div className={`message-group ${isFirstInGroup ? 'first' : ''}`}>
-      <div 
-        className="message-checkbox-container" 
-        style={{ 
+      <div
+        className="message-checkbox-container"
+        style={{
           justifyContent: isFromMe ? 'flex-end' : 'flex-start',
           width: '100%'
         }}
@@ -185,17 +185,17 @@ const MessageBubble = memo(({ msg, isFirstInGroup, dateStr, isSelected, onSelect
 
 // ─── APP PRINCIPALE ───────────────────────────────────────────────────────────
 function App() {
-  const [chats,              setChats]              = useState([]);
-  const [currentChatId,      setCurrentChatId]      = useState(null);
-  const [messages,           setMessages]            = useState([]);
-  const [botStatus,          setBotStatus]           = useState('LOADING');
-  const [qrCode,             setQrCode]              = useState(null);
-  const [selectedMessageIds, setSelectedMessageIds]  = useState([]);
-  const [showScrollToBottom, setShowScrollToBottom]  = useState(false);
-  const [isLoadingMore,      setIsLoadingMore]       = useState(false);
-  const [hasMore,            setHasMore]             = useState(true);
-  const [toast,              setToast]              = useState(null); // { message: string, type: 'error'|'success' }
-  const [submissionState,    setSubmissionState]   = useState({
+  const [chats, setChats] = useState([]);
+  const [currentChatId, setCurrentChatId] = useState(null);
+  const [messages, setMessages] = useState([]);
+  const [botStatus, setBotStatus] = useState('LOADING');
+  const [qrCode, setQrCode] = useState(null);
+  const [selectedMessageIds, setSelectedMessageIds] = useState([]);
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const [toast, setToast] = useState(null); // { message: string, type: 'error'|'success' }
+  const [submissionState, setSubmissionState] = useState({
     isSubmitting: false,
     status: 'idle', // 'verifying' | 'sending' | 'processing' | 'success' | 'error'
     progress: 0,
@@ -203,21 +203,21 @@ function App() {
     successData: null // { propertyId, location }
   });
 
-  const containerRef       = useRef(null);       // ref vers la div messages-container
+  const containerRef = useRef(null);       // ref vers la div messages-container
   const scrollPositionBeforeSubmit = useRef(null); // Position scroll avant soumission
-  const isManualActionRef  = useRef(false);       // verrou : bloque le scroll auto après action manuelle
+  const isManualActionRef = useRef(false);       // verrou : bloque le scroll auto après action manuelle
   const isInitialLoadingRef = useRef(false);      // verrou : bloque loadOlderMessages pendant le chargement initial
-  const scrollMemory       = useRef({});          // mémoire de scroll par chatId  { chatId: scrollTop }
-  const lastNewMsgCount    = useRef(0);           // nombre de messages la dernière fois
-  const currentChatIdRef   = useRef(null);        // valeur synchrone du chatId courant
-  const pollingLockRef     = useRef(false);       // évite les requêtes en double
-  const shownErrorIdsRef   = useRef(new Set());   // IDs des messages dont l'erreur a déjà été affichée
+  const scrollMemory = useRef({});          // mémoire de scroll par chatId  { chatId: scrollTop }
+  const lastNewMsgCount = useRef(0);           // nombre de messages la dernière fois
+  const currentChatIdRef = useRef(null);        // valeur synchrone du chatId courant
+  const pollingLockRef = useRef(false);       // évite les requêtes en double
+  const shownErrorIdsRef = useRef(new Set());   // IDs des messages dont l'erreur a déjà été affichée
 
   // ─── POLLING CHATS ──────────────────────────────────────────────────────────
   useEffect(() => {
     const fetch_ = async () => {
       try { setChats(await (await fetch('/api/chats')).json()); }
-      catch(e) { console.error('chats', e); }
+      catch (e) { console.error('chats', e); }
     };
     fetch_();
     const id = setInterval(fetch_, 4000);
@@ -232,7 +232,7 @@ function App() {
         setBotStatus(status);
         if (status === 'QR') { const { qr } = await (await fetch('/api/qr')).json(); setQrCode(qr); }
         else setQrCode(null);
-      } catch(e) { console.error('status', e); }
+      } catch (e) { console.error('status', e); }
     };
     fetch_();
     const id = setInterval(fetch_, 3000);
@@ -275,7 +275,7 @@ function App() {
           // 🔓 Désactiver le verrou après que le scroll est restauré
           setTimeout(() => { isInitialLoadingRef.current = false; }, 500);
         }, 80);
-      } catch(e) { console.error('init messages', e); isInitialLoadingRef.current = false; }
+      } catch (e) { console.error('init messages', e); isInitialLoadingRef.current = false; }
     };
     loadInitial();
 
@@ -304,14 +304,14 @@ function App() {
           // 2. FUSION INTELLIGENTE (Fix : Ne pas perdre les messages chargés en scrollant)
           // On crée une map des nouveaux messages par ID
           const dataMap = new Map(data.map(m => [m.id, m]));
-          
+
           // On met à jour les messages existants et on ajoute les nouveaux
           const updatedPrev = prev.map(p => {
             const fresh = dataMap.get(p.id);
             if (!fresh) return p;
             // On ne met à jour que si les champs importants ont changé (IA, bien créé, etc)
             if (p.property_group_id !== fresh.property_group_id || p.real_property_id !== fresh.real_property_id || p.analysis_error !== fresh.analysis_error) {
-                return { ...p, ...fresh };
+              return { ...p, ...fresh };
             }
             return p;
           });
@@ -322,12 +322,12 @@ function App() {
 
           // Si rien n'a changé du tout, retourner prev (évite les re-renders inutiles)
           if (newOnly.length === 0 && updatedPrev.every((msg, i) => msg === prev[i])) {
-              return prev;
+            return prev;
           }
 
           return [...updatedPrev, ...newOnly].sort((a, b) => a.timestamp - b.timestamp);
         });
-      } catch(e) { console.error('poll messages', e); }
+      } catch (e) { console.error('poll messages', e); }
       finally { pollingLockRef.current = false; }
     }, 2500);
 
@@ -339,7 +339,7 @@ function App() {
     const el = containerRef.current;
     if (!el) return;
     if (isManualActionRef.current) return; // verrou action manuelle → rien
-    
+
     const currentCount = messages.length;
     const previousCount = lastNewMsgCount.current;
     const hasNewMessages = currentCount > previousCount;
@@ -366,7 +366,7 @@ function App() {
 
     const el = containerRef.current;
     const oldScrollHeight = el.scrollHeight;
-    const oldScrollTop    = el.scrollTop;
+    const oldScrollTop = el.scrollTop;
     const oldestTimestamp = messages[0].timestamp;
 
     try {
@@ -383,7 +383,7 @@ function App() {
           containerRef.current.scrollTop = oldScrollTop + gained;
         }
       });
-    } catch(e) { console.error('load older', e); }
+    } catch (e) { console.error('load older', e); }
     finally { setIsLoadingMore(false); }
   }, [currentChatId, messages, isLoadingMore, hasMore]);
 
@@ -552,7 +552,7 @@ function App() {
         });
         const data = await res.json();
         if (!data.success) setToast({ message: data.error || "Erreur", type: 'error' });
-      } catch(e) { console.error('noise action', e); }
+      } catch (e) { console.error('noise action', e); }
       return;
     }
 
@@ -593,14 +593,14 @@ function App() {
     setMessages(prev => prev.map(msg =>
       ids.includes(msg.id)
         ? {
-            ...msg,
-            property_group_id: pendingGroupId,
-            real_property_id: null,
-            neighborhood: null,
-            district: null,
-            municipality: null,
-            analysis_error: null
-          }
+          ...msg,
+          property_group_id: pendingGroupId,
+          real_property_id: null,
+          neighborhood: null,
+          district: null,
+          municipality: null,
+          analysis_error: null
+        }
         : msg
     ));
 
@@ -638,14 +638,14 @@ function App() {
           setMessages(prev => prev.map(msg =>
             ids.includes(msg.id)
               ? {
-                  ...msg,
-                  property_group_id: `real_prop_${result.propertyId}`,
-                  real_property_id: result.propertyId,
-                  neighborhood: result.neighborhood,
-                  district: result.district,
-                  municipality: result.municipality,
-                  analysis_error: null
-                }
+                ...msg,
+                property_group_id: `real_prop_${result.propertyId}`,
+                real_property_id: result.propertyId,
+                neighborhood: result.neighborhood,
+                district: result.district,
+                municipality: result.municipality,
+                analysis_error: null
+              }
               : msg
           ));
 
@@ -659,11 +659,11 @@ function App() {
           setMessages(prev => prev.map(msg =>
             ids.includes(msg.id)
               ? {
-                  ...msg,
-                  property_group_id: null,
-                  real_property_id: null,
-                  analysis_error: result.error
-                }
+                ...msg,
+                property_group_id: null,
+                real_property_id: null,
+                analysis_error: result.error
+              }
               : msg
           ));
 
@@ -678,7 +678,7 @@ function App() {
         const data = await res.json();
         throw new Error(data.error || 'Erreur serveur');
       }
-    } catch(e) {
+    } catch (e) {
       console.error('submit error', e);
       // Retirer l'UI optimiste
       setMessages(prev => prev.map(msg =>
@@ -900,7 +900,7 @@ function App() {
                           <>
                             ✅ BIEN CRÉÉ{' '}
                             <a
-                              href={`https://test-business-locapay.vercel.app/admin/proprietes/${item.propertyId}/details`}
+                              href={`https://admin-locapay.vercel.app/properties/${item.propertyId}`}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="property-link"
