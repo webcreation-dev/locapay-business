@@ -9,7 +9,7 @@ services:
       - ./sessions:/usr/src/app/.wwebjs_auth
       # Ce dossier contiendra toutes les photos, vidéos, vocaux, etc.
       - ./media:/usr/src/app/media
-      # Permet de modifier le frontend en direct
+      # Permet de modifier le frontend en direct test
       - ./public:/usr/src/app/public
     depends_on:
       - db
