@@ -14,7 +14,7 @@ services:
     networks:
       - default
       - locapay_dev_default   # Réseau NestJS DEV
-      - locapay_default       # Réseau NestJS PROD
+      - locapay_prod_default  # Réseau NestJS PROD
     depends_on:
       - db
     shm_size: '512mb'
@@ -42,5 +42,5 @@ volumes:
 networks:
   locapay_dev_default:
     external: true
-  locapay_default:
+  locapay_prod_default:
     external: true
