@@ -508,25 +508,7 @@ function App() {
     // 2. Générer un ID de groupe temporaire
     const pendingGroupId = `pending_${Date.now()}`;
 
-    // 3. Ajouter à activeSubmissions (mode non-bloquant)
-    setActiveSubmissions(prev => ({
-      ...prev,
-      [pendingGroupId]: { status: 'verifying', progress: 0 }
-    }));
-
-    // 4. Vérifier les médias
-    const mediaCheck = await verifyMediaFiles(ids);
-    if (!mediaCheck.valid) {
-      setToast({ message: `❌ Échec : ${mediaCheck.missingCount} image(s) introuvables.`, type: 'error' });
-      setActiveSubmissions(prev => {
-        const newOnes = { ...prev };
-        delete newOnes[pendingGroupId];
-        return newOnes;
-      });
-      return;
-    }
-
-    // 5. Appliquer l'UI optimiste
+    // ─── OPTIMISTIC UI IMMÉDIATE ───
     setMessages(prev => prev.map(msg =>
       ids.includes(msg.id)
         ? {
@@ -540,6 +522,30 @@ function App() {
         }
         : msg
     ));
+
+    // 3. Ajouter à activeSubmissions (mode non-bloquant)
+    setActiveSubmissions(prev => ({
+      ...prev,
+      [pendingGroupId]: { status: 'verifying', progress: 0 }
+    }));
+
+    // 4. Vérifier les médias (peut prendre du temps si beaucoup d'images)
+    const mediaCheck = await verifyMediaFiles(ids);
+    if (!mediaCheck.valid) {
+      setToast({ message: `❌ Échec : ${mediaCheck.missingCount} image(s) introuvables.`, type: 'error' });
+      
+      // RESET en cas d'échec de vérification immédiate
+      setMessages(prev => prev.map(msg =>
+        ids.includes(msg.id) ? { ...msg, property_group_id: null } : msg
+      ));
+
+      setActiveSubmissions(prev => {
+        const newOnes = { ...prev };
+        delete newOnes[pendingGroupId];
+        return newOnes;
+      });
+      return;
+    }
 
     setActiveSubmissions(prev => ({
       ...prev,
