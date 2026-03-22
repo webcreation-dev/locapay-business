@@ -242,6 +242,16 @@ function App() {
           const updatedPrev = prev.map(p => {
             const fresh = dataMap.get(p.id);
             if (!fresh) return p;
+
+            // FIX: Respecter l'état "pending" local. 
+            // Si le message est en attente (bleu) et que le backend dit encore "null", on garde "pending".
+            const isCurrentlyPending = p.property_group_id?.startsWith('pending_');
+            const isFreshProcessed = fresh.real_property_id || fresh.property_group_id?.startsWith('real_prop_') || fresh.analysis_error;
+
+            if (isCurrentlyPending && !isFreshProcessed) {
+              return p; 
+            }
+
             // On ne met à jour que si les champs importants ont changé (IA, bien créé, etc)
             if (p.property_group_id !== fresh.property_group_id || p.real_property_id !== fresh.real_property_id || p.analysis_error !== fresh.analysis_error) {
               return { ...p, ...fresh };
