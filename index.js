@@ -111,6 +111,63 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
             await db.query('CREATE INDEX IF NOT EXISTS idx_messages_real_property_id ON messages(real_property_id);');
 
             // -- ROUTES API EXPRESS (Déclarées ici car on a besoin de db prêt) --
+            // --- FONCTION D'EXTRACTION IA MISTRAL ---
+            async function extractPropertyDataWithAI(description) {
+                const MISTRAL_API_KEY = process.env.MISTRAL_API_KEY;
+                const MISTRAL_MODEL = process.env.AI_MODEL || 'mistral-medium';
+
+                if (!MISTRAL_API_KEY) {
+                    console.error("❌ MISTRAL_API_KEY manquante dans le .env du Bot");
+                    return null;
+                }
+
+                const prompt = `
+      Tu es un extracteur de données immobilières pour WhatsApp. Analyse la description suivante et extrait les informations selon les champs spécifiés (JSON uniquement).
+
+      ⚠️ RÈGLE CRITIQUE: Retourne UNIQUEMENT les champs mentionnés explicitement dans la description. NE JAMAIS INVENTER d'informations.
+
+      🎯 CHAMPS À EXTRAIRE :
+      - "type": "HOUSE|APARTMENT|STUDIO|VILLA|SHOP|STORE|PARCEL|OFFICE|BUILDING"
+      - "to_sell": true|false (true = à vendre, false = à louer)
+      - "rent_price": nombre (prix de location en FCFA)
+      - "visit_price": nombre (prix de visite en FCFA)
+      - "commission": nombre (commission en FCFA)
+      - "description": la description complète originale
+      - "localisation": (quartier et points de repère si disponible)
+      - "number_living_rooms": nombre de salons
+      - "number_rooms": nombre de chambres
+      - "tarification": "MONTHLY|DAILY"
+      - "sanitary": "YES" (sanitaire) ou "NO" (ordinaire)
+      - "caution": nombre (dépôt de garantie en FCFA)
+      - "month_advance": nombre (mois d'avance)
+
+      Texte à analyser : "${description}"
+      `;
+
+                try {
+                    const response = await axios.post('https://api.mistral.ai/v1/chat/completions', {
+                        model: MISTRAL_MODEL,
+                        messages: [
+                            { role: 'system', content: 'Tu es un expert en analyse immobilière. Réponds uniquement en JSON valide sans bloc markdown.' },
+                            { role: 'user', content: prompt }
+                        ],
+                        response_format: { type: 'json_object' }
+                    }, {
+                        headers: {
+                            'Authorization': `Bearer ${MISTRAL_API_KEY}`,
+                            'Content-Type': 'application/json'
+                        },
+                        timeout: 45000 // 45s de timeout pour l'IA
+                    });
+
+                    const content = response.data.choices[0].message.content.trim();
+                    return JSON.parse(content);
+                } catch (error) {
+                    console.error("❌ Erreur Mistral AI dans le Bot:", error.message);
+                    return null;
+                }
+            }
+
             app.get('/api/chats', async (req, res) => {
                 try {
                     // Calculer le nombre de messages non traités (is_analyzed = false) pour chaque groupe
@@ -189,9 +246,9 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
                         return res.status(404).json({ error: 'Messages introuvables.' });
                     }
 
-                    // 2. Fusionner les textes et collecter les images
+                    // 2. Fusionner les textes et collecter les images EN BASE64 (évite le re-téléchargement par NestJS)
                     const texts = [];
-                    const imageUrls = [];
+                    const imagesBase64 = []; // Nouveau: images en base64 pour envoi direct
                     let senderPhone = "";
 
                     // Trouver le premier numéro d'expéditeur valide (non "me")
@@ -211,10 +268,20 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
                             // Vérifier que le fichier existe réellement sur disque
                             const localPath = msg.media_path.startsWith('./') ? msg.media_path : `./${msg.media_path}`;
                             if (fs.existsSync(localPath)) {
-                                // Construire l'URL publique accessible par NestJS
-                                const botHost = process.env.BOT_PUBLIC_URL || 'http://whatsapp-bot:3000';
-                                const cleanPath = msg.media_path.replace('./', '');
-                                imageUrls.push(`${botHost}/${cleanPath}`);
+                                // Lire l'image et la convertir en base64 (évite le téléchargement HTTP par NestJS)
+                                try {
+                                    const imageBuffer = fs.readFileSync(localPath);
+                                    const base64Data = imageBuffer.toString('base64');
+                                    const mimeType = msg.media_mime_type || 'image/jpeg';
+                                    const ext = localPath.split('.').pop() || 'jpg';
+                                    imagesBase64.push({
+                                        data: base64Data,
+                                        mimeType: mimeType,
+                                        extension: ext
+                                    });
+                                } catch (readErr) {
+                                    console.warn(`⚠️ Erreur lecture média: ${localPath} - ${readErr.message}`);
+                                }
                             } else {
                                 console.warn(`⚠️ Média manquant sur disque: ${localPath}`);
                             }
@@ -237,7 +304,7 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
                     }
 
                     // --- VÉRIFICATION DES MÉDIAS (images ou vidéos) ---
-                    if (imageUrls.length === 0) {
+                    if (imagesBase64.length === 0) {
                         // Compter combien de messages avaient has_media = true (image ou vidéo)
                         const mediaMessages = fetchedMessages.filter(m =>
                             m.has_media && (m.media_mime_type?.startsWith('image/') || m.media_mime_type?.startsWith('video/'))
@@ -246,26 +313,43 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
                         if (mediaMessages.length === 0) {
                             errMsg = "Au moins une image ou vidéo est requise. Veuillez sélectionner le(s) message(s) contenant les photos/vidéos en plus du texte.";
                         } else {
-                            errMsg = `${mediaMessages.length} média(s) détecté(s) mais aucun n'est téléchargeable. Les fichiers n'existent pas sur le serveur.`;
+                            errMsg = `${mediaMessages.length} média(s) détecté(s) mais aucun n'est lisible. Les fichiers n'existent pas sur le serveur.`;
                         }
                         console.error(`❌ Échec de soumission: ${errMsg}`);
                         await db.query(`UPDATE messages SET analysis_error = $1 WHERE id = ANY($2)`, [errMsg, messageIds]);
                         return res.status(400).json({ success: false, error: errMsg });
                     }
 
-                    // 4. Envoyer à NestJS
-                    const nestUrl = process.env.NESTJS_API_URL || 'http://host.docker.internal:4000/properties/create-from-whatsapp';
+                    // 4. Analyser avec Mistral DIRECTEMENT depuis le Bot (Gain de temps et évite les timeouts Backend)
+                    // On répond 202 immédiatement pour libérer le frontend
+                    res.status(202).json({ success: true, message: 'Analyse IA et création en cours...' });
 
-                    // On répond 202 car le traitement IA dans NestJS est lent
-                    res.status(202).json({ success: true, message: 'Analyse et création en cours...' });
+                    // Traitement asynchrone : IA Mistral puis NestJS
+                    (async () => {
+                        console.log(`🤖 Analyse Mistral en cours pour ${texts.length} messages...`);
+                        const extractedData = await extractPropertyDataWithAI(finalDescription);
+                        
+                        if (!extractedData) {
+                            const errMsg = "L'IA a échoué à analyser l'annonce. Réessayez ou vérifiez votre connexion Mistral.";
+                            console.error(`❌ ${errMsg}`);
+                            await db.query(`UPDATE messages SET analysis_error = $1 WHERE id = ANY($2)`, [errMsg, messageIds]);
+                            return;
+                        }
 
-                    // Traitement asynchrone (NestJS)
-                    axios.post(nestUrl, {
-                        description: finalDescription,
-                        manager_phone: senderPhone,
-                        image_urls: imageUrls,
-                        user_id: process.env.LOCAPAY_BOT_USER_ID || 1
-                    }).then(async (response) => {
+                        const nestUrl = process.env.NESTJS_API_URL || 'http://host.docker.internal:4000/properties/create-from-whatsapp';
+
+                        console.log(`📤 Envoi à NestJS: ${imagesBase64.length} images en base64 (skip download)`);
+                        axios.post(nestUrl, {
+                            description: finalDescription,
+                            manager_phone: senderPhone,
+                            images_base64: imagesBase64, // Images en base64 (évite le téléchargement HTTP)
+                            user_id: process.env.LOCAPAY_BOT_USER_ID || 1,
+                            extracted_data: extractedData // On passe les données analysées !
+                        }, {
+                            timeout: 60000, // 60s timeout pour l'envoi base64
+                            maxContentLength: 50 * 1024 * 1024, // 50MB max
+                            maxBodyLength: 50 * 1024 * 1024
+                        }).then(async (response) => {
                         const raw = response.data;
                         // 🔍 LOG de la réponse brute pour diagnostic
                         console.log(`📡 Réponse NestJS brute:`, JSON.stringify(raw).substring(0, 300));
@@ -312,7 +396,8 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
                             [errMsg, messageIds]
                         );
                         console.log(`↩️ Messages dégroupés suite à l'erreur.`);
-                    });
+                        });
+                    })();
 
                 } catch (e) {
                     console.error("❌ Submit error:", e);
