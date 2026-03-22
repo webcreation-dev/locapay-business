@@ -402,11 +402,9 @@ function App() {
       }));
 
       try {
-        const res = await fetch(`/api/messages/${chatId}?limit=100`);
-        const data = await res.json();
-
-        // Filtrer uniquement les messages concernés par cette soumission
-        const relevantMsgs = data.filter(msg => messageIds.includes(msg.id));
+        // 🔄 Polling ROBUSTE : On demande l'état précis des messages par leurs IDs
+        const res = await fetch(`/api/messages-status?ids=${messageIds.join(',')}`);
+        const relevantMsgs = await res.json();
 
         // DEBUG: Log pour voir ce qui se passe
         if (attempts <= 3 || attempts % 10 === 0) {
@@ -505,10 +503,10 @@ function App() {
     }
 
     // ─── CRÉATION DE BIEN (action === 'group') ─────────────────────────────────
-    // 1. Verrou scroll (léger)
+    // 1. Verrou scroll et polling (pendant toute la durée de la soumission)
     isManualActionRef.current = true;
-    setTimeout(() => { isManualActionRef.current = false; }, 2000);
     setSelectedMessageIds([]);
+
 
     // 2. Générer un ID de groupe temporaire
     const pendingGroupId = `pending_${Date.now()}`;
@@ -641,7 +639,10 @@ function App() {
         delete newOnes[pendingGroupId];
         return newOnes;
       });
+    } finally {
+      isManualActionRef.current = false;
     }
+
   }, [selectedMessageIds, messages, verifyMediaFiles, pollForResult]);
 
   // ─── SCROLL VER LE BAS ───────────────────────────────────────────────────────

@@ -221,14 +221,30 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
                         `;
                         params = [req.params.chatId, safeLimit];
                     }
-                    const { rows } = await db.query(query, params);
-                    res.json(rows);
-                } catch (e) {
-                    res.status(500).json({ error: e.message });
-                }
-            });
+                const { rows } = await db.query(query, params);
+                res.json(rows);
+            } catch (e) {
+                res.status(500).json({ error: e.message });
+            }
+        });
 
-            // ROUTE DE GROUPEMENT MANUEL + SOUMISSION À NESTJS
+        // 🔍 Endpoint de polling spécifique aux IDs (Robuste)
+        app.get('/api/messages-status', async (req, res) => {
+            try {
+                const ids = req.query.ids ? req.query.ids.split(',') : [];
+                if (ids.length === 0) return res.json([]);
+                const { rows } = await db.query(
+                    'SELECT id, property_group_id, real_property_id, neighborhood, district, municipality, analysis_error FROM messages WHERE id = ANY($1)',
+                    [ids.map(id => parseInt(id))]
+                );
+                res.json(rows);
+            } catch (e) {
+                res.status(500).json({ error: e.message });
+            }
+        });
+
+        // ROUTE DE GROUPEMENT MANUEL + SOUMISSION À NESTJS
+
             app.post('/api/messages/submit-property', async (req, res) => {
                 const { messageIds } = req.body;
                 if (!messageIds || !Array.isArray(messageIds) || messageIds.length === 0) {
