@@ -114,7 +114,7 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
             // --- FONCTION D'EXTRACTION IA MISTRAL ---
             async function extractPropertyDataWithAI(description) {
                 const MISTRAL_API_KEY = process.env.MISTRAL_API_KEY;
-                const MISTRAL_MODEL = process.env.AI_MODEL || 'mistral-medium';
+                const MISTRAL_MODEL = process.env.AI_MODEL || 'mistral-medium-latest';
 
                 if (!MISTRAL_API_KEY) {
                     console.error("❌ MISTRAL_API_KEY manquante dans le .env du Bot");
@@ -122,27 +122,32 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
                 }
 
                 const prompt = `
-      Tu es un extracteur de données immobilières pour WhatsApp. Analyse la description suivante et extrait les informations selon les champs spécifiés (JSON uniquement).
+Tu es un extracteur de données immobilières pour WhatsApp. Analyse la description suivante et extrait les informations selon les champs spécifiés (JSON uniquement).
 
-      ⚠️ RÈGLE CRITIQUE: Retourne UNIQUEMENT les champs mentionnés explicitement dans la description. NE JAMAIS INVENTER d'informations.
+⚠️ RÈGLE CRITIQUE: Retourne UNIQUEMENT les champs mentionnés explicitement dans la description. NE JAMAIS INVENTER d'informations.
 
-      🎯 CHAMPS À EXTRAIRE :
-      - "type": "HOUSE|APARTMENT|STUDIO|VILLA|SHOP|STORE|PARCEL|OFFICE|BUILDING"
-      - "to_sell": true|false (true = à vendre, false = à louer)
-      - "rent_price": nombre (prix de location en FCFA)
-      - "visit_price": nombre (prix de visite en FCFA)
-      - "commission": nombre (commission en FCFA)
-      - "description": la description complète originale
-      - "localisation": (quartier et points de repère si disponible)
-      - "number_living_rooms": nombre de salons
-      - "number_rooms": nombre de chambres
-      - "tarification": "MONTHLY|DAILY"
-      - "sanitary": "YES" (sanitaire) ou "NO" (ordinaire)
-      - "caution": nombre (dépôt de garantie en FCFA)
-      - "month_advance": nombre (mois d'avance)
+📚 EXEMPLES CONCRETS D'EXTRACTION :
+Exemple 1: "Chambre salon à Calavi Tokan, loyer 25000" -> {"type": "APARTMENT", "rent_price": 25000, "localisation": "Calavi Tokan", "number_rooms": 1, "number_living_rooms": 1, "sanitary": "YES"}
+Exemple 2: "Entrée couchée à Maria Gleta, loyer 20000" -> {"type": "STUDIO", "rent_price": 20000, "localisation": "Maria Gleta", "number_rooms": 0, "number_living_rooms": 1, "sanitary": "YES"}
 
-      Texte à analyser : "${description}"
-      `;
+🎯 CHAMPS À EXTRAIRE (SI MENTIONNÉS) :
+- "type": "HOUSE|APARTMENT|STUDIO|VILLA|SHOP|STORE|PARCEL|OFFICE|BUILDING"
+- "to_sell": false (On accepte que les locations)
+- "rent_price": nombre (prix en FCFA)
+- "visit_price": nombre (prix de visite en FCFA, défaut: 2000)
+- "commission": nombre (commission agence)
+- "description": la description originale complète
+- "localisation": (Quartier et points de repère). EXTRÊMEMENT IMPORTANT : Extrais le lieu exact (ex: "Calavi Tokan", "Fidjrossè", "Akpakpa").
+- "number_living_rooms": nombre de salons
+- "number_rooms": nombre de chambres (Pour STUDIO/ENTRÉE COUCHÉE, c'est 0 chambre)
+- "tarification": "MONTHLY|DAILY"
+- "sanitary": "YES" (sanitaire) ou "NO" (ordinaire)
+- "caution": nombre (caution en FCFA)
+- "month_advance": nombre (mois d'avance)
+
+Texte à analyser : "${description}"
+`;
+
 
                 try {
                     const response = await axios.post('https://api.mistral.ai/v1/chat/completions', {
