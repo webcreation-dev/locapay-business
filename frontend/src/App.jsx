@@ -402,11 +402,16 @@ function App() {
       }));
 
       try {
-        const res = await fetch(`/api/messages/${chatId}?limit=50`);
+        const res = await fetch(`/api/messages/${chatId}?limit=100`);
         const data = await res.json();
 
         // Filtrer uniquement les messages concernés par cette soumission
         const relevantMsgs = data.filter(msg => messageIds.includes(msg.id));
+
+        // DEBUG: Log pour voir ce qui se passe
+        if (attempts <= 3 || attempts % 10 === 0) {
+          console.log(`[Poll #${attempts}] Cherche IDs:`, messageIds, '| Trouvés:', relevantMsgs.length, '| Erreur:', relevantMsgs.find(m => m.analysis_error)?.analysis_error || 'non');
+        }
 
         // PRIORITÉ 1 : Chercher un SUCCÈS (real_property_id présent)
         const successMsg = relevantMsgs.find(msg => msg.real_property_id);
