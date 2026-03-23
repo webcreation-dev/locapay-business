@@ -183,7 +183,6 @@ Texte à analyser : "${description}"
                          AND m.is_analyzed = FALSE 
                          AND m.is_from_me = FALSE) as unread_count
                         FROM chats c 
-                        WHERE c.is_group = true 
                         ORDER BY c.updated_at DESC
                     `;
                     const { rows } = await db.query(query);
