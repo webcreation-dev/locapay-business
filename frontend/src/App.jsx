@@ -129,6 +129,8 @@ function App() {
   const [hasMore, setHasMore] = useState(true);
   const [toast, setToast] = useState(null); // { message: string, type: 'error'|'success' }
   const [activeSubmissions, setActiveSubmissions] = useState({}); // { [pendingGroupId]: { status, progress, errors, successData } }
+  const [isGroupSelection, setIsGroupSelection] = useState(false);
+  const [lastSelectedId, setLastSelectedId] = useState(null);
 
   const containerRef = useRef(null);       // ref vers la div messages-container
   const scrollPositionBeforeSubmit = useRef(null); // Position scroll avant soumission
@@ -367,10 +369,40 @@ function App() {
 
   // ─── SÉLECTION DE MESSAGE ─────────────────────────────────────────────────────
   const toggleMessageSelection = useCallback((id) => {
-    setSelectedMessageIds(prev =>
-      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
-    );
-  }, []);
+    setSelectedMessageIds(prev => {
+      const isCurrentlySelected = prev.includes(id);
+
+      // Si le mode sélection groupée est actif et qu'on a un point de départ
+      if (!isCurrentlySelected && isGroupSelection && lastSelectedId) {
+        const startIdx = messages.findIndex(m => m.id === lastSelectedId);
+        const endIdx = messages.findIndex(m => m.id === id);
+
+        if (startIdx !== -1 && endIdx !== -1) {
+          const range = messages.slice(
+            Math.min(startIdx, endIdx),
+            Math.max(startIdx, endIdx) + 1
+          );
+
+          // On ne sélectionne que les messages éligibles
+          const eligibleIds = range
+            .filter(m => {
+              const isFromMe = m.is_from_me === true || m.is_from_me === 1 || m.is_from_me === "true";
+              const isNoise = m.property_group_id === 'noise';
+              const isGrouped = m.property_group_id && !isNoise;
+              return !isFromMe && !isGrouped;
+            })
+            .map(m => m.id);
+
+          setLastSelectedId(id);
+          return [...new Set([...prev, ...eligibleIds])];
+        }
+      }
+
+      // Comportement normal (toggle unique)
+      setLastSelectedId(isCurrentlySelected ? null : id);
+      return isCurrentlySelected ? prev.filter(x => x !== id) : [...prev, id];
+    });
+  }, [isGroupSelection, lastSelectedId, messages]);
 
   const toggleMultipleSelection = useCallback((ids) => {
     setSelectedMessageIds(prev => {
@@ -987,6 +1019,15 @@ function App() {
               <div className="manual-action-bar">
                 <div className="selection-info">
                   <span>{selectedMessageIds.length}</span> sélectionné(s)
+                  <div className="group-selection-container">
+                    <input 
+                      type="checkbox" 
+                      id="groupSelection" 
+                      checked={isGroupSelection} 
+                      onChange={(e) => setIsGroupSelection(e.target.checked)} 
+                    />
+                    <label htmlFor="groupSelection" style={{ cursor: 'pointer' }}>Sélect. groupée</label>
+                  </div>
                 </div>
                 <div className="action-buttons">
                   <button className="btn-action btn-noise" onClick={() => handleManualAction('noise')}>🗑️ Ignorer</button>

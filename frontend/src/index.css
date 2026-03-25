@@ -640,6 +640,27 @@ body {
     font-size: 14px;
     font-weight: 500;
     color: var(--text-main);
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+
+.group-selection-container {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: 5px;
+    padding-left: 15px;
+    border-left: 1px solid var(--border-lighter);
+    font-size: 13px;
+    color: var(--text-muted);
+}
+
+.group-selection-container input {
+    cursor: pointer;
+    width: 16px;
+    height: 16px;
+    accent-color: var(--accent);
 }
 
 .action-buttons {
