@@ -184,6 +184,7 @@ Texte à analyser : "${description}"
                          AND m.is_analyzed = FALSE 
                          AND m.is_from_me = FALSE
                          AND (m.body IS NULL OR m.body !~* 'vendre|vente|parcelle|terrain|titre foncier| tf')
+                         AND ( (m.body IS NOT NULL AND TRIM(m.body) != '') OR m.has_media = TRUE )
                         ) as unread_count
                         FROM chats c 
                         WHERE c.whatsapp_chat_id != 'status@broadcast'
@@ -202,15 +203,28 @@ Texte à analyser : "${description}"
                     const safeLimit = Math.min(parseInt(limit) || 30, 100);
 
                     let query, params;
+                    // Construction d'un CTE pour pré-filtrer et identifier les "sandwichs" de texte
+                    const cteBase = `
+                        WITH filtered_msgs AS (
+                            SELECT id, message_id, body, timestamp, is_from_me, is_group, chat_id, sender_id, sender_name, has_media, media_path, media_mime_type, property_group_id, real_property_id, neighborhood, district, municipality, analysis_error,
+                                   LAG(has_media) OVER(ORDER BY timestamp ASC) as prev_has_media,
+                                   LEAD(has_media) OVER(ORDER BY timestamp ASC) as next_has_media
+                            FROM messages 
+                            WHERE chat_id = $1 
+                            AND (is_analyzed = FALSE OR analyzed_at >= CURRENT_TIMESTAMP - INTERVAL '1 hour')
+                            AND (body IS NULL OR body !~* 'vendre|vente|parcelle|terrain|titre foncier| tf')
+                            AND ( (body IS NOT NULL AND TRIM(body) != '') OR has_media = TRUE )
+                        )
+                    `;
+
                     if (before) {
-                        // Charger les messages AVANT un timestamp donné (pagination vers le haut)
                         query = `
+                            ${cteBase}
                             SELECT * FROM (
                                 SELECT id, message_id, body, timestamp, is_from_me, is_group, chat_id, sender_id, sender_name, has_media, media_path, media_mime_type, property_group_id, real_property_id, neighborhood, district, municipality, analysis_error
-                                FROM messages 
-                                WHERE chat_id = $1 AND timestamp < $2
-                                AND (is_analyzed = FALSE OR analyzed_at >= CURRENT_TIMESTAMP - INTERVAL '1 hour')
-                                AND (body IS NULL OR body !~* 'vendre|vente|parcelle|terrain|titre foncier| tf')
+                                FROM filtered_msgs 
+                                WHERE timestamp < $2
+                                AND NOT (has_media = FALSE AND COALESCE(prev_has_media, TRUE) = FALSE AND COALESCE(next_has_media, TRUE) = FALSE)
                                 ORDER BY timestamp DESC 
                                 LIMIT $3
                             ) AS sub 
@@ -218,14 +232,12 @@ Texte à analyser : "${description}"
                         `;
                         params = [req.params.chatId, before, safeLimit];
                     } else {
-                        // Chargement initial : les N derniers messages
                         query = `
+                            ${cteBase}
                             SELECT * FROM (
                                 SELECT id, message_id, body, timestamp, is_from_me, is_group, chat_id, sender_id, sender_name, has_media, media_path, media_mime_type, property_group_id, real_property_id, neighborhood, district, municipality, analysis_error
-                                FROM messages 
-                                WHERE chat_id = $1 
-                                AND (is_analyzed = FALSE OR analyzed_at >= CURRENT_TIMESTAMP - INTERVAL '1 hour')
-                                AND (body IS NULL OR body !~* 'vendre|vente|parcelle|terrain|titre foncier| tf')
+                                FROM filtered_msgs 
+                                WHERE NOT (has_media = FALSE AND COALESCE(prev_has_media, TRUE) = FALSE AND COALESCE(next_has_media, TRUE) = FALSE)
                                 ORDER BY timestamp DESC 
                                 LIMIT $2
                             ) AS sub 
