@@ -129,7 +129,7 @@ async function runSegmentation() {
                     
                     if (group.msg_ids && group.msg_ids.length > 0) {
                         await db.query(
-                            'UPDATE messages SET is_analyzed = TRUE, property_group_id = $1 WHERE id = ANY($2)',
+                            'UPDATE messages SET is_analyzed = TRUE, analyzed_at = CURRENT_TIMESTAMP, property_group_id = $1 WHERE id = ANY($2)',
                             [groupId, group.msg_ids]
                         );
                         console.log(`${isSale ? '🛑 Vente/Parcelle' : '🏠 Bien'} : ${group.msg_ids.length} messages groupés (ID: ${groupId})`);
@@ -140,7 +140,7 @@ async function runSegmentation() {
             // 2. Gérer le bruit
             if (result.noise_ids && result.noise_ids.length > 0) {
                 await db.query(
-                    'UPDATE messages SET is_analyzed = TRUE, property_group_id = \'noise\' WHERE id = ANY($1)',
+                    'UPDATE messages SET is_analyzed = TRUE, analyzed_at = CURRENT_TIMESTAMP, property_group_id = \'noise\' WHERE id = ANY($1)',
                     [result.noise_ids]
                 );
                 console.log(`🗑️ ${result.noise_ids.length} messages marqués comme bruit.`);
@@ -160,7 +160,7 @@ async function runSegmentation() {
 
             if (idsToFinalize.length > 0) {
                 await db.query(
-                    'UPDATE messages SET is_analyzed = TRUE WHERE id = ANY($1) AND is_analyzed = FALSE AND property_group_id IS NULL',
+                    'UPDATE messages SET is_analyzed = TRUE, analyzed_at = CURRENT_TIMESTAMP WHERE id = ANY($1) AND is_analyzed = FALSE AND property_group_id IS NULL',
                     [idsToFinalize]
                 );
             }

@@ -103,6 +103,7 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
             await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS district VARCHAR(255);');
             await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS municipality VARCHAR(255);');
             await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS analysis_error TEXT;');
+            await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS analyzed_at TIMESTAMP;');
 
             await db.query('CREATE INDEX IF NOT EXISTS idx_messages_chat_id ON messages(chat_id);');
             await db.query('CREATE INDEX IF NOT EXISTS idx_messages_chat_id_ts ON messages(chat_id, timestamp DESC);');
@@ -181,7 +182,9 @@ Texte à analyser : "${description}"
                         (SELECT COUNT(*) FROM messages m 
                          WHERE m.chat_id = c.whatsapp_chat_id 
                          AND m.is_analyzed = FALSE 
-                         AND m.is_from_me = FALSE) as unread_count
+                         AND m.is_from_me = FALSE
+                         AND (m.body IS NULL OR m.body !~* 'vendre|vente|parcelle|terrain|titre foncier| tf')
+                        ) as unread_count
                         FROM chats c 
                         ORDER BY c.updated_at DESC
                     `;
@@ -205,6 +208,8 @@ Texte à analyser : "${description}"
                                 SELECT id, message_id, body, timestamp, is_from_me, is_group, chat_id, sender_id, sender_name, has_media, media_path, media_mime_type, property_group_id, real_property_id, neighborhood, district, municipality, analysis_error
                                 FROM messages 
                                 WHERE chat_id = $1 AND timestamp < $2
+                                AND (is_analyzed = FALSE OR analyzed_at >= CURRENT_TIMESTAMP - INTERVAL '1 hour')
+                                AND (body IS NULL OR body !~* 'vendre|vente|parcelle|terrain|titre foncier| tf')
                                 ORDER BY timestamp DESC 
                                 LIMIT $3
                             ) AS sub 
@@ -218,6 +223,8 @@ Texte à analyser : "${description}"
                                 SELECT id, message_id, body, timestamp, is_from_me, is_group, chat_id, sender_id, sender_name, has_media, media_path, media_mime_type, property_group_id, real_property_id, neighborhood, district, municipality, analysis_error
                                 FROM messages 
                                 WHERE chat_id = $1 
+                                AND (is_analyzed = FALSE OR analyzed_at >= CURRENT_TIMESTAMP - INTERVAL '1 hour')
+                                AND (body IS NULL OR body !~* 'vendre|vente|parcelle|terrain|titre foncier| tf')
                                 ORDER BY timestamp DESC 
                                 LIMIT $2
                             ) AS sub 
@@ -382,7 +389,7 @@ Texte à analyser : "${description}"
                             const property_id = nestData.property_id || nestData.propertyId;
                             const { location } = nestData;
                             await db.query(
-                                `UPDATE messages SET property_group_id = $1, real_property_id = $2, neighborhood = $3, district = $4, municipality = $5, is_analyzed = TRUE, analysis_error = NULL WHERE id = ANY($6)`,
+                                `UPDATE messages SET property_group_id = $1, real_property_id = $2, neighborhood = $3, district = $4, municipality = $5, is_analyzed = TRUE, analyzed_at = CURRENT_TIMESTAMP, analysis_error = NULL WHERE id = ANY($6)`,
                                 [`real_prop_${property_id}`, property_id, location?.neighborhood || '', location?.district || '', location?.municipality || '', messageIds]
                             );
                             console.log(`✅ Succès NestJS : Bien #${property_id} créé.`);
@@ -434,7 +441,7 @@ Texte à analyser : "${description}"
 
                 try {
                     if (action === 'noise') {
-                        await db.query('UPDATE messages SET is_analyzed = TRUE, property_group_id = \'noise\' WHERE id = ANY($1)', [messageIds]);
+                        await db.query('UPDATE messages SET is_analyzed = TRUE, analyzed_at = CURRENT_TIMESTAMP, property_group_id = \'noise\' WHERE id = ANY($1)', [messageIds]);
                         res.json({ success: true, message: 'Messages marqués comme bruit.' });
                     } else {
                         res.status(400).json({ error: 'Action invalide via cet endpoint.' });
