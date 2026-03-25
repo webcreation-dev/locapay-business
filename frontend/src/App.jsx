@@ -130,7 +130,6 @@ function App() {
   const [toast, setToast] = useState(null); // { message: string, type: 'error'|'success' }
   const [activeSubmissions, setActiveSubmissions] = useState({}); // { [pendingGroupId]: { status, progress, errors, successData } }
   const [isGroupSelection, setIsGroupSelection] = useState(false);
-  const [lastSelectedId, setLastSelectedId] = useState(null);
 
   const containerRef = useRef(null);       // ref vers la div messages-container
   const scrollPositionBeforeSubmit = useRef(null); // Position scroll avant soumission
@@ -141,6 +140,13 @@ function App() {
   const currentChatIdRef = useRef(null);        // valeur synchrone du chatId courant
   const pollingLockRef = useRef(false);       // évite les requêtes en double
   const shownErrorIdsRef = useRef(new Set());   // IDs des messages dont l'erreur a déjà été affichée
+  const lastSelectedIdRef = useRef(null);       // Point de départ pour la sélection groupée
+  const isGroupSelectionRef = useRef(false);    // Ref synchrone du mode groupé
+  const messagesRef = useRef([]);               // Ref synchrone de la liste des messages
+
+  // Synchronisation des refs pour éviter les fermetures obsolètes dans MessageBubble
+  useEffect(() => { isGroupSelectionRef.current = isGroupSelection; }, [isGroupSelection]);
+  useEffect(() => { messagesRef.current = messages; }, [messages]);
 
   // ─── POLLING CHATS ──────────────────────────────────────────────────────────
   const fetchChats = useCallback(async () => {
@@ -367,19 +373,21 @@ function App() {
     lastNewMsgCount.current = 0;
   }, []);
 
-  // ─── SÉLECTION DE MESSAGE ─────────────────────────────────────────────────────
+  // ─── SÉLECTION DE MESSAGE (STABLE) ──────────────────────────────────────────
   const toggleMessageSelection = useCallback((id) => {
     setSelectedMessageIds(prev => {
       const isCurrentlySelected = prev.includes(id);
+      const groupMode = isGroupSelectionRef.current;
+      const lastId = lastSelectedIdRef.current;
+      const currentMessages = messagesRef.current;
 
-      // Si le mode sélection groupée est actif, qu'on n'est pas déjà en train de décocher
-      // et qu'on a un point de référence (le dernier message cliqué)
-      if (isGroupSelection && lastSelectedId && !isCurrentlySelected) {
-        const startIdx = messages.findIndex(m => m.id === lastSelectedId);
-        const endIdx = messages.findIndex(m => m.id === id);
+      // Si le mode sélection groupée est actif et qu'on a un point de référence
+      if (groupMode && lastId && !isCurrentlySelected) {
+        const startIdx = currentMessages.findIndex(m => m.id === lastId);
+        const endIdx = currentMessages.findIndex(m => m.id === id);
 
         if (startIdx !== -1 && endIdx !== -1) {
-          const range = messages.slice(
+          const range = currentMessages.slice(
             Math.min(startIdx, endIdx),
             Math.max(startIdx, endIdx) + 1
           );
@@ -393,23 +401,23 @@ function App() {
             })
             .map(m => m.id);
 
-          setLastSelectedId(id); // Mémorise le nouveau dernier clic
+          lastSelectedIdRef.current = id;
           return [...new Set([...prev, ...eligibleIds])];
         }
       }
 
       // Comportement standard (toggle ou point de départ)
-      setLastSelectedId(isCurrentlySelected ? null : id);
+      lastSelectedIdRef.current = isCurrentlySelected ? null : id;
       return isCurrentlySelected ? prev.filter(x => x !== id) : [...prev, id];
     });
-  }, [isGroupSelection, lastSelectedId, messages]);
+  }, []);
 
   // Nettoyage de la sélection quand on change de mode
   const handleToggleGroupSelection = (checked) => {
     setIsGroupSelection(checked);
     if (!checked) {
       setSelectedMessageIds([]); // Tout décocher si on quitte le mode groupé
-      setLastSelectedId(null);
+      lastSelectedIdRef.current = null;
     }
   };
 
