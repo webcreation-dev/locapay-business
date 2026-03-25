@@ -184,6 +184,7 @@ Texte à analyser : "${description}"
                          AND m.is_analyzed = FALSE 
                          AND m.is_from_me = FALSE
                          AND (m.body IS NULL OR m.body !~* 'vendre|vente|parcelle|terrain|titre foncier| tf')
+                        ) as unread_count
                         FROM chats c 
                         WHERE c.whatsapp_chat_id != 'status@broadcast'
                         ORDER BY c.updated_at DESC
