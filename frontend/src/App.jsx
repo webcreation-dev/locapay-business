@@ -372,8 +372,9 @@ function App() {
     setSelectedMessageIds(prev => {
       const isCurrentlySelected = prev.includes(id);
 
-      // Si le mode sélection groupée est actif et qu'on a un point de départ
-      if (!isCurrentlySelected && isGroupSelection && lastSelectedId) {
+      // Si le mode sélection groupée est actif, qu'on n'est pas déjà en train de décocher
+      // et qu'on a un point de référence (le dernier message cliqué)
+      if (isGroupSelection && lastSelectedId && !isCurrentlySelected) {
         const startIdx = messages.findIndex(m => m.id === lastSelectedId);
         const endIdx = messages.findIndex(m => m.id === id);
 
@@ -386,23 +387,31 @@ function App() {
           // On ne sélectionne que les messages éligibles
           const eligibleIds = range
             .filter(m => {
-              const isFromMe = m.is_from_me === true || m.is_from_me === 1 || m.is_from_me === "true";
-              const isNoise = m.property_group_id === 'noise';
-              const isGrouped = m.property_group_id && !isNoise;
-              return !isFromMe && !isGrouped;
+              const fromMe = m.is_from_me === true || m.is_from_me === 1 || m.is_from_me === "true";
+              const grouped = m.property_group_id && m.property_group_id !== 'noise';
+              return !fromMe && !grouped;
             })
             .map(m => m.id);
 
-          setLastSelectedId(id);
+          setLastSelectedId(id); // Mémorise le nouveau dernier clic
           return [...new Set([...prev, ...eligibleIds])];
         }
       }
 
-      // Comportement normal (toggle unique)
+      // Comportement standard (toggle ou point de départ)
       setLastSelectedId(isCurrentlySelected ? null : id);
       return isCurrentlySelected ? prev.filter(x => x !== id) : [...prev, id];
     });
   }, [isGroupSelection, lastSelectedId, messages]);
+
+  // Nettoyage de la sélection quand on change de mode
+  const handleToggleGroupSelection = (checked) => {
+    setIsGroupSelection(checked);
+    if (!checked) {
+      setSelectedMessageIds([]); // Tout décocher si on quitte le mode groupé
+      setLastSelectedId(null);
+    }
+  };
 
   const toggleMultipleSelection = useCallback((ids) => {
     setSelectedMessageIds(prev => {
@@ -1024,7 +1033,7 @@ function App() {
                       type="checkbox" 
                       id="groupSelection" 
                       checked={isGroupSelection} 
-                      onChange={(e) => setIsGroupSelection(e.target.checked)} 
+                      onChange={(e) => handleToggleGroupSelection(e.target.checked)} 
                     />
                     <label htmlFor="groupSelection" style={{ cursor: 'pointer' }}>Sélect. groupée</label>
                   </div>
