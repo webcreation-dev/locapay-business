@@ -144,9 +144,9 @@ function App() {
   const isGroupSelectionRef = useRef(false);    // Ref synchrone du mode groupé
   const messagesRef = useRef([]);               // Ref synchrone de la liste des messages
 
-  // Synchronisation des refs pour éviter les fermetures obsolètes dans MessageBubble
-  useEffect(() => { isGroupSelectionRef.current = isGroupSelection; }, [isGroupSelection]);
-  useEffect(() => { messagesRef.current = messages; }, [messages]);
+  // Synchronisation synchrone des refs pour garantir l'immédiateté pendant les interactions
+  isGroupSelectionRef.current = isGroupSelection;
+  messagesRef.current = messages;
 
   // ─── POLLING CHATS ──────────────────────────────────────────────────────────
   const fetchChats = useCallback(async () => {
