@@ -184,8 +184,8 @@ Texte à analyser : "${description}"
                          AND m.is_analyzed = FALSE 
                          AND m.is_from_me = FALSE
                          AND (m.body IS NULL OR m.body !~* 'vendre|vente|parcelle|terrain|titre foncier| tf')
-                        ) as unread_count
                         FROM chats c 
+                        WHERE c.whatsapp_chat_id != 'status@broadcast'
                         ORDER BY c.updated_at DESC
                     `;
                     const { rows } = await db.query(query);
@@ -602,6 +602,8 @@ client.on('message_create', async msg => {
             deviceType: msg.deviceType,
             rawData: msg._data || msg.rawData || {}
         };
+
+        if (messageData.chatId === 'status@broadcast') return;
 
         // 4. Création ou Mise à jour de la liste de conversation ('chats') 
         // Ainsi l'application web finale n'a pas à fouiller dans 100 000 messages pour faire un menu
