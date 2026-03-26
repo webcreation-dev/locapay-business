@@ -294,9 +294,9 @@ Texte à analyser : "${description}"
                     // Trouver le premier numéro d'expéditeur valide (non "me")
                     const externalMsg = fetchedMessages.find(m => !m.is_from_me);
                     if (externalMsg) {
-                        // Extraire le numéro (ex: 22890123456@s.whatsapp.net -> +22890123456)
-                        senderPhone = externalMsg.sender_id.split('@')[0];
-                        if (!senderPhone.startsWith('+')) senderPhone = '+' + senderPhone;
+                        // Utiliser sender_number (numéro réel) au lieu de sender_id (identifiant WhatsApp)
+                        senderPhone = externalMsg.sender_number || '';
+                        if (senderPhone && !senderPhone.startsWith('+')) senderPhone = '+' + senderPhone;
                     }
 
                     fetchedMessages.forEach(msg => {
