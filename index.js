@@ -185,6 +185,7 @@ Texte à analyser : "${description}"
                          AND m.is_from_me = FALSE
                          AND (m.body IS NULL OR m.body !~* 'vendre|vente|parcelle|terrain|titre foncier| tf')
                          AND ( (m.body IS NOT NULL AND TRIM(m.body) != '') OR m.has_media = TRUE )
+                         AND m.message_type NOT IN ('audio', 'ptt', 'sticker')
                         ) as unread_count
                         FROM chats c 
                         WHERE c.whatsapp_chat_id != 'status@broadcast'
@@ -214,6 +215,7 @@ Texte à analyser : "${description}"
                             AND (is_analyzed = FALSE OR analyzed_at >= CURRENT_TIMESTAMP - INTERVAL '1 hour')
                             AND (body IS NULL OR body !~* 'vendre|vente|parcelle|terrain|titre foncier| tf')
                             AND ( (body IS NOT NULL AND TRIM(body) != '') OR has_media = TRUE )
+                            AND message_type NOT IN ('audio', 'ptt', 'sticker')
                         )
                     `;
 
