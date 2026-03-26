@@ -178,18 +178,22 @@ Texte à analyser : "${description}"
                 try {
                     // Calculer le nombre de messages non traités (is_analyzed = false) pour chaque groupe
                     const query = `
-                        SELECT c.*, 
-                        (SELECT COUNT(*) FROM messages m 
-                         WHERE m.chat_id = c.whatsapp_chat_id 
-                         AND m.is_analyzed = FALSE 
-                         AND m.is_from_me = FALSE
-                         AND (m.body IS NULL OR m.body !~* 'vendre|vente|parcelle|terrain|titre foncier| tf')
-                         AND ( (m.body IS NOT NULL AND TRIM(m.body) != '') OR m.has_media = TRUE )
-                         AND m.message_type NOT IN ('audio', 'ptt', 'sticker')
-                        ) as unread_count
-                        FROM chats c 
-                        WHERE c.whatsapp_chat_id != 'status@broadcast'
-                        ORDER BY c.updated_at DESC
+                        WITH chat_counts AS (
+                            SELECT c.*, 
+                            (SELECT COUNT(*) FROM messages m 
+                             WHERE m.chat_id = c.whatsapp_chat_id 
+                             AND m.is_analyzed = FALSE 
+                             AND m.is_from_me = FALSE
+                             AND (m.body IS NULL OR m.body !~* 'vendre|vente|parcelle|terrain|titre foncier| tf')
+                             AND ( (m.body IS NOT NULL AND TRIM(m.body) != '') OR m.has_media = TRUE )
+                             AND m.message_type NOT IN ('audio', 'ptt', 'sticker')
+                            ) as unread_count
+                            FROM chats c 
+                            WHERE c.whatsapp_chat_id != 'status@broadcast'
+                        )
+                        SELECT * FROM chat_counts 
+                        WHERE unread_count > 0
+                        ORDER BY updated_at DESC
                     `;
                     const { rows } = await db.query(query);
                     res.json(rows);
