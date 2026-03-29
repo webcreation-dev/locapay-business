@@ -739,21 +739,6 @@ function App() {
             children: []
           });
         }
-      } else if (msg.ia_property_id) {
-        const isRej = msg.ia_property_id.startsWith('noise') || msg.ia_property_id.startsWith('ignore_sale');
-        if (!groupWrappers.has(msg.ia_property_id)) {
-          groupWrappers.set(msg.ia_property_id, {
-            type: 'wrapper',
-            label: isRej ? "🛑 REJETÉ PAR L'IA (Sélectionnez pour forcer quand même)" : "🤖 SUGGESTION IA (Sélectionnez les messages pour valider)",
-            key: msg.ia_property_id,
-            isCreated: false,
-            propertyId: null,
-            locationLabel: '',
-            children: [],
-            isAiSuggestion: !isRej,
-            isAiRejection: isRej
-          });
-        }
       }
     });
 
@@ -764,7 +749,7 @@ function App() {
 
     filteredMessages.forEach((msg, index) => {
       const isPureMedia = msg.has_media && (!msg.body || msg.body.trim() === '');
-      const currentGroupId = msg.property_group_id || (msg.ia_property_id !== 'noise' ? msg.ia_property_id : null);
+      const currentGroupId = msg.property_group_id;
       
       // On groupe si c'est pur media ET que c'est le même "parent" (groupe ou null)
       if (isPureMedia && (mediaBuffer.length === 0 || currentGroupId === lastGroupId)) {
@@ -819,8 +804,7 @@ function App() {
       if (item.type === 'media-batch') {
         const ids = item.messages.map(m => m.id);
         const allSelected = ids.every(id => selectedMessageIds.includes(id));
-        const activeGroupId = item.property_group_id || (item.ia_property_id !== 'noise' ? item.ia_property_id : null);
-        const isGrouped = !!item.property_group_id; // real forced group, hides checkbox
+        const isGrouped = !!item.property_group_id;
 
         const batchElement = (
           <div key={item.id} className="media-batch-container">
@@ -848,13 +832,13 @@ function App() {
           </div>
         );
 
-        if (activeGroupId) {
-          const wrapper = groupWrappers.get(activeGroupId);
+        if (isGrouped) {
+          const wrapper = groupWrappers.get(item.property_group_id);
           if (wrapper) {
             wrapper.children.push(batchElement);
-            if (!processedGroupIds.has(activeGroupId)) {
+            if (!processedGroupIds.has(item.property_group_id)) {
               result.push(wrapper);
-              processedGroupIds.add(activeGroupId);
+              processedGroupIds.add(item.property_group_id);
             }
           } else {
             result.push(batchElement);
@@ -874,14 +858,13 @@ function App() {
           />
         );
 
-        const activeGroupId = msg.property_group_id || (msg.ia_property_id !== 'noise' ? msg.ia_property_id : null);
-        if (activeGroupId) {
-          const wrapper = groupWrappers.get(activeGroupId);
+        if (msg.property_group_id) {
+          const wrapper = groupWrappers.get(msg.property_group_id);
           if (wrapper) {
             wrapper.children.push(bubble);
-            if (!processedGroupIds.has(activeGroupId)) {
+            if (!processedGroupIds.has(msg.property_group_id)) {
               result.push(wrapper);
-              processedGroupIds.add(activeGroupId);
+              processedGroupIds.add(msg.property_group_id);
             }
           } else {
             result.push(bubble);
@@ -976,19 +959,7 @@ function App() {
                   {isLoadingMore ? 'Chargement...' : 'En ligne'}
                 </div>
               </div>
-              <button 
-                onClick={async () => {
-                  setToast({ message: "L'analyse IA est lancée en fond...", type: 'success' });
-                  try { await fetch('/api/messages/force-analyze', { method: 'POST' }); } 
-                  catch(e) {}
-                }}
-                className="btn-action" 
-                style={{marginLeft: 'auto', backgroundColor: '#3b82f6', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '13px'}}
-              >
-                🤖 Forcer l'IA
-              </button>
             </header>
-
             <div className="messages-container" ref={containerRef} onScroll={handleScroll}>
               {/* Indicateur de chargement en haut */}
               {isLoadingMore && (
