@@ -739,17 +739,19 @@ function App() {
             children: []
           });
         }
-      } else if (msg.ia_property_id && msg.ia_property_id !== 'noise') {
+      } else if (msg.ia_property_id) {
+        const isRej = msg.ia_property_id.startsWith('noise') || msg.ia_property_id.startsWith('ignore_sale');
         if (!groupWrappers.has(msg.ia_property_id)) {
           groupWrappers.set(msg.ia_property_id, {
             type: 'wrapper',
-            label: '🤖 SUGGESTION IA (Sélectionnez les messages pour valider)',
+            label: isRej ? "🛑 REJETÉ PAR L'IA (Sélectionnez pour forcer quand même)" : "🤖 SUGGESTION IA (Sélectionnez les messages pour valider)",
             key: msg.ia_property_id,
             isCreated: false,
             propertyId: null,
             locationLabel: '',
             children: [],
-            isAiSuggestion: true
+            isAiSuggestion: !isRej,
+            isAiRejection: isRej
           });
         }
       }

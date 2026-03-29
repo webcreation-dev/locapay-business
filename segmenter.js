@@ -59,10 +59,10 @@ async function segmentMessagesWithAI(messages) {
     - Timing : Tous les messages pour un même bien sont généralement envoyés dans une fenêtre très courte (moins de 4 minutes). Si des messages sont espacés de plus de 10 minutes, c'est probablement une AUTRE annonce.
     
     RÈGLES CRITIQUES :
-    1. Regroupe les messages (textes et photos/vidéos) qui concernent LA MÊME LOCATION (type "rental").
-    2. FILTRE DE VENTE : Tout ce qui mentionne une VENTE, un ACHAT, une PARCELLE à vendre ou un TERRAIN -> "ignored_sales".
-    3. BRUIT : Les messages de politesse, discussions, ou sans rapport immobilier -> "noise_ids".
-    4. INCOMPLET : Si le lot se termine par un début d'annonce (ex: un texte sans ses photos qui arrivent) mets ces IDs dans "incomplete_ids" (ils attendront la suite).
+    1. Un "Bien Immobilier" (rental) OBLIGATOIREMENT : doit contenir au moins UN texte descriptif ET au moins UN média (photo ou vidéo). Si l'un des deux manque (ex: que du texte, ou que des photos sans aucune légende), mets ces messages dans "incomplete_ids" en attendant la suite.
+    2. UN BIEN = UNE SEULE DESCRIPTION : Si tu vois deux photos qui possèdent chacune une longue description détaillée en légende, ce sont DEUX annonces différentes ! Sépare-les dans deux groupes distincts.
+    3. FILTRE DE VENTE : Tout ce qui mentionne une VENTE, un ACHAT, une PARCELLE à vendre ou un TERRAIN -> "ignored_sales".
+    4. BRUIT : Les messages de politesse, discussions, "merci" ou sans rapport immobilier -> "noise_ids".
     
     DONNÉES À ANALYSER (Lot de ${messages.length} messages) :
     ${JSON.stringify(messageContext, null, 2)}
@@ -149,9 +149,10 @@ async function runSegmentation() {
             
             // 2. Gérer le bruit
             if (result.noise_ids && result.noise_ids.length > 0) {
+                const noiseId = `noise_${Date.now()}`;
                 await db.query(
-                    'UPDATE messages SET is_analyzed = TRUE, analyzed_at = CURRENT_TIMESTAMP, ia_property_id = \'noise\' WHERE id = ANY($1)',
-                    [result.noise_ids]
+                    "UPDATE messages SET is_analyzed = TRUE, analyzed_at = CURRENT_TIMESTAMP, ia_property_id = $1 WHERE id = ANY($2)",
+                    [noiseId, result.noise_ids]
                 );
                 console.log(`🗑️ ${result.noise_ids.length} messages marqués comme bruit.`);
             }
