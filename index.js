@@ -104,6 +104,7 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
             await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS municipality VARCHAR(255);');
             await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS analysis_error TEXT;');
             await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS analyzed_at TIMESTAMP;');
+            await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS ia_property_id VARCHAR(255);');
 
             await db.query('CREATE INDEX IF NOT EXISTS idx_messages_chat_id ON messages(chat_id);');
             await db.query('CREATE INDEX IF NOT EXISTS idx_messages_chat_id_ts ON messages(chat_id, timestamp DESC);');
@@ -174,6 +175,18 @@ Texte à analyser : "${description}"
                 }
             }
 
+            // --- ROUTE MANUELLE POUR LANCER L'IA ---
+            app.post('/api/messages/force-analyze', async (req, res) => {
+                try {
+                    // On lance le segmenter en tâche de fond pour ne pas bloquer la requête HTTP
+                    const { runSegmentation } = require('./segmenter');
+                    runSegmentation().catch(err => console.error("❌ Erreur segmentation manuelle:", err));
+                    res.json({ success: true, message: "L'analyse IA a été lancée en arrière-plan !" });
+                } catch (e) {
+                    res.status(500).json({ error: e.message });
+                }
+            });
+
             app.get('/api/chats', async (req, res) => {
                 try {
                     // Calculer le nombre de messages non traités (is_analyzed = false) pour chaque groupe
@@ -211,7 +224,7 @@ Texte à analyser : "${description}"
                     // Construction d'un CTE pour pré-filtrer et identifier les "sandwichs" de texte
                     const cteBase = `
                         WITH filtered_msgs AS (
-                            SELECT id, message_id, body, timestamp, is_from_me, is_group, chat_id, sender_id, sender_name, has_media, media_path, media_mime_type, property_group_id, real_property_id, neighborhood, district, municipality, analysis_error,
+                            SELECT id, message_id, body, timestamp, is_from_me, is_group, chat_id, sender_id, sender_name, has_media, media_path, media_mime_type, property_group_id, real_property_id, neighborhood, district, municipality, analysis_error, ia_property_id,
                                    LAG(has_media) OVER(ORDER BY timestamp ASC) as prev_has_media,
                                    LEAD(has_media) OVER(ORDER BY timestamp ASC) as next_has_media
                             FROM messages 
@@ -227,7 +240,7 @@ Texte à analyser : "${description}"
                         query = `
                             ${cteBase}
                             SELECT * FROM (
-                                SELECT id, message_id, body, timestamp, is_from_me, is_group, chat_id, sender_id, sender_name, has_media, media_path, media_mime_type, property_group_id, real_property_id, neighborhood, district, municipality, analysis_error
+                                SELECT id, message_id, body, timestamp, is_from_me, is_group, chat_id, sender_id, sender_name, has_media, media_path, media_mime_type, property_group_id, real_property_id, neighborhood, district, municipality, analysis_error, ia_property_id
                                 FROM filtered_msgs 
                                 WHERE timestamp < $2
                                 AND NOT (has_media = FALSE AND COALESCE(prev_has_media, TRUE) = FALSE AND COALESCE(next_has_media, TRUE) = FALSE)
@@ -241,7 +254,7 @@ Texte à analyser : "${description}"
                         query = `
                             ${cteBase}
                             SELECT * FROM (
-                                SELECT id, message_id, body, timestamp, is_from_me, is_group, chat_id, sender_id, sender_name, has_media, media_path, media_mime_type, property_group_id, real_property_id, neighborhood, district, municipality, analysis_error
+                                SELECT id, message_id, body, timestamp, is_from_me, is_group, chat_id, sender_id, sender_name, has_media, media_path, media_mime_type, property_group_id, real_property_id, neighborhood, district, municipality, analysis_error, ia_property_id
                                 FROM filtered_msgs 
                                 WHERE NOT (has_media = FALSE AND COALESCE(prev_has_media, TRUE) = FALSE AND COALESCE(next_has_media, TRUE) = FALSE)
                                 ORDER BY timestamp DESC 
@@ -264,7 +277,7 @@ Texte à analyser : "${description}"
                 const ids = req.query.ids ? req.query.ids.split(',') : [];
                 if (ids.length === 0) return res.json([]);
                 const { rows } = await db.query(
-                    'SELECT id, property_group_id, real_property_id, neighborhood, district, municipality, analysis_error FROM messages WHERE id = ANY($1)',
+                    'SELECT id, property_group_id, real_property_id, neighborhood, district, municipality, analysis_error, ia_property_id FROM messages WHERE id = ANY($1)',
                     [ids.map(id => parseInt(id))]
                 );
                 res.json(rows);

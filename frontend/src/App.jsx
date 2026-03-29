@@ -739,6 +739,19 @@ function App() {
             children: []
           });
         }
+      } else if (msg.ia_property_id && msg.ia_property_id !== 'noise') {
+        if (!groupWrappers.has(msg.ia_property_id)) {
+          groupWrappers.set(msg.ia_property_id, {
+            type: 'wrapper',
+            label: '🤖 SUGGESTION IA (Sélectionnez les messages pour valider)',
+            key: msg.ia_property_id,
+            isCreated: false,
+            propertyId: null,
+            locationLabel: '',
+            children: [],
+            isAiSuggestion: true
+          });
+        }
       }
     });
 
@@ -749,7 +762,7 @@ function App() {
 
     filteredMessages.forEach((msg, index) => {
       const isPureMedia = msg.has_media && (!msg.body || msg.body.trim() === '');
-      const currentGroupId = msg.property_group_id;
+      const currentGroupId = msg.property_group_id || (msg.ia_property_id !== 'noise' ? msg.ia_property_id : null);
       
       // On groupe si c'est pur media ET que c'est le même "parent" (groupe ou null)
       if (isPureMedia && (mediaBuffer.length === 0 || currentGroupId === lastGroupId)) {
@@ -804,7 +817,8 @@ function App() {
       if (item.type === 'media-batch') {
         const ids = item.messages.map(m => m.id);
         const allSelected = ids.every(id => selectedMessageIds.includes(id));
-        const isGrouped = !!item.property_group_id;
+        const activeGroupId = item.property_group_id || (item.ia_property_id !== 'noise' ? item.ia_property_id : null);
+        const isGrouped = !!item.property_group_id; // real forced group, hides checkbox
 
         const batchElement = (
           <div key={item.id} className="media-batch-container">
@@ -832,12 +846,16 @@ function App() {
           </div>
         );
 
-        if (isGrouped) {
-          const wrapper = groupWrappers.get(item.property_group_id);
-          wrapper.children.push(batchElement);
-          if (!processedGroupIds.has(item.property_group_id)) {
-            result.push(wrapper);
-            processedGroupIds.add(item.property_group_id);
+        if (activeGroupId) {
+          const wrapper = groupWrappers.get(activeGroupId);
+          if (wrapper) {
+            wrapper.children.push(batchElement);
+            if (!processedGroupIds.has(activeGroupId)) {
+              result.push(wrapper);
+              processedGroupIds.add(activeGroupId);
+            }
+          } else {
+            result.push(batchElement);
           }
         } else {
           result.push(batchElement);
@@ -854,12 +872,17 @@ function App() {
           />
         );
 
-        if (msg.property_group_id) {
-          const wrapper = groupWrappers.get(msg.property_group_id);
-          wrapper.children.push(bubble);
-          if (!processedGroupIds.has(msg.property_group_id)) {
-            result.push(wrapper);
-            processedGroupIds.add(msg.property_group_id);
+        const activeGroupId = msg.property_group_id || (msg.ia_property_id !== 'noise' ? msg.ia_property_id : null);
+        if (activeGroupId) {
+          const wrapper = groupWrappers.get(activeGroupId);
+          if (wrapper) {
+            wrapper.children.push(bubble);
+            if (!processedGroupIds.has(activeGroupId)) {
+              result.push(wrapper);
+              processedGroupIds.add(activeGroupId);
+            }
+          } else {
+            result.push(bubble);
           }
         } else {
           result.push(bubble);
@@ -951,6 +974,17 @@ function App() {
                   {isLoadingMore ? 'Chargement...' : 'En ligne'}
                 </div>
               </div>
+              <button 
+                onClick={async () => {
+                  setToast({ message: "L'analyse IA est lancée en fond...", type: 'success' });
+                  try { await fetch('/api/messages/force-analyze', { method: 'POST' }); } 
+                  catch(e) {}
+                }}
+                className="btn-action" 
+                style={{marginLeft: 'auto', backgroundColor: '#3b82f6', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '13px'}}
+              >
+                🤖 Forcer l'IA
+              </button>
             </header>
 
             <div className="messages-container" ref={containerRef} onScroll={handleScroll}>
@@ -977,9 +1011,14 @@ function App() {
                  }
                   if (item?.type === 'wrapper') {
                     const isPending = item.key?.startsWith('pending_');
+                    const isAi = item.isAiSuggestion;
                     return (
-                      <div key={item.key || idx} className={`property-group-wrapper ${item.isCreated ? 'created' : ''} ${isPending ? 'pending' : ''}`}>
-                        <div className="property-group-header-label">
+                      <div 
+                        key={item.key || idx} 
+                        className={`property-group-wrapper ${item.isCreated ? 'created' : ''} ${isPending ? 'pending' : ''}`}
+                        style={isAi ? { border: '2px dashed #3b82f6', backgroundColor: '#eff6ff' } : {}}
+                      >
+                        <div className="property-group-header-label" style={isAi ? { color: '#2563eb', fontWeight: 'bold' } : {}}>
                           {item.propertyId ? (
                             <>
                               ✅ BIEN CRÉÉ{' '}
