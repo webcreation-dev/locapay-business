@@ -19,12 +19,17 @@ const MISTRAL_MODEL = process.env.AI_MODEL || 'mistral-medium';
  * Récupère les messages non traités pour un chat spécifique
  */
 async function getUnprocessedMessages(chatId, limit = 20) {
+    // On prend les $2 derniers messages (les plus récents), mais on les remet dans l'ordre chronologique (ASC)
+    // pour que l'IA puisse comprendre le "film" dans le bon sens (Texte -> Photos)
     const query = `
-        SELECT id, message_id, body, timestamp, sender_name, has_media, media_path, message_type
-        FROM messages
-        WHERE chat_id = $1 AND is_analyzed = FALSE
+        SELECT * FROM (
+            SELECT id, message_id, body, timestamp, sender_name, has_media, media_path, message_type
+            FROM messages
+            WHERE chat_id = $1 AND is_analyzed = FALSE
+            ORDER BY timestamp DESC
+            LIMIT $2
+        ) AS sub
         ORDER BY timestamp ASC
-        LIMIT $2
     `;
     const { rows } = await db.query(query, [chatId, limit]);
     return rows;
