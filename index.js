@@ -501,8 +501,20 @@ Texte à analyser : "${description}"
                         return res.status(400).json({ error: "Les champs phoneNumber et message sont requis." });
                     }
 
-                    if (botStatus !== 'CONNECTED') {
-                        return res.status(503).json({ error: "Le bot WhatsApp n'est pas connecté." });
+                    let currentState = botStatus;
+                    try {
+                        if (client) {
+                            currentState = await client.getState();
+                        }
+                    } catch (e) {
+                        currentState = 'ERROR_GETTING_STATE';
+                    }
+
+                    if (currentState !== 'CONNECTED' && botStatus !== 'CONNECTED') {
+                        return res.status(503).json({ 
+                            error: "Le bot WhatsApp n'est pas connecté.", 
+                            details: `Statut variable: ${botStatus}, Statut client: ${currentState}` 
+                        });
                     }
 
                     // Nettoyage : retirer le '+' initial s'il est présent
