@@ -498,26 +498,27 @@ Texte à analyser : "${description}"
                     const { phoneNumber, message } = req.body;
                     
                     if (!phoneNumber || !message) {
-                        return res.status(400).json({ error: 'Les champs phoneNumber et message sont requis.' });
+                        return res.status(400).json({ error: "Les champs phoneNumber et message sont requis." });
                     }
 
                     if (botStatus !== 'CONNECTED') {
-                        return res.status(503).json({ error: 'Le bot WhatsApp n\\'est pas connecté.' });
+                        return res.status(503).json({ error: "Le bot WhatsApp n'est pas connecté." });
                     }
 
                     // Nettoyage : retirer le '+' initial s'il est présent
                     const cleanNumber = phoneNumber.toString().replace(/^\\+/, '');
                     
                     // Format de l'ID WhatsApp requis par la librairie
-                    const chatId = \`\${cleanNumber}@c.us\`;
+                    const chatId = `${cleanNumber}@c.us`;
 
                     // Envoi du message via client (whatsapp-web.js)
                     const response = await client.sendMessage(chatId, message);
                     
                     res.json({ 
                         success: true, 
-                        message: 'Message envoyé avec succès.',
+                        message: "Message envoyé avec succès.",
                         messageId: response.id._serialized 
+
                     });
                 } catch (error) {
                     console.error("❌ Erreur lors de l\\'envoi du message :", error);
