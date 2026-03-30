@@ -492,6 +492,39 @@ Texte à analyser : "${description}"
                 res.json({ qr: currentQR });
             });
 
+            // ROUTE POUR ENVOYER UN MESSAGE TEXTE
+            app.post('/api/send-message', async (req, res) => {
+                try {
+                    const { phoneNumber, message } = req.body;
+                    
+                    if (!phoneNumber || !message) {
+                        return res.status(400).json({ error: 'Les champs phoneNumber et message sont requis.' });
+                    }
+
+                    if (botStatus !== 'CONNECTED') {
+                        return res.status(503).json({ error: 'Le bot WhatsApp n\\'est pas connecté.' });
+                    }
+
+                    // Nettoyage : retirer le '+' initial s'il est présent
+                    const cleanNumber = phoneNumber.toString().replace(/^\\+/, '');
+                    
+                    // Format de l'ID WhatsApp requis par la librairie
+                    const chatId = \`\${cleanNumber}@c.us\`;
+
+                    // Envoi du message via client (whatsapp-web.js)
+                    const response = await client.sendMessage(chatId, message);
+                    
+                    res.json({ 
+                        success: true, 
+                        message: 'Message envoyé avec succès.',
+                        messageId: response.id._serialized 
+                    });
+                } catch (error) {
+                    console.error("❌ Erreur lors de l\\'envoi du message :", error);
+                    res.status(500).json({ error: error.message });
+                }
+            });
+
             return;
         } catch (err) {
             console.log(`⚠️ En attente de PostgreSQL... Postgres est peut-être en train de démarrer (tentative ${i + 1}/${retries}).`);
