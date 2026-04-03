@@ -1099,22 +1099,45 @@ function App() {
                         ` — 📍 ${[property.neighborhood, property.district, property.municipality].filter(Boolean).join(' - ')}`
                       )}
                     </div>
-                    <div className="property-group-content grid-view">
-                      {property.messages.map(msg => (
-                        <div key={msg.id} className="property-message-item">
-                          <div className="msg-sender">{msg.sender_name} • {formatTime(msg.timestamp)}</div>
-                          {msg.has_media && msg.media_path && (
-                            <div className="media-preview">
-                              {msg.media_mime_type?.startsWith('image/') ? (
-                                <img src={'/' + msg.media_path.replace('./', '')} alt="" />
-                              ) : (
-                                <div className="media-placeholder">🎬 Vidéo</div>
-                              )}
+                    <div className="property-group-content">
+                      {/* Séparation des médias et du texte pour un affichage "Album" */}
+                      {(() => {
+                        const mediaMsgs = property.messages.filter(m => m.has_media && m.media_path && (m.media_mime_type?.startsWith('image/') || m.media_mime_type?.startsWith('video/')));
+                        const textMsgs = property.messages.filter(m => m.body && m.body.trim());
+                        
+                        return (
+                          <>
+                            {mediaMsgs.length > 0 && (
+                              <div className="property-media-album">
+                                <div className="media-batch-grid">
+                                  {mediaMsgs.slice(0, 4).map((m, idx) => (
+                                    <div key={m.id} className="media-batch-item">
+                                      {m.media_mime_type?.startsWith('image/') ? (
+                                        <img src={'/' + m.media_path.replace('./', '')} alt="" />
+                                      ) : (
+                                        <div className="video-overlay">🎬</div>
+                                      )}
+                                      {idx === 3 && mediaMsgs.length > 4 && (
+                                        <div className="media-batch-more">+{mediaMsgs.length - 4}</div>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                                <div className="album-count">{mediaMsgs.length} média(s)</div>
+                              </div>
+                            )}
+                            
+                            <div className="property-texts">
+                              {textMsgs.map(msg => (
+                                <div key={msg.id} className="property-text-item">
+                                  <div className="msg-body">{msg.body}</div>
+                                  <div className="msg-meta">{msg.sender_name} • {formatTime(msg.timestamp)}</div>
+                                </div>
+                              ))}
                             </div>
-                          )}
-                          <div className="msg-body">{msg.body}</div>
-                        </div>
-                      ))}
+                          </>
+                        );
+                      })()}
                     </div>
                   </div>
                 ))
