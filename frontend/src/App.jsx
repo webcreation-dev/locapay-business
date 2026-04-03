@@ -1224,9 +1224,9 @@ function App() {
                                 </div>
                               ) : (
                                 item.isAutoSuggestion ? (
-                                  <span className="suggestion-label auto">🤖 DÉTECTION AUTO</span>
+                                  <span className="suggestion-label auto">🤖 DÉTECTION AUTO (#{item.key})</span>
                                 ) : (
-                                  <span className="suggestion-label ai">🧠 SUGGESTION IA</span>
+                                  <span className="suggestion-label ai">🧠 SUGGESTION IA (#{item.key})</span>
                                 )
                               )}
                             </div>
