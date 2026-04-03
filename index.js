@@ -265,29 +265,28 @@ Texte à analyser : "${description}"
                 try {
                     // Calculer le nombre de messages non traités (is_analyzed = false) pour chaque groupe
                     const query = `
-                        WITH chat_msgs AS (
-                            SELECT m.id, m.chat_id, m.body, m.has_media, m.message_type, m.is_analyzed, m.is_from_me, m.property_group_id
+                        WITH unread_candidates AS (
+                            SELECT m.id, m.chat_id, m.body, m.has_media, m.message_type, m.property_group_id
                             FROM messages m
-                            JOIN chats c ON m.chat_id = c.whatsapp_chat_id
-                            WHERE c.whatsapp_chat_id != 'status@broadcast'
+                            WHERE m.is_analyzed = FALSE 
+                            AND m.is_from_me = FALSE
+                            AND m.chat_id != 'status@broadcast'
                         ),
                         banned_groups AS (
                             SELECT DISTINCT property_group_id 
-                            FROM chat_msgs 
+                            FROM unread_candidates 
                             WHERE body ~* 'vendre|vente|parcelle|terrain|titre foncier| tf'
                             AND property_group_id IS NOT NULL
                         ),
                         chat_counts AS (
                             SELECT c.*, 
-                            (SELECT COUNT(*) FROM chat_msgs m 
-                             LEFT JOIN banned_groups bg ON m.property_group_id = bg.property_group_id
-                             WHERE m.chat_id = c.whatsapp_chat_id 
-                             AND m.is_analyzed = FALSE 
-                             AND m.is_from_me = FALSE
-                             AND bg.property_group_id IS NULL -- Le groupe complet n'est pas banni
-                             AND (m.body IS NULL OR m.body !~* 'vendre|vente|parcelle|terrain|titre foncier| tf') -- Le message seul n'est pas banni
-                             AND ( (m.body IS NOT NULL AND TRIM(m.body) != '') OR m.has_media = TRUE )
-                             AND m.message_type NOT IN ('audio', 'ptt', 'sticker')
+                            (SELECT COUNT(*) FROM unread_candidates u
+                             LEFT JOIN banned_groups bg ON u.property_group_id = bg.property_group_id
+                             WHERE u.chat_id = c.whatsapp_chat_id 
+                             AND bg.property_group_id IS NULL -- Groupe non banni
+                             AND (u.body IS NULL OR u.body !~* 'vendre|vente|parcelle|terrain|titre foncier| tf') -- Message non banni
+                             AND ( (u.body IS NOT NULL AND TRIM(u.body) != '') OR u.has_media = TRUE )
+                             AND u.message_type NOT IN ('audio', 'ptt', 'sticker')
                             ) as unread_count
                             FROM chats c 
                             WHERE c.whatsapp_chat_id != 'status@broadcast'
