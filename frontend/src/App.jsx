@@ -570,9 +570,9 @@ function App() {
 
 
   // ─── ACTION MANUELLE (AVEC OVERLAY UX AMÉLIORÉ) ──────────────────────────────
-  const handleManualAction = useCallback(async (action) => {
-    if (selectedMessageIds.length === 0) return;
-    const ids = [...selectedMessageIds];
+  const handleManualAction = useCallback(async (action, forcedIds = null) => {
+    const ids = forcedIds || selectedMessageIds;
+    if (ids.length === 0) return;
 
     // Pour l'action "noise", on garde l'ancienne logique simple
     if (action === 'noise') {
@@ -584,7 +584,7 @@ function App() {
           ? { ...msg, property_group_id: 'noise' }
           : msg
       ));
-      setSelectedMessageIds([]);
+      if (!forcedIds) setSelectedMessageIds([]);
 
       try {
         const res = await fetch('/api/messages/manual-group', {
@@ -604,7 +604,7 @@ function App() {
     // ─── CRÉATION DE BIEN (action === 'group') ─────────────────────────────────
     // 1. Verrou scroll et polling (pendant toute la durée de la soumission)
     isManualActionRef.current = true;
-    setSelectedMessageIds([]);
+    if (!forcedIds) setSelectedMessageIds([]);
 
 
     // 2. Générer un ID de groupe temporaire
@@ -1231,17 +1231,16 @@ function App() {
                                 )}
                               </div>
                               
-                              {!activeSubmissions[item.key] && (
-                                <button 
-                                  className="btn-action btn-create-direct" 
-                                  onClick={() => {
-                                      const groupMsgIds = messages.filter(m => m.property_group_id === item.key).map(m => m.id);
-                                      if (groupMsgIds.length > 0) {
-                                          setSelectedMessageIds(groupMsgIds);
-                                          setTimeout(() => handleManualAction('group'), 50);
-                                      }
-                                  }}
-                                >
+                                  {!activeSubmissions[item.key] && (
+                                    <button 
+                                      className="btn-action btn-create-direct" 
+                                      onClick={() => {
+                                          const groupMsgIds = messages.filter(m => m.property_group_id === item.key).map(m => m.id);
+                                          if (groupMsgIds.length > 0) {
+                                              handleManualAction('group', groupMsgIds);
+                                          }
+                                      }}
+                                    >
                                   🚀 Créer un bien
                                 </button>
                               )}
