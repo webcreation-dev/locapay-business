@@ -1206,45 +1206,38 @@ function App() {
                               {item.locationLabel}
                             </>
                           ) : isPending ? (
-                            <div className="pending-indicator">
-                              <span className="pending-icon">
-                                {activeSubmissions[item.key]?.status === 'verifying' ? '🔍' :
-                                 activeSubmissions[item.key]?.status === 'sending' ? '📤' : '🤖'}
-                              </span>
-                              <span className="pending-text">
-                                {activeSubmissions[item.key]?.status === 'verifying' ? 'Vérification...' :
-                                 activeSubmissions[item.key]?.status === 'sending' ? 'Envoi...' : 'Analyse IA en cours...'}
-                              </span>
-                              <div className="pending-progress-container">
-                                <div className="pending-progress-bar" style={{ width: `${activeSubmissions[item.key]?.progress || 0}%` }} />
+                            <div className="property-group-header-suggestion" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                              <div className="suggestion-status">
+                                {activeSubmissions[item.key] ? (
+                                  <div className="pending-indicator">
+                                    <span className="pending-icon">
+                                      {activeSubmissions[item.key].status === 'verifying' ? '🔍' : '📤'}
+                                    </span>
+                                    <span className="pending-text">
+                                      {activeSubmissions[item.key].status === 'verifying' ? 'Vérification...' : 'Envoi...'}
+                                    </span>
+                                  </div>
+                                ) : (
+                                  <span className="suggestion-label">🤖 SUGGESTION IA</span>
+                                )}
                               </div>
-                            </div>
-                          ) : (
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
-                                <span>{item.label}</span>
+                              
+                              {!activeSubmissions[item.key] && (
                                 <button 
-                                    className="btn-action btn-group" 
-                                    style={{ padding: '4px 10px', fontSize: '11px', whiteSpace: 'nowrap' }}
-                                    onClick={() => {
-                                        // Extraire tous les IDs des messages du groupe
-                                        const groupMsgIds = messages.filter(m => m.property_group_id === item.key).map(m => m.id);
-                                        if (groupMsgIds.length > 0) {
-                                            // On sélectionne et on envoie
-                                            setSelectedMessageIds(groupMsgIds);
-                                            // Note: handleManualAction utilise selectedMessageIds de l'état, 
-                                            // mais ici on passe par une closure. On va modifier handleManualAction 
-                                            // pour qu'il puisse accepter des IDs en paramètre ou tricher avec un timeout.
-                                            setTimeout(() => {
-                                              const btnSubmit = document.querySelector('.btn-group');
-                                              if (btnSubmit) handleManualAction('group');
-                                            }, 100);
-                                        }
-                                    }}
+                                  className="btn-action btn-create-direct" 
+                                  onClick={() => {
+                                      const groupMsgIds = messages.filter(m => m.property_group_id === item.key).map(m => m.id);
+                                      if (groupMsgIds.length > 0) {
+                                          setSelectedMessageIds(groupMsgIds);
+                                          setTimeout(() => handleManualAction('group'), 50);
+                                      }
+                                  }}
                                 >
-                                    🚀 Créer le BIEN
+                                  🚀 Créer un bien
                                 </button>
+                              )}
                             </div>
-                          )}
+                          ) : item.label}
                         </div>
                         <div className="property-group-content">
                           {item.children}
