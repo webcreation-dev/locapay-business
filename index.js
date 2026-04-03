@@ -112,6 +112,11 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
             await db.query('CREATE INDEX IF NOT EXISTS idx_messages_property_group_id ON messages(property_group_id);');
             await db.query('CREATE INDEX IF NOT EXISTS idx_messages_real_property_id ON messages(real_property_id);');
 
+            // Optimisation Recherche (GIN Index pour ILIKE rapide)
+            await db.query('CREATE EXTENSION IF NOT EXISTS pg_trgm;');
+            await db.query('CREATE INDEX IF NOT EXISTS idx_messages_body_trgm ON messages USING GIN (body gin_trgm_ops);');
+            await db.query('CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);');
+
             // -- ROUTES API EXPRESS (Déclarées ici car on a besoin de db prêt) --
             // --- FONCTION D'EXTRACTION IA MISTRAL ---
             async function extractPropertyDataWithAI(description) {
@@ -280,6 +285,77 @@ Texte à analyser : "${description}"
                     'SELECT id, property_group_id, real_property_id, neighborhood, district, municipality, analysis_error, ia_property_id FROM messages WHERE id = ANY($1)',
                     [ids.map(id => parseInt(id))]
                 );
+                res.json(rows);
+            } catch (e) {
+                res.status(500).json({ error: e.message });
+            }
+        });
+
+        // 🔎 Recherche de messages liés à des BIENS RÉELS
+        app.get('/api/messages/search', async (req, res) => {
+            try {
+                const { q } = req.query;
+                if (!q || q.length < 2) return res.json([]);
+
+                const query = `
+                    SELECT id, message_id, body, timestamp, chat_name, sender_name, real_property_id, neighborhood, district, municipality, media_path, media_mime_type
+                    FROM messages 
+                    WHERE real_property_id IS NOT NULL
+                    AND body ILIKE $1
+                    ORDER BY timestamp DESC
+                    LIMIT 50
+                `;
+                const { rows } = await db.query(query, [`%${q}%`]);
+                res.json(rows);
+            } catch (e) {
+                res.status(500).json({ error: e.message });
+            }
+        });
+
+        // 📅 Liste AGGRÉGÉE des BIENS avec FILTRE PAR DATE (Conversations confondues)
+        app.get('/api/properties/all', async (req, res) => {
+            try {
+                const { start, end } = req.query; // Expectations: timestamp en secondes ou ISO string
+                
+                let dateFilter = "WHERE m.real_property_id IS NOT NULL";
+                const params = [];
+
+                if (start) {
+                    params.push(parseInt(start));
+                    dateFilter += ` AND m.timestamp >= $${params.length}`;
+                }
+                if (end) {
+                    params.push(parseInt(end));
+                    dateFilter += ` AND m.timestamp <= $${params.length}`;
+                }
+
+                const query = `
+                    WITH property_groups AS (
+                        SELECT 
+                            real_property_id,
+                            JSONB_AGG(
+                                JSONB_BUILD_OBJECT(
+                                    'id', id,
+                                    'body', body,
+                                    'timestamp', timestamp,
+                                    'sender_name', sender_name,
+                                    'has_media', has_media,
+                                    'media_path', media_path,
+                                    'media_mime_type', media_mime_type
+                                ) ORDER BY timestamp ASC
+                            ) as messages,
+                            MAX(timestamp) as last_updated,
+                            MIN(neighborhood) as neighborhood,
+                            MIN(district) as district,
+                            MIN(municipality) as municipality
+                        FROM messages m
+                        ${dateFilter}
+                        GROUP BY real_property_id
+                    )
+                    SELECT * FROM property_groups
+                    ORDER BY last_updated DESC
+                `;
+                const { rows } = await db.query(query, params);
                 res.json(rows);
             } catch (e) {
                 res.status(500).json({ error: e.message });
@@ -716,6 +792,46 @@ client.on('message_create', async msg => {
 
         await db.query(query, values);
         console.log("💾 Message archivé dans PostgreSQL avec succès ! ✅");
+
+        // 🤖 HEURISTIQUE DE GROUPEMENT AUTOMATIQUE (Simplification demandée par le USER)
+        // Règle : Si un texte > 100 chars est suivi par un média du même expéditeur, on groupe.
+        if (messageData.hasMedia && !messageData.isFromMe) {
+            try {
+                // Chercher le message précédent du même expéditeur dans le même chat
+                const prevMsgQuery = `
+                    SELECT id, body, property_group_id, timestamp, has_media 
+                    FROM messages 
+                    WHERE chat_id = $1 AND sender_id = $2 AND id != $3
+                    ORDER BY timestamp DESC LIMIT 1
+                `;
+                const { rows: prevRows } = await db.query(prevMsgQuery, [messageData.chatId, messageData.senderId, messageData.messageId]);
+                
+                if (prevRows.length > 0) {
+                    const prevMsg = prevRows[0];
+                    const timeDiff = messageData.timestamp - prevMsg.timestamp;
+                    
+                    // Si le précédent était un texte long (> 100) et récent (< 5 min)
+                    if (prevMsg.body && prevMsg.body.length > 100 && timeDiff < 300 && !prevMsg.property_group_id) {
+                        const newGroupId = `auto_prop_${Date.now()}`;
+                        await db.query(
+                            'UPDATE messages SET property_group_id = $1 WHERE id IN ($2, $3)',
+                            [newGroupId, prevMsg.id, messageData.messageId]
+                        );
+                        console.log(`📎 Auto-groupement (Nouveau) : ${newGroupId}`);
+                    } 
+                    // Si le précédent était déjà un groupe auto/ia non officialisé et récent
+                    else if (prevMsg.property_group_id && (prevMsg.property_group_id.startsWith('auto_prop_') || prevMsg.property_group_id.startsWith('ia_prop_')) && timeDiff < 300) {
+                        await db.query(
+                            'UPDATE messages SET property_group_id = $1 WHERE message_id = $2',
+                            [prevMsg.property_group_id, messageData.messageId]
+                        );
+                        console.log(`📎 Ajout au groupe auto existant : ${prevMsg.property_group_id}`);
+                    }
+                }
+            } catch (groupErr) {
+                console.error("❌ Erreur auto-groupement:", groupErr);
+            }
+        }
 
     } catch (error) {
         console.error("❌ Erreur lors de l'extraction du message :", error);

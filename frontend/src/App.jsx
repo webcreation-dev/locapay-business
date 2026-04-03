@@ -131,6 +131,16 @@ function App() {
   const [activeSubmissions, setActiveSubmissions] = useState({}); // { [pendingGroupId]: { status, progress, errors, successData } }
   const [isGroupSelection, setIsGroupSelection] = useState(false);
 
+  // ─── NOUVEAUX ÉTATS (RECHERCHE & BIENS) ──────────────────────────────────────
+  const [viewMode, setViewMode] = useState('chats'); // 'chats' ou 'properties'
+  const [searchTerm, setSearchTerm] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [properties, setProperties] = useState([]);
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [isLoadingProperties, setIsLoadingProperties] = useState(false);
+
   const containerRef = useRef(null);       // ref vers la div messages-container
   const scrollPositionBeforeSubmit = useRef(null); // Position scroll avant soumission
   const isManualActionRef = useRef(false);       // verrou : bloque le scroll auto après action manuelle
@@ -187,6 +197,46 @@ function App() {
       return () => clearTimeout(id);
     }
   }, [toast]);
+
+  // ─── RECHERCHE DE MESSAGES ──────────────────────────────────────────────────
+  useEffect(() => {
+    const delayDebounceFn = setTimeout(async () => {
+      if (searchTerm.length >= 2) {
+        setIsSearching(true);
+        try {
+          const res = await fetch(`/api/messages/search?q=${encodeURIComponent(searchTerm)}`);
+          const data = await res.json();
+          setSearchResults(data);
+        } catch (e) { console.error('search error', e); }
+        finally { setIsSearching(false); }
+      } else {
+        setSearchResults([]);
+      }
+    }, 500);
+    return () => clearTimeout(delayDebounceFn);
+  }, [searchTerm]);
+
+  // ─── RÉCUPÉRATION DES BIENS AGGRÉGÉS ────────────────────────────────────────
+  const fetchProperties = useCallback(async () => {
+    if (viewMode !== 'properties') return;
+    setIsLoadingProperties(true);
+    try {
+      let url = '/api/properties/all';
+      const params = new URLSearchParams();
+      if (startDate) params.append('start', Math.floor(new Date(startDate).getTime() / 1000));
+      if (endDate) params.append('end', Math.floor(new Date(endDate).getTime() / 1000));
+      if (params.toString()) url += `?${params.toString()}`;
+
+      const res = await fetch(url);
+      const data = await res.json();
+      setProperties(data);
+    } catch (e) { console.error('fetchProperties error', e); }
+    finally { setIsLoadingProperties(false); }
+  }, [viewMode, startDate, endDate]);
+
+  useEffect(() => {
+    fetchProperties();
+  }, [fetchProperties]);
 
   // ─── POLLING MESSAGES (NOUVEAUX SEULEMENT) ───────────────────────────────────
   useEffect(() => {
@@ -917,37 +967,161 @@ function App() {
           <div className="avatar" style={{ borderRadius: '50%', overflow: 'hidden' }}>
             <img src="/logo-locapay.png" style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" />
           </div>
-          <h2>Conversations</h2>
-        </header>
-        <div className="chat-list">
-          {chats.map(chat => (
-            <div key={chat.whatsapp_chat_id}
-              className={`chat-item ${chat.whatsapp_chat_id === currentChatId ? 'active' : ''}`}
-              onClick={() => handleSelectChat(chat.whatsapp_chat_id)}
+          <div className="sidebar-controls">
+            <button 
+              className={`view-toggle ${viewMode === 'chats' ? 'active' : ''}`} 
+              onClick={() => { setViewMode('chats'); setSearchTerm(''); }}
             >
-              <div className="avatar" style={{ background: getRandomColor(chat.chat_name || chat.whatsapp_chat_id) }}>
-                {getInitials(chat.chat_name || chat.whatsapp_chat_id)}
+              💬
+            </button>
+            <button 
+              className={`view-toggle ${viewMode === 'properties' ? 'active' : ''}`} 
+              onClick={() => { setViewMode('properties'); setSearchTerm(''); }}
+            >
+              🏠
+            </button>
+          </div>
+        </header>
+
+        {/* Barre de recherche */}
+        <div className="sidebar-search">
+          <div className="search-input-wrapper">
+            <span className="search-icon">🔍</span>
+            <input 
+              type="text" 
+              placeholder={viewMode === 'chats' ? "Rechercher dans les biens..." : "Filtrer la liste..."} 
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+            {searchTerm && <button className="clear-search" onClick={() => setSearchTerm('')}>✕</button>}
+          </div>
+        </div>
+
+        <div className="chat-list">
+          {viewMode === 'chats' ? (
+            searchTerm.length >= 2 ? (
+              /* Résultats de recherche */
+              <div className="search-results">
+                {isSearching ? (
+                  <div className="search-loading">Recherche en cours...</div>
+                ) : searchResults.length === 0 ? (
+                  <div className="search-empty">Aucun message trouvé</div>
+                ) : (
+                  searchResults.map(msg => (
+                    <div key={msg.id} className="search-result-item" onClick={() => { handleSelectChat(msg.chat_id); setSearchTerm(''); }}>
+                      <div className="result-header">
+                        <span className="result-chat">{msg.chat_name}</span>
+                        <span className="result-time">{formatTime(msg.timestamp)}</span>
+                      </div>
+                      <div className="result-body">{msg.body}</div>
+                      {msg.real_property_id && <div className="result-tag">#BIEN {msg.real_property_id}</div>}
+                    </div>
+                  ))
+                )}
               </div>
-              <div className="chat-info">
-                <div className="chat-top">
-                  <div className="chat-title">{chat.chat_name || chat.whatsapp_chat_id}</div>
-                  <div className="chat-time">{formatTime(chat.last_message_timestamp)}</div>
+            ) : (
+              /* Liste des conversations classiques */
+              chats.map(chat => (
+                <div key={chat.whatsapp_chat_id}
+                  className={`chat-item ${chat.whatsapp_chat_id === currentChatId ? 'active' : ''}`}
+                  onClick={() => handleSelectChat(chat.whatsapp_chat_id)}
+                >
+                  <div className="avatar" style={{ background: getRandomColor(chat.chat_name || chat.whatsapp_chat_id) }}>
+                    {getInitials(chat.chat_name || chat.whatsapp_chat_id)}
+                  </div>
+                  <div className="chat-info">
+                    <div className="chat-top">
+                      <div className="chat-title">{chat.chat_name || chat.whatsapp_chat_id}</div>
+                      <div className="chat-time">{formatTime(chat.last_message_timestamp)}</div>
+                    </div>
+                    <div className="chat-bottom">
+                      <div className="chat-preview">{chat.is_group ? 'Groupe' : 'Conversation'}</div>
+                      {parseInt(chat.unread_count) > 0 && (
+                        <div className="unread-badge">{chat.unread_count}</div>
+                      )}
+                    </div>
+                  </div>
                 </div>
-                <div className="chat-bottom">
-                  <div className="chat-preview">{chat.is_group ? 'Groupe' : 'Conversation'}</div>
-                  {parseInt(chat.unread_count) > 0 && (
-                    <div className="unread-badge">{chat.unread_count}</div>
-                  )}
-                </div>
+              ))
+            )
+          ) : (
+            /* Liste simplifiée des biens dans la sidebar (optionnel si on utilise la zone principale) */
+            <div className="sidebar-properties-list">
+              <div style={{ padding: '15px', color: '#667781', fontSize: '13px' }}>
+                Mode "Liste des Biens" actif
               </div>
             </div>
-          ))}
+          )}
         </div>
       </aside>
 
       {/* Zone principale */}
       <main className="chat-view">
-        {currentChatId ? (
+        {viewMode === 'properties' ? (
+          <div className="properties-dashboard">
+            <header className="chat-header">
+              <div className="chat-header-info">
+                <div className="name">Tous les Biens Créés</div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                  Regroupement par bien immobiliers
+                </div>
+              </div>
+              <div className="date-filters">
+                <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+                <span>au</span>
+                <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+                <button className="refresh-btn" onClick={fetchProperties}>🔄</button>
+              </div>
+            </header>
+
+            <div className="messages-container">
+              {isLoadingProperties ? (
+                <div className="loading-state">Chargement des biens...</div>
+              ) : properties.length === 0 ? (
+                <div className="empty-state">
+                  <h1>Aucun bien trouvé</h1>
+                  <p>Ajustez vos filtres de dates ou créez votre premier bien.</p>
+                </div>
+              ) : (
+                properties.map(property => (
+                  <div key={property.real_property_id} className="property-group-wrapper created">
+                    <div className="property-group-header-label">
+                      ✅ BIEN CRÉÉ{' '}
+                      <a
+                        href={`https://admin-locapay.vercel.app/properties/${property.real_property_id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="property-link"
+                      >
+                        #{property.real_property_id}
+                      </a>
+                      { (property.neighborhood || property.district) && (
+                        ` — 📍 ${[property.neighborhood, property.district, property.municipality].filter(Boolean).join(' - ')}`
+                      )}
+                    </div>
+                    <div className="property-group-content grid-view">
+                      {property.messages.map(msg => (
+                        <div key={msg.id} className="property-message-item">
+                          <div className="msg-sender">{msg.sender_name} • {formatTime(msg.timestamp)}</div>
+                          {msg.has_media && msg.media_path && (
+                            <div className="media-preview">
+                              {msg.media_mime_type?.startsWith('image/') ? (
+                                <img src={'/' + msg.media_path.replace('./', '')} alt="" />
+                              ) : (
+                                <div className="media-placeholder">🎬 Vidéo</div>
+                              )}
+                            </div>
+                          )}
+                          <div className="msg-body">{msg.body}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        ) : currentChatId ? (
           <>
             <header className="chat-header">
               <div className="avatar" style={{ background: getRandomColor(currentChatName) }}>
@@ -1020,7 +1194,30 @@ function App() {
                               </div>
                             </div>
                           ) : (
-                            item.label
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                                <span>{item.label}</span>
+                                <button 
+                                    className="btn-action btn-group" 
+                                    style={{ padding: '4px 10px', fontSize: '11px', whiteSpace: 'nowrap' }}
+                                    onClick={() => {
+                                        // Extraire tous les IDs des messages du groupe
+                                        const groupMsgIds = messages.filter(m => m.property_group_id === item.key).map(m => m.id);
+                                        if (groupMsgIds.length > 0) {
+                                            // On sélectionne et on envoie
+                                            setSelectedMessageIds(groupMsgIds);
+                                            // Note: handleManualAction utilise selectedMessageIds de l'état, 
+                                            // mais ici on passe par une closure. On va modifier handleManualAction 
+                                            // pour qu'il puisse accepter des IDs en paramètre ou tricher avec un timeout.
+                                            setTimeout(() => {
+                                              const btnSubmit = document.querySelector('.btn-group');
+                                              if (btnSubmit) handleManualAction('group');
+                                            }, 100);
+                                        }
+                                    }}
+                                >
+                                    🚀 Créer le BIEN
+                                </button>
+                            </div>
                           )}
                         </div>
                         <div className="property-group-content">
