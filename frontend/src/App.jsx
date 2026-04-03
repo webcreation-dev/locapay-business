@@ -1134,8 +1134,29 @@ function App() {
               </div>
               <div className="chat-header-info">
                 <div className="name">{currentChatName}</div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                  {isLoadingMore ? 'Chargement...' : 'En ligne'}
+                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                    {isLoadingMore ? 'Chargement...' : 'En ligne'}
+                  </div>
+                  <button 
+                    className="auto-analyze-btn" 
+                    title="Analyse automatique de l'historique"
+                    onClick={async () => {
+                      if (!currentChatId) return;
+                      setToast({ message: "📈 Analyse en cours...", type: 'success' });
+                      try {
+                        const res = await fetch(`/api/messages/analyze-chat/${encodeURIComponent(currentChatId)}`, { method: 'POST' });
+                        const data = await res.json();
+                        setToast({ message: `✅ ${data.message}`, type: 'success' });
+                        // Recharger les messages pour voir les nouveaux groupements
+                        const refreshRes = await fetch(`/api/messages/${currentChatId}?limit=100`);
+                        const refreshData = await refreshRes.json();
+                        setMessages(refreshData);
+                      } catch (e) { setToast({ message: "❌ Échec de l'analyse", type: 'error' }); }
+                    }}
+                  >
+                    🤖 Auto Analyse
+                  </button>
                 </div>
               </div>
             </header>
@@ -1162,7 +1183,7 @@ function App() {
                    );
                  }
                   if (item?.type === 'wrapper') {
-                    const isPending = item.key?.startsWith('pending_');
+                    const isPending = !item.isCreated;
                     const isAi = item.isAiSuggestion;
                     return (
                       <div 

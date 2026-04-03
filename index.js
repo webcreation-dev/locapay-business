@@ -192,6 +192,55 @@ Texte à analyser : "${description}"
                 }
             });
 
+            // 🤖 ANALYSE AUTO (HEURISTIQUE) SUR TOUT LE CHAT
+            app.post('/api/messages/analyze-chat/:chatId', async (req, res) => {
+                try {
+                    const { chatId } = req.params;
+                    const { rows: msgs } = await db.query(
+                        "SELECT id, body, has_media, property_group_id, sender_id, timestamp FROM messages WHERE chat_id = $1 ORDER BY timestamp ASC",
+                        [chatId]
+                    );
+
+                    let groupsFound = 0;
+                    let lastTextMsgsBySender = {};
+
+                    for (let msg of msgs) {
+                        const sender = msg.sender_id;
+                        
+                        // Si c'est un texte long, on le mémorise comme potentiel début de groupe
+                        if (msg.body && msg.body.length > 100) {
+                            lastTextMsgsBySender[sender] = msg;
+                        } 
+                        // Si c'est un média, on vérifie si on peut le grouper avec le dernier texte du même émetteur
+                        else if (msg.has_media) {
+                            const lastText = lastTextMsgsBySender[sender];
+                            if (lastText && (msg.timestamp - lastText.timestamp < 300)) {
+                                // On crée ou réutilise le groupe
+                                const groupId = lastText.property_group_id || `auto_prop_${Date.now()}_${msg.id}`;
+                                
+                                // Mise à jour en base de données
+                                await db.query(
+                                    "UPDATE messages SET property_group_id = $1 WHERE id IN ($2, $3)",
+                                    [groupId, lastText.id, msg.id]
+                                );
+
+                                // Mettre à jour l'objet local pour les messages suivants (album)
+                                lastText.property_group_id = groupId;
+                                groupsFound++;
+                            }
+                        } else {
+                            // On "oublie" le texte si un autre type de message court arrive (casse la suite)
+                            // facultatif, mais on peut être strict : lastTextMsgsBySender[sender] = null;
+                        }
+                    }
+
+                    res.json({ success: true, groupsFound, message: `Analyse terminée. ${groupsFound} associations effectuées.` });
+                } catch (e) {
+                    console.error("❌ Analyze chat error:", e);
+                    res.status(500).json({ error: e.message });
+                }
+            });
+
             app.get('/api/chats', async (req, res) => {
                 try {
                     // Calculer le nombre de messages non traités (is_analyzed = false) pour chaque groupe
@@ -298,14 +347,14 @@ Texte à analyser : "${description}"
                 if (!q || q.length < 2) return res.json([]);
 
                 const query = `
-                    SELECT id, message_id, body, timestamp, chat_name, sender_name, real_property_id, neighborhood, district, municipality, media_path, media_mime_type
+                    SELECT id, message_id, body, timestamp, chat_name, sender_name, real_property_id, neighborhood, district, municipality, media_path, media_mime_type, property_group_id
                     FROM messages 
-                    WHERE real_property_id IS NOT NULL
-                    AND body ILIKE $1
+                    WHERE (real_property_id IS NOT NULL OR (property_group_id IS NOT NULL AND property_group_id != 'noise'))
+                    AND body @@ plainto_tsquery('french', $1)
                     ORDER BY timestamp DESC
                     LIMIT 50
                 `;
-                const { rows } = await db.query(query, [`%${q}%`]);
+                const { rows } = await db.query(query, [q]);
                 res.json(rows);
             } catch (e) {
                 res.status(500).json({ error: e.message });
