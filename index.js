@@ -245,35 +245,34 @@ Texte à analyser : "${description}"
                     for (let msg of msgs) {
                         const sender = msg.sender_id;
                         
-                        // Si c'est un texte long, on le mémorise comme potentiel début de groupe
+                        // Si c'est un texte long (> 100), on le mémorise comme potentiel "Chef de file"
                         if (msg.body && msg.body.length > 100) {
-                            // On réinitialise si on trouve un nouveau texte long pour ce vendeur
-                            lastTextMsgsBySender[sender] = msg;
+                            lastTextMsgsBySender[sender] = {
+                                id: msg.id,
+                                timestamp: msg.timestamp,
+                                property_group_id: msg.property_group_id // On garde s'il en a déjà un
+                            };
                         } 
-                        // Si c'est un média, on vérifie si on peut le grouper avec le dernier texte du même émetteur
+                        // Si c'est un média, on tente de le rattacher au "Chef de file" actuel
                         else if (msg.has_media) {
                             const lastText = lastTextMsgsBySender[sender];
                             const timeDiff = lastText ? (msg.timestamp - lastText.timestamp) : null;
 
-                            // RÈGLE STRICTE : seulement si le texte a moins de 5 min et n'est pas déjà un bien créé
-                            if (lastText && timeDiff < 300 && !lastText.real_property_id) {
-                                // On crée ou réutilise uniquement un groupe auto_prop
-                                const groupId = lastText.property_group_id && lastText.property_group_id.startsWith('auto_prop_') 
-                                    ? lastText.property_group_id 
-                                    : `auto_prop_${Date.now()}_${lastText.id}`;
+                            // RÈGLE D'OR : On ne groupe que si on a un texte long de moins de 5 min
+                            if (lastText && timeDiff < 300) {
+                                // On génère un ID de groupe unique basé sur l'ID du message texte long
+                                const groupId = lastText.property_group_id || `auto_prop_parent_${lastText.id}`;
                                 
-                                // On ne modifie que si ce n'est pas déjà un bien validé
-                                if (!msg.real_property_id) {
-                                    await db.query(
-                                        "UPDATE messages SET property_group_id = $1 WHERE id IN ($2, $3)",
-                                        [groupId, lastText.id, msg.id]
-                                    );
-                                    lastText.property_group_id = groupId;
-                                    groupsFound++;
-                                }
+                                // On applique le groupement au TEXTE et au MÉDIA
+                                // (On le fait séparément pour être sûr de ne rien rater)
+                                await db.query("UPDATE messages SET property_group_id = $1 WHERE id = $2", [groupId, lastText.id]);
+                                await db.query("UPDATE messages SET property_group_id = $1 WHERE id = $2", [groupId, msg.id]);
+                                
+                                lastText.property_group_id = groupId;
+                                groupsFound++;
                             }
                         } else {
-                            // Si c'est un texte court ou un autre message, on casse la fenêtre de groupement
+                            // On réinitialise si on rencontre un message court (discussion qui coupe l'album)
                             lastTextMsgsBySender[sender] = null;
                         }
                     }
@@ -908,22 +907,26 @@ client.on('message_create', async msg => {
                     const prevMsg = prevRows[0];
                     const timeDiff = messageData.timestamp - prevMsg.timestamp;
                     
-                    // RÈGLE STRICTE : Un précédent texte long valide (moins de 5 min)
-                    if (prevMsg.body && prevMsg.body.length > 100 && timeDiff < 300 && !prevMsg.property_group_id && !prevMsg.real_property_id) {
-                        const newGroupId = `auto_prop_${Date.now()}`;
-                        await db.query(
-                            'UPDATE messages SET property_group_id = $1 WHERE id IN ($2, $3)',
-                            [newGroupId, prevMsg.id, messageData.messageId]
-                        );
-                        console.log(`📎 Heuristique Stricte (Nouveau) : ${newGroupId}`);
+                    // RÈGLE D'OR : On ne groupe que si le message précédent est un texte long récent
+                    if (prevMsg.body && prevMsg.body.length > 100 && timeDiff < 300 && !prevMsg.real_property_id) {
+                        const groupId = prevMsg.property_group_id || `auto_prop_parent_${prevMsg.id}`;
+                        
+                        // Récupérer le message CURRENT (celui qu'on vient d'insérer) par son message_id pour avoir son ID numérique
+                        const { rows: currRows } = await db.query("SELECT id FROM messages WHERE message_id = $1", [messageData.messageId]);
+                        if (currRows.length > 0) {
+                            const currId = currRows[0].id;
+                            await db.query("UPDATE messages SET property_group_id = $1 WHERE id IN ($2, $3)", [groupId, prevMsg.id, currId]);
+                            console.log(`📎 Heuristique Stricte RÉTABLIE : Groupement de ${prevMsg.id} et ${currId} sous ${groupId}`);
+                        }
                     } 
-                    // Extension du groupe auto_prop existant
+                    // Extension si le précédent était déjà un groupe auto
                     else if (prevMsg.property_group_id && prevMsg.property_group_id.startsWith('auto_prop_') && timeDiff < 300 && !prevMsg.real_property_id) {
-                        await db.query(
-                            'UPDATE messages SET property_group_id = $1 WHERE message_id = $2',
-                            [prevMsg.property_group_id, messageData.messageId]
-                        );
-                        console.log(`📎 Heuristique Stricte (Album) : ${prevMsg.property_group_id}`);
+                        const { rows: currRows } = await db.query("SELECT id FROM messages WHERE message_id = $1", [messageData.messageId]);
+                        if (currRows.length > 0) {
+                            const currId = currRows[0].id;
+                            await db.query("UPDATE messages SET property_group_id = $1 WHERE id = $2", [prevMsg.property_group_id, currId]);
+                            console.log(`📎 Heuristique Stricte RÉTABLIE (Extension) : Ajout de ${currId} au groupe ${prevMsg.property_group_id}`);
+                        }
                     }
                 }
             } catch (groupErr) {
