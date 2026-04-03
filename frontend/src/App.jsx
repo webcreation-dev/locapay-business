@@ -777,11 +777,16 @@ function App() {
             if (locParts.length > 0) label += ` — 📍 ${locParts.join(' - ')}`;
           }
 
+          const isAutoProp = msg.property_group_id.startsWith('auto_prop_');
+          const isAiProp = msg.property_group_id.startsWith('ia_prop_') || msg.property_group_id.startsWith('prop_');
+
           groupWrappers.set(msg.property_group_id, {
             type: 'wrapper',
             label: msg.property_group_id.startsWith('ignore_') ? '🛑 À IGNORER' : label,
             key: msg.property_group_id,
             isCreated: isRealProp,
+            isAutoSuggestion: !isRealProp && isAutoProp,
+            isAiSuggestion: !isRealProp && (isAiProp || !isAutoProp),
             propertyId: isRealProp ? msg.real_property_id : null,
             locationLabel: isRealProp && (msg.neighborhood || msg.district)
               ? ` — 📍 ${[msg.neighborhood, msg.district, msg.municipality].filter(Boolean).join(' - ')}`
@@ -1218,7 +1223,11 @@ function App() {
                                     </span>
                                   </div>
                                 ) : (
-                                  <span className="suggestion-label">🤖 SUGGESTION IA</span>
+                                  item.isAutoSuggestion ? (
+                                    <span className="suggestion-label auto">🤖 DÉTECTION AUTO</span>
+                                  ) : (
+                                    <span className="suggestion-label ai">🧠 SUGGESTION IA</span>
+                                  )
                                 )}
                               </div>
                               
