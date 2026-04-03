@@ -245,40 +245,33 @@ Texte à analyser : "${description}"
                     for (let msg of msgs) {
                         const sender = msg.sender_id;
                         
-                        // CAS 1 : Texte long (> 100) - Peut être un texte seul ou une photo avec légende
-                        if (msg.body && msg.body.length > 100) {
-                            const groupId = msg.property_group_id || `auto_prop_parent_${msg.id}`;
-                            
-                            // Si ce message long a AUSSI un média, on l'auto-groupe tout de suite
-                            if (msg.has_media) {
-                                await db.query("UPDATE messages SET property_group_id = $1 WHERE id = $2", [groupId, msg.id]);
-                            }
-
+                        // Condition PARENT : Texte pur (>100 car) sans aucun média
+                        const isStrictParentCandidate = msg.body && msg.body.length > 100 && !msg.has_media;
+                        
+                        if (isStrictParentCandidate) {
+                            // On initialise un nouveau groupe potentiel pour ce texte seul
+                            const groupId = `auto_prop_parent_${msg.id}`;
                             lastTextMsgsBySender[sender] = {
                                 id: msg.id,
                                 timestamp: msg.timestamp,
                                 property_group_id: groupId
                             };
                         } 
-                        // CAS 2 : Média court ou sans texte - On tente de le rattacher au dernier texte long
+                        // Condition ENFANT : Message avec média arrivant après un parent valide
                         else if (msg.has_media) {
-                            const lastText = lastTextMsgsBySender[sender];
-                            const timeDiff = lastText ? (msg.timestamp - lastText.timestamp) : null;
+                            const parent = lastTextMsgsBySender[sender];
+                            const timeDiff = parent ? (msg.timestamp - parent.timestamp) : null;
 
-                            if (lastText && timeDiff < 420) { // On passe à 7 minutes pour être plus large
-                                const groupId = lastText.property_group_id;
-                                
-                                // On s'assure que le parent et l'enfant ont le même ID
-                                await db.query("UPDATE messages SET property_group_id = $1 WHERE id = $2", [groupId, lastText.id]);
-                                await db.query("UPDATE messages SET property_group_id = $1 WHERE id = $2", [groupId, msg.id]);
-                                
+                            if (parent && timeDiff < 420) {
+                                // On lie le parent (texte seul) et l'enfant (média)
+                                await db.query("UPDATE messages SET property_group_id = $1 WHERE id = $2", [parent.property_group_id, parent.id]);
+                                await db.query("UPDATE messages SET property_group_id = $1 WHERE id = $2", [parent.property_group_id, msg.id]);
                                 groupsFound++;
                             }
-                        } else {
-                            // On réinitialise si on rencontre un message texte très court (discussion)
-                            if (msg.body && msg.body.length < 20) {
-                                lastTextMsgsBySender[sender] = null;
-                            }
+                        } 
+                        else {
+                            // Tout autre message (texte court, etc.) CASSE la chaîne
+                            lastTextMsgsBySender[sender] = null;
                         }
                     }
 
@@ -917,22 +910,18 @@ client.on('message_create', async msg => {
                     if (currRows.length > 0) {
                         const currId = currRows[0].id;
 
-                        // CAS A : Nouveau message est un texte long (on vérifie s'il a un média pour l'auto-grouper)
-                        if (messageData.body && messageData.body.length > 100 && messageData.hasMedia) {
-                             const groupId = `auto_prop_parent_${currId}`;
-                             await db.query("UPDATE messages SET property_group_id = $1 WHERE id = $2", [groupId, currId]);
-                             console.log(`📎 Auto-groupement Légende : ${groupId}`);
-                        }
-                        // CAS B : Nouveau média arrivant après un texte long
-                        else if (messageData.hasMedia && prevMsg.body && prevMsg.body.length > 100 && timeDiff < 420 && !prevMsg.real_property_id) {
+                        // RÈGLE UNIQUE : Média arrivant après un texte pur (>100 car) sans média
+                        const prevIsStrictParent = prevMsg.body && prevMsg.body.length > 100 && !prevMsg.has_media;
+                        
+                        if (messageData.hasMedia && prevIsStrictParent && timeDiff < 420 && !prevMsg.real_property_id) {
                             const groupId = prevMsg.property_group_id || `auto_prop_parent_${prevMsg.id}`;
                             await db.query("UPDATE messages SET property_group_id = $1 WHERE id IN ($2, $3)", [groupId, prevMsg.id, currId]);
-                            console.log(`📎 Heuristique Stricte : Groupement ${prevMsg.id} + ${currId}`);
+                            console.log(`📎 Heuristique ULTRA-STRICTE : ${groupId}`);
                         } 
-                        // CAS C : Extension d'un groupe auto existant
-                        else if (messageData.hasMedia && prevMsg.property_group_id && prevMsg.property_group_id.startsWith('auto_prop_') && timeDiff < 420 && !prevMsg.real_property_id) {
+                        // Extension si le précédent était déjà un médià lié à un groupe auto
+                        else if (messageData.hasMedia && prevMsg.property_group_id && prevMsg.property_group_id.startsWith('auto_prop_parent_') && timeDiff < 420 && !prevMsg.real_property_id) {
                             await db.query("UPDATE messages SET property_group_id = $1 WHERE id = $2", [prevMsg.property_group_id, currId]);
-                            console.log(`📎 Extension Heuristique : ${currId} ajoute au groupe ${prevMsg.property_group_id}`);
+                            console.log(`📎 Extension Heuristique ULTRA-STRICTE : ${currId}`);
                         }
                     }
                 }
