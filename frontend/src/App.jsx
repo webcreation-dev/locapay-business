@@ -1132,14 +1132,7 @@ function App() {
                               </div>
                             )}
                             
-                            <div className="property-texts">
-                              {textMsgs.map(msg => (
-                                <div key={msg.id} className="property-text-item">
-                                  <div className="msg-body">{msg.body}</div>
-                                  <div className="msg-meta">{msg.sender_name} • {formatTime(msg.timestamp)}</div>
-                                </div>
-                              ))}
-                            </div>
+                            {/* Les messages sont totalement masqués sur cette page comme demandé */}
                           </>
                         );
                       })()}
