@@ -464,14 +464,10 @@ Texte à analyser : "${description}"
                     res.status(500).json({ error: e.message });
                 }
             });
-
-            // ROUTE DE GROUPEMENT MANUEL + SOUMISSION À NESTJS
-
-            app.post('/api/messages/submit-property', async (req, res) => {
-                const { messageIds } = req.body;
-                if (!messageIds || !Array.isArray(messageIds) || messageIds.length === 0) {
-                    return res.status(400).json({ error: 'Aucun message sélectionné.' });
-                }
+            
+            // --- LOGIQUE DE SOUMISSION RÉUTILISABLE ---
+            async function internalProcessPropertySubmission(messageIds) {
+                if (!messageIds || !Array.isArray(messageIds) || messageIds.length === 0) return { success: false, error: "IDs invalides" };
 
                 try {
                     // 1. Récupérer les détails des messages depuis la BD
@@ -480,19 +476,15 @@ Texte à analyser : "${description}"
                         [messageIds]
                     );
 
-                    if (fetchedMessages.length === 0) {
-                        return res.status(404).json({ error: 'Messages introuvables.' });
-                    }
+                    if (fetchedMessages.length === 0) return { success: false, error: "Messages introuvables" };
 
-                    // 2. Fusionner les textes et collecter les images EN BASE64 (évite le re-téléchargement par NestJS)
+                    // 2. Fusionner les textes et collecter les images EN BASE64
                     const texts = [];
-                    const imagesBase64 = []; // Nouveau: images en base64 pour envoi direct
+                    const imagesBase64 = []; 
                     let senderPhone = "";
 
-                    // Trouver le premier numéro d'expéditeur valide (non "me")
                     const externalMsg = fetchedMessages.find(m => !m.is_from_me);
                     if (externalMsg) {
-                        // Utiliser sender_number (numéro réel) au lieu de sender_id (identifiant WhatsApp)
                         senderPhone = externalMsg.sender_number || '';
                         if (senderPhone && !senderPhone.startsWith('+')) senderPhone = '+' + senderPhone;
                     }
@@ -503,142 +495,164 @@ Texte à analyser : "${description}"
                         }
                         const isImageOrVideo = msg.media_mime_type?.startsWith('image/') || msg.media_mime_type?.startsWith('video/');
                         if (msg.has_media && msg.media_path && isImageOrVideo) {
-                            // Vérifier que le fichier existe réellement sur disque
                             const localPath = msg.media_path.startsWith('./') ? msg.media_path : `./${msg.media_path}`;
                             if (fs.existsSync(localPath)) {
-                                // Lire l'image et la convertir en base64 (évite le téléchargement HTTP par NestJS)
                                 try {
                                     const imageBuffer = fs.readFileSync(localPath);
                                     const base64Data = imageBuffer.toString('base64');
-                                    const mimeType = msg.media_mime_type || 'image/jpeg';
-                                    const ext = localPath.split('.').pop() || 'jpg';
                                     imagesBase64.push({
                                         data: base64Data,
-                                        mimeType: mimeType,
-                                        extension: ext
+                                        mimeType: msg.media_mime_type || 'image/jpeg',
+                                        extension: localPath.split('.').pop() || 'jpg'
                                     });
                                 } catch (readErr) {
                                     console.warn(`⚠️ Erreur lecture média: ${localPath} - ${readErr.message}`);
                                 }
-                            } else {
-                                console.warn(`⚠️ Média manquant sur disque: ${localPath}`);
                             }
                         }
                     });
 
-                    // 3. Fusionner le texte
                     const finalDescription = texts.join('\n\n').trim() || '(Annonce immobilière WhatsApp - Sans texte)';
 
-                    // --- NOUVEAUX FILTRES DE SÉCURITÉ ---
+                    // FILTRES DE SÉCURITÉ
                     const forbiddenKeywords = ['vendre', 'vente', 'parcelle', 'terrain', 'titre foncier', ' tf ', ' tf\n'];
                     const descriptionLower = finalDescription.toLowerCase();
                     const foundKeyword = forbiddenKeywords.find(kw => descriptionLower.includes(kw));
 
                     if (foundKeyword) {
                         const errMsg = `Désolé, nous n'acceptons que les locations. Ce message semble concerner une vente ou un terrain (${foundKeyword}).`;
-                        console.warn(`🚫 Rejet local : Mot-clé interdit détecté : ${foundKeyword}`);
                         await db.query(`UPDATE messages SET analysis_error = $1 WHERE id = ANY($2)`, [errMsg, messageIds]);
-                        return res.status(400).json({ success: false, error: errMsg });
+                        return { success: false, error: errMsg };
                     }
 
-                    // --- VÉRIFICATION DES MÉDIAS (images ou vidéos) ---
                     if (imagesBase64.length === 0) {
-                        // Compter combien de messages avaient has_media = true (image ou vidéo)
-                        const mediaMessages = fetchedMessages.filter(m =>
-                            m.has_media && (m.media_mime_type?.startsWith('image/') || m.media_mime_type?.startsWith('video/'))
-                        );
-                        let errMsg;
-                        if (mediaMessages.length === 0) {
-                            errMsg = "Au moins une image ou vidéo est requise. Veuillez sélectionner le(s) message(s) contenant les photos/vidéos en plus du texte.";
-                        } else {
-                            errMsg = `${mediaMessages.length} média(s) détecté(s) mais aucun n'est lisible. Les fichiers n'existent pas sur le serveur.`;
-                        }
-                        console.error(`❌ Échec de soumission: ${errMsg}`);
+                        const errMsg = "Au moins une image ou vidéo est requise.";
                         await db.query(`UPDATE messages SET analysis_error = $1 WHERE id = ANY($2)`, [errMsg, messageIds]);
-                        return res.status(400).json({ success: false, error: errMsg });
+                        return { success: false, error: errMsg };
                     }
 
-                    // 4. Analyser avec Mistral DIRECTEMENT depuis le Bot (Gain de temps et évite les timeouts Backend)
-                    // On répond 202 immédiatement pour libérer le frontend
-                    res.status(202).json({ success: true, message: 'Analyse IA et création en cours...' });
+                    // 4. Analyser avec Mistral
+                    console.log(`🤖 Analyse Mistral en cours pour ${texts.length} messages...`);
+                    const extractedData = await extractPropertyDataWithAI(finalDescription);
 
-                    // Traitement asynchrone : IA Mistral puis NestJS
-                    (async () => {
-                        console.log(`🤖 Analyse Mistral en cours pour ${texts.length} messages...`);
-                        const extractedData = await extractPropertyDataWithAI(finalDescription);
+                    if (!extractedData) {
+                        const errMsg = "L'IA a échoué à analyser l'annonce.";
+                        await db.query(`UPDATE messages SET analysis_error = $1 WHERE id = ANY($2)`, [errMsg, messageIds]);
+                        return { success: false, error: errMsg };
+                    }
 
-                        if (!extractedData) {
-                            const errMsg = "L'IA a échoué à analyser l'annonce. Réessayez ou vérifiez votre connexion Mistral.";
-                            console.error(`❌ ${errMsg}`);
-                            await db.query(`UPDATE messages SET analysis_error = $1 WHERE id = ANY($2)`, [errMsg, messageIds]);
-                            return;
-                        }
-
-                        const nestUrl = process.env.NESTJS_API_URL || 'http://host.docker.internal:4000/properties/create-from-whatsapp';
-
-                        console.log(`📤 Envoi à NestJS: ${imagesBase64.length} images en base64 (skip download)`);
-                        axios.post(nestUrl, {
+                    const nestUrl = process.env.NESTJS_API_URL || 'http://host.docker.internal:4000/properties/create-from-whatsapp';
+                    
+                    try {
+                        console.log(`📤 Envoi à NestJS: ${imagesBase64.length} images...`);
+                        const response = await axios.post(nestUrl, {
                             description: finalDescription,
                             manager_phone: senderPhone,
-                            images_base64: imagesBase64, // Images en base64 (évite le téléchargement HTTP)
+                            images_base64: imagesBase64,
                             user_id: process.env.LOCAPAY_BOT_USER_ID || 1,
-                            extracted_data: extractedData // On passe les données analysées !
+                            extracted_data: extractedData
                         }, {
-                            timeout: 60000, // 60s timeout pour l'envoi base64
-                            maxContentLength: 50 * 1024 * 1024, // 50MB max
+                            timeout: 60000,
+                            maxContentLength: 50 * 1024 * 1024,
                             maxBodyLength: 50 * 1024 * 1024
-                        }).then(async (response) => {
-                            const raw = response.data;
-                            // 🔍 LOG de la réponse brute pour diagnostic
-                            console.log(`📡 Réponse NestJS brute:`, JSON.stringify(raw).substring(0, 300));
-
-                            // NestJS peut envelopper la réponse via un intercepteur global : { data: {...} }
-                            // On gère les deux formats
-                            const nestData = raw?.data || raw;
-
-                            if (nestData.success) {
-                                const property_id = nestData.property_id || nestData.propertyId;
-                                const { location } = nestData;
-                                await db.query(
-                                    `UPDATE messages SET property_group_id = $1, real_property_id = $2, neighborhood = $3, district = $4, municipality = $5, is_analyzed = TRUE, analyzed_at = CURRENT_TIMESTAMP, analysis_error = NULL WHERE id = ANY($6)`,
-                                    [`real_prop_${property_id}`, property_id, location?.neighborhood || '', location?.district || '', location?.municipality || '', messageIds]
-                                );
-                                console.log(`✅ Succès NestJS : Bien #${property_id} créé.`);
-                            } else {
-                                // On affiche d'abord le message d'erreur principal
-                                let errMsg = nestData.error || nestData.message || "Erreur de traitement";
-
-                                // On ajoute les précisions sur les champs si elles existent
-                                if (nestData.missingFields && Array.isArray(nestData.missingFields) && nestData.missingFields.length > 0) {
-                                    const fieldsList = nestData.missingFields.map(f => f.field).join(', ');
-                                    errMsg += ` (${fieldsList})`;
-                                }
-
-                                console.error(`❌ Échec NestJS (Métier) :`, errMsg);
-                                await db.query(`UPDATE messages SET property_group_id = NULL, real_property_id = NULL, is_analyzed = FALSE, analysis_error = $1 WHERE id = ANY($2)`, [errMsg, messageIds]);
-                            }
-                        }).catch(async (err) => {
-                            let errMsg = "Erreur backend inconnue";
-                            if (err.response) {
-                                // On essaie d'extraire le message d'erreur spécifique renvoyé par Nest
-                                const data = err.response.data;
-                                errMsg = data.error || data.message || `Erreur ${err.response.status}`;
-                            } else if (err.request) {
-                                errMsg = `Serveur NestJS INJOIGNABLE sur ${nestUrl}`;
-                            } else {
-                                errMsg = `Erreur lors de la requête : ${err.message}`;
-                            }
-                            console.error(`❌ ${errMsg}`);
-                            await db.query(
-                                `UPDATE messages SET property_group_id = NULL, real_property_id = NULL, is_analyzed = FALSE, analysis_error = $1 WHERE id = ANY($2)`,
-                                [errMsg, messageIds]
-                            );
-                            console.log(`↩️ Messages dégroupés suite à l'erreur.`);
                         });
+
+                        const nestData = response.data?.data || response.data;
+
+                        if (nestData.success) {
+                            const property_id = nestData.property_id || nestData.propertyId;
+                            const { location } = nestData;
+                            await db.query(
+                                `UPDATE messages SET property_group_id = $1, real_property_id = $2, neighborhood = $3, district = $4, municipality = $5, is_analyzed = TRUE, analyzed_at = CURRENT_TIMESTAMP, analysis_error = NULL WHERE id = ANY($6)`,
+                                [`real_prop_${property_id}`, property_id, location?.neighborhood || '', location?.district || '', location?.municipality || '', messageIds]
+                            );
+                            return { success: true, propertyId: property_id };
+                        } else {
+                            let errMsg = nestData.error || nestData.message || "Erreur de traitement";
+                            await db.query(`UPDATE messages SET property_group_id = NULL, real_property_id = NULL, is_analyzed = FALSE, analysis_error = $1 WHERE id = ANY($2)`, [errMsg, messageIds]);
+                            return { success: false, error: errMsg };
+                        }
+                    } catch (err) {
+                        let errMsg = err.response ? (err.response.data.error || err.response.data.message || `Erreur ${err.response.status}`) : err.message;
+                        await db.query(`UPDATE messages SET property_group_id = NULL, real_property_id = NULL, is_analyzed = FALSE, analysis_error = $1 WHERE id = ANY($2)`, [errMsg, messageIds]);
+                        return { success: false, error: errMsg };
+                    }
+                } catch (e) {
+                    console.error("❌ internalProcessPropertySubmission error:", e);
+                    return { success: false, error: e.message };
+                }
+            }
+
+            // ROUTE DE GROUPEMENT MANUEL + SOUMISSION À NESTJS
+
+            app.post('/api/messages/submit-property', async (req, res) => {
+                const { messageIds } = req.body;
+                if (!messageIds || !Array.isArray(messageIds) || messageIds.length === 0) {
+                    return res.status(400).json({ error: 'Aucun message sélectionné.' });
+                }
+
+                // Réponse immédiate
+                res.status(202).json({ success: true, message: 'Analyse IA et création en cours...' });
+
+                // Traitement en arrière-plan
+                internalProcessPropertySubmission(messageIds).catch(err => {
+                    console.error("❌ Async submission error:", err);
+                });
+            });
+
+            // 🚀 BATCH SUBMIT : Traiter tous les groupements d'un chat
+            app.post('/api/messages/batch-submit/:chatId', async (req, res) => {
+                const { chatId } = req.params;
+                
+                try {
+                    // 1. Trouver tous les groupes uniques qui n'ont pas encore de real_property_id
+                    const { rows: groups } = await db.query(
+                        "SELECT DISTINCT property_group_id FROM messages WHERE chat_id = $1 AND property_group_id IS NOT NULL AND property_group_id != 'noise' AND real_property_id IS NULL AND property_group_id NOT LIKE 'real_prop_%'",
+                        [chatId]
+                    );
+
+                    if (groups.length === 0) {
+                        return res.json({ success: true, message: "Aucun nouveau groupement à traiter." });
+                    }
+
+                    res.status(202).json({ success: true, message: `Traitement de ${groups.length} groupes lancé en arrière-plan.` });
+
+                    // 2. Traitement séquentiel (plus prudent pour l'IA et NestJS)
+                    (async () => {
+                        console.log(`🌀 Début du batch processing pour ${groups.length} groupes...`);
+                        let successCount = 0;
+                        let errorCount = 0;
+
+                        for (const group of groups) {
+                            try {
+                                const { rows: msgRows } = await db.query(
+                                    "SELECT id FROM messages WHERE property_group_id = $1",
+                                    [group.property_group_id]
+                                );
+                                
+                                const msgIds = msgRows.map(r => r.id);
+                                if (msgIds.length === 0) continue;
+
+                                console.log(`⏳ Batch : traitement du groupe ${group.property_group_id} (${msgIds.length} msgs)...`);
+                                const result = await internalProcessPropertySubmission(msgIds);
+                                
+                                if (result.success) successCount++;
+                                else {
+                                    errorCount++;
+                                    console.warn(`⚠️ Échec groupe ${group.property_group_id} : ${result.error}`);
+                                }
+                                
+                                // Petite pause pour ne pas saturer
+                                await new Promise(r => setTimeout(r, 2000));
+                            } catch (groupError) {
+                                errorCount++;
+                                console.error(`❌ Erreur fatale sur le groupe ${group.property_group_id}:`, groupError);
+                            }
+                        }
+                        console.log(`🏁 Batch terminé. Succès: ${successCount}, Échecs: ${errorCount}`);
                     })();
 
                 } catch (e) {
-                    console.error("❌ Submit error:", e);
                     res.status(500).json({ error: e.message });
                 }
             });

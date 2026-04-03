@@ -1162,6 +1162,22 @@ function App() {
                   >
                     🤖 Auto Analyse
                   </button>
+                  <button
+                    className="auto-analyze-btn"
+                    title="Soumettre tous les groupes détectés à NestJS"
+                    style={{ backgroundColor: '#00a884' }}
+                    onClick={async () => {
+                      if (!currentChatId) return;
+                      setToast({ message: "🚀 Lancement du traitement par lot...", type: 'success' });
+                      try {
+                        const res = await fetch(`/api/messages/batch-submit/${encodeURIComponent(currentChatId)}`, { method: 'POST' });
+                        const data = await res.json();
+                        setToast({ message: `✅ ${data.message}`, type: 'success' });
+                      } catch (e) { setToast({ message: "❌ Échec du traitement", type: 'error' }); }
+                    }}
+                  >
+                    🚀 Batch Submit
+                  </button>
                 </div>
               </div>
             </header>
