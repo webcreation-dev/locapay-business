@@ -1285,20 +1285,12 @@ body {
     color: var(--text-main);
 }
 
-.property-summary-hint {
-    font-size: 13px;
-    line-height: 1.5;
-    color: var(--text-main);
-    background: #f8f9fa;
-    padding: 10px;
-    border-radius: 8px;
-    border-left: 3px solid var(--accent);
-    overflow: hidden;
-    display: -webkit-box;
-    -webkit-line-clamp: 4;
-    line-clamp: 4;
-    -webkit-box-orient: vertical;
-    width: 100%;
+.property-text-item .msg-meta {
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-top: 6px;
+    text-align: right;
+    font-weight: 500;
 }
 
 .video-overlay {
