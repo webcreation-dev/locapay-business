@@ -25,26 +25,26 @@ const formatTime = (timestamp) => {
 const getDateLabel = (timestamp) => {
   const date = new Date(parseInt(timestamp) * 1000);
   const now = new Date();
-  
+
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  
+
   const yesterday = new Date(today);
   yesterday.setDate(yesterday.getDate() - 1);
-  
+
   const msgDate = new Date(date);
   msgDate.setHours(0, 0, 0, 0);
 
   if (msgDate.getTime() === today.getTime()) return "AUJOURD'HUI";
   if (msgDate.getTime() === yesterday.getTime()) return "HIER";
-  
+
   const sevenDaysAgo = new Date(today);
   sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-  
+
   if (msgDate.getTime() > sevenDaysAgo.getTime()) {
     return date.toLocaleDateString('fr-FR', { weekday: 'long' }).toUpperCase();
   }
-  
+
   return date.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }).toUpperCase();
 };
 
@@ -307,7 +307,7 @@ function App() {
             const isFreshProcessed = fresh.real_property_id || fresh.property_group_id?.startsWith('real_prop_') || fresh.analysis_error;
 
             if (isCurrentlyPending && !isFreshProcessed) {
-              return p; 
+              return p;
             }
 
             // On ne met à jour que si les champs importants ont changé (IA, bien créé, etc)
@@ -594,7 +594,7 @@ function App() {
         });
         const data = await res.json();
         if (!data.success) setToast({ message: data.error || "Erreur", type: 'error' });
-        
+
         // Rafraîchir les compteurs non lus après l'action
         fetchChats();
       } catch (e) { console.error('noise action', e); }
@@ -635,7 +635,7 @@ function App() {
     const mediaCheck = await verifyMediaFiles(ids);
     if (!mediaCheck.valid) {
       setToast({ message: `❌ Échec : ${mediaCheck.missingCount} image(s) introuvables.`, type: 'error' });
-      
+
       // RESET en cas d'échec de vérification immédiate
       setMessages(prev => prev.map(msg =>
         ids.includes(msg.id) ? { ...msg, property_group_id: null } : msg
@@ -688,7 +688,7 @@ function App() {
           ));
 
           setToast({ message: `✅ Bien #${result.propertyId} créé avec succès !`, type: 'success' });
-          
+
           // Rafraîchir les compteurs non lus immédiatement
           fetchChats();
           // Nettoyer après 1s
@@ -702,7 +702,7 @@ function App() {
         } else {
           // 9. Erreur : RESET demandé par l'utilisateur
           setToast({ message: `❌ Échec Création : ${result.error}`, type: 'error' });
-          
+
           setMessages(prev => prev.map(msg =>
             ids.includes(msg.id)
               ? {
@@ -805,18 +805,18 @@ function App() {
     filteredMessages.forEach((msg, index) => {
       const isPureMedia = msg.has_media && (!msg.body || msg.body.trim() === '');
       const currentGroupId = msg.property_group_id;
-      
+
       // On groupe si c'est pur media ET que c'est le même "parent" (groupe ou null)
       if (isPureMedia && (mediaBuffer.length === 0 || currentGroupId === lastGroupId)) {
         mediaBuffer.push(msg);
         lastGroupId = currentGroupId;
       } else {
         if (mediaBuffer.length > 2) {
-          aggregatedMessages.push({ 
-            type: 'media-batch', 
-            messages: [...mediaBuffer], 
+          aggregatedMessages.push({
+            type: 'media-batch',
+            messages: [...mediaBuffer],
             id: `batch-${mediaBuffer[0].id}`,
-            property_group_id: lastGroupId 
+            property_group_id: lastGroupId
           });
         } else {
           mediaBuffer.forEach(m => aggregatedMessages.push(m));
@@ -828,9 +828,9 @@ function App() {
 
       if (index === filteredMessages.length - 1 && mediaBuffer.length > 0) {
         if (mediaBuffer.length > 2) {
-          aggregatedMessages.push({ 
-            type: 'media-batch', 
-            messages: [...mediaBuffer], 
+          aggregatedMessages.push({
+            type: 'media-batch',
+            messages: [...mediaBuffer],
             id: `batch-${mediaBuffer[0].id}`,
             property_group_id: lastGroupId
           });
@@ -847,7 +847,7 @@ function App() {
     aggregatedMessages.forEach((item) => {
       const msg = item.type === 'media-batch' ? item.messages[0] : item;
       const dateLabel = getDateLabel(msg.timestamp);
-      
+
       if (dateLabel !== lastDateLabel) {
         result.push({ type: 'date-header', label: dateLabel, key: `date-${msg.timestamp}` });
         lastDateLabel = dateLabel;
@@ -864,11 +864,11 @@ function App() {
         const batchElement = (
           <div key={item.id} className="media-batch-container">
             {!isGrouped && (
-              <input 
-                type="checkbox" 
-                className="msg-checkbox" 
-                checked={allSelected} 
-                onChange={() => toggleMultipleSelection(ids)} 
+              <input
+                type="checkbox"
+                className="msg-checkbox"
+                checked={allSelected}
+                onChange={() => toggleMultipleSelection(ids)}
               />
             )}
             <div className="media-batch-grid">
@@ -882,7 +882,7 @@ function App() {
               ))}
             </div>
             <div className="media-batch-footer">
-               Album: {item.messages.length} images
+              Album: {item.messages.length} images
             </div>
           </div>
         );
@@ -973,14 +973,14 @@ function App() {
             <img src="/logo-locapay.png" style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" />
           </div>
           <div className="sidebar-controls">
-            <button 
-              className={`view-toggle ${viewMode === 'chats' ? 'active' : ''}`} 
+            <button
+              className={`view-toggle ${viewMode === 'chats' ? 'active' : ''}`}
               onClick={() => { setViewMode('chats'); setSearchTerm(''); }}
             >
               💬
             </button>
-            <button 
-              className={`view-toggle ${viewMode === 'properties' ? 'active' : ''}`} 
+            <button
+              className={`view-toggle ${viewMode === 'properties' ? 'active' : ''}`}
               onClick={() => { setViewMode('properties'); setSearchTerm(''); }}
             >
               🏠
@@ -992,9 +992,9 @@ function App() {
         <div className="sidebar-search">
           <div className="search-input-wrapper">
             <span className="search-icon">🔍</span>
-            <input 
-              type="text" 
-              placeholder={viewMode === 'chats' ? "Rechercher dans les biens..." : "Filtrer la liste..."} 
+            <input
+              type="text"
+              placeholder={viewMode === 'chats' ? "Rechercher dans les biens..." : "Filtrer la liste..."}
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />
@@ -1071,15 +1071,15 @@ function App() {
               </div>
               <div className="date-filter-panel">
                 <div className="filter-group">
-                    <span className="filter-label">Du</span>
-                    <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="date-input" />
+                  <span className="filter-label">Du</span>
+                  <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="date-input" />
                 </div>
                 <div className="filter-group">
-                    <span className="filter-label">au</span>
-                    <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="date-input" />
+                  <span className="filter-label">au</span>
+                  <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="date-input" />
                 </div>
                 <button className="refresh-fab" onClick={fetchProperties} title="Refresh">
-                    🔄
+                  🔄
                 </button>
               </div>
             </header>
@@ -1105,7 +1105,7 @@ function App() {
                       >
                         #{property.real_property_id}
                       </a>
-                      { (property.neighborhood || property.district) && (
+                      {(property.neighborhood || property.district) && (
                         ` — 📍 ${[property.neighborhood, property.district, property.municipality].filter(Boolean).join(' - ')}`
                       )}
                     </div>
@@ -1113,7 +1113,7 @@ function App() {
                       {/* Séparation des médias et du texte pour un affichage "Album" */}
                       {(() => {
                         const textMsgs = property.messages.filter(m => m.body && m.body.trim());
-                        
+
                         return (
                           <div className="property-texts">
                             {textMsgs.map(msg => (
@@ -1143,8 +1143,8 @@ function App() {
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
                     {isLoadingMore ? 'Chargement...' : 'En ligne'}
                   </div>
-                  <button 
-                    className="auto-analyze-btn" 
+                  <button
+                    className="auto-analyze-btn"
                     title="Analyse automatique de l'historique"
                     onClick={async () => {
                       if (!currentChatId) return;
@@ -1178,82 +1178,82 @@ function App() {
                 </div>
               )}
 
-               {/* Bulles */}
-               {groupedContent.map((item, idx) => {
-                 if (item?.type === 'date-header') {
-                   return (
-                     <div key={item.key || idx} className="date-header">
-                       <span>{item.label}</span>
-                     </div>
-                   );
-                 }
-                  if (item?.type === 'wrapper') {
-                    const isPending = !item.isCreated;
-                    const isAi = item.isAiSuggestion;
-                    return (
-                      <div 
-                        key={item.key || idx} 
-                        className={`property-group-wrapper ${item.isCreated ? 'created' : ''} ${isPending ? 'pending' : ''}`}
-                        style={isAi ? { border: '2px dashed #3b82f6', backgroundColor: '#eff6ff' } : {}}
-                      >
-                        <div className="property-group-header-label" style={isAi ? { color: '#2563eb', fontWeight: 'bold' } : {}}>
-                          {item.propertyId ? (
-                            <>
-                              ✅ BIEN CRÉÉ{' '}
-                              <a
-                                href={`https://admin-locapay.vercel.app/properties/${item.propertyId}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="property-link"
-                              >
-                                #{item.propertyId}
-                              </a>
-                              {item.locationLabel}
-                            </>
-                          ) : isPending ? (
-                            <div className="property-group-header-suggestion" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
-                              <div className="suggestion-status">
-                                {activeSubmissions[item.key] ? (
-                                  <div className="pending-indicator">
-                                    <span className="pending-icon">
-                                      {activeSubmissions[item.key].status === 'verifying' ? '🔍' : '📤'}
-                                    </span>
-                                    <span className="pending-text">
-                                      {activeSubmissions[item.key].status === 'verifying' ? 'Vérification...' : 'Envoi...'}
-                                    </span>
-                                  </div>
+              {/* Bulles */}
+              {groupedContent.map((item, idx) => {
+                if (item?.type === 'date-header') {
+                  return (
+                    <div key={item.key || idx} className="date-header">
+                      <span>{item.label}</span>
+                    </div>
+                  );
+                }
+                if (item?.type === 'wrapper') {
+                  const isPending = !item.isCreated;
+                  const isAi = item.isAiSuggestion;
+                  return (
+                    <div
+                      key={item.key || idx}
+                      className={`property-group-wrapper ${item.isCreated ? 'created' : ''} ${isPending ? 'pending' : ''}`}
+                      style={isAi ? { border: '2px dashed #3b82f6', backgroundColor: '#eff6ff' } : {}}
+                    >
+                      <div className="property-group-header-label" style={isAi ? { color: '#2563eb', fontWeight: 'bold' } : {}}>
+                        {item.propertyId ? (
+                          <>
+                            ✅ BIEN CRÉÉ{' '}
+                            <a
+                              href={`https://admin-locapay.vercel.app/properties/${item.propertyId}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="property-link"
+                            >
+                              #{item.propertyId}
+                            </a>
+                            {item.locationLabel}
+                          </>
+                        ) : isPending ? (
+                          <div className="property-group-header-suggestion" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                            <div className="suggestion-status">
+                              {activeSubmissions[item.key] ? (
+                                <div className="pending-indicator">
+                                  <span className="pending-icon">
+                                    {activeSubmissions[item.key].status === 'verifying' ? '🔍' : '📤'}
+                                  </span>
+                                  <span className="pending-text">
+                                    {activeSubmissions[item.key].status === 'verifying' ? 'Vérification...' : 'Creation...'}
+                                  </span>
+                                </div>
+                              ) : (
+                                item.isAutoSuggestion ? (
+                                  <span className="suggestion-label auto">🤖 DÉTECTION AUTO</span>
                                 ) : (
-                                  item.isAutoSuggestion ? (
-                                    <span className="suggestion-label auto">🤖 DÉTECTION AUTO</span>
-                                  ) : (
-                                    <span className="suggestion-label ai">🧠 SUGGESTION IA</span>
-                                  )
-                                )}
-                              </div>
-                              
-                                  {!activeSubmissions[item.key] && (
-                                    <button 
-                                      className="btn-action btn-create-direct" 
-                                      onClick={() => {
-                                          const groupMsgIds = messages.filter(m => m.property_group_id === item.key).map(m => m.id);
-                                          if (groupMsgIds.length > 0) {
-                                              handleManualAction('group', groupMsgIds);
-                                          }
-                                      }}
-                                    >
-                                  🚀 Créer un bien
-                                </button>
+                                  <span className="suggestion-label ai">🧠 SUGGESTION IA</span>
+                                )
                               )}
                             </div>
-                          ) : item.label}
-                        </div>
-                        <div className="property-group-content">
-                          {item.children}
-                        </div>
+
+                            {!activeSubmissions[item.key] && (
+                              <button
+                                className="btn-action btn-create-direct"
+                                onClick={() => {
+                                  const groupMsgIds = messages.filter(m => m.property_group_id === item.key).map(m => m.id);
+                                  if (groupMsgIds.length > 0) {
+                                    handleManualAction('group', groupMsgIds);
+                                  }
+                                }}
+                              >
+                                🚀 Créer un bien
+                              </button>
+                            )}
+                          </div>
+                        ) : item.label}
                       </div>
-                    );
-                  }
-                 return item;
+                      <div className="property-group-content">
+                        {item.children}
+                      </div>
+                    </div>
+                  );
+                }
+                return item;
               })}
             </div>
 
@@ -1273,11 +1273,11 @@ function App() {
                 <div className="selection-info">
                   <span>{selectedMessageIds.length}</span> sélectionné(s)
                   <div className="group-selection-container">
-                    <input 
-                      type="checkbox" 
-                      id="groupSelection" 
-                      checked={isGroupSelection} 
-                      onChange={(e) => handleToggleGroupSelection(e.target.checked)} 
+                    <input
+                      type="checkbox"
+                      id="groupSelection"
+                      checked={isGroupSelection}
+                      onChange={(e) => handleToggleGroupSelection(e.target.checked)}
                     />
                     <label htmlFor="groupSelection" style={{ cursor: 'pointer' }}>Sélect. groupée</label>
                   </div>
