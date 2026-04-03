@@ -773,17 +773,16 @@ client.on('ready', () => {
     botStatus = 'CONNECTED';
     currentQR = null;
 
-    // Démarrer le balayage automatique périodique (Heuristique Stricte) toutes les 10 minutes
-    console.log('🤖 Activation du balayage automatique (Règle 100 caractères)...');
-    const runAll = app.get('runAutoGroupHeuristicAllChats');
-    if (runAll) {
-        // Premier passage au démarrage
-        runAll().catch(e => console.error("❌ Error initial runAll:", e));
-        // Puis périodiquement
-        setInterval(() => {
-            runAll().catch(err => console.error("❌ Erreur balayage automatique:", err));
-        }, 10 * 60 * 1000); 
-    }
+    // ❌ DÉSACTIVÉ : Balayage automatique périodique (Heuristique Stricte)
+    // console.log('🤖 Activation du balayage automatique (Règle 100 caractères)...');
+    // const runAll = app.get('runAutoGroupHeuristicAllChats');
+    // if (runAll) {
+    //     runAll().catch(e => console.error("❌ Error initial runAll:", e));
+    //     setInterval(() => {
+    //         runAll().catch(err => console.error("❌ Erreur balayage automatique:", err));
+    //     }, 10 * 60 * 1000);
+    // }
+    console.log('⚠️ Balayage automatique DÉSACTIVÉ — Sélection manuelle uniquement.');
 });
 
 client.on('authenticated', () => {
@@ -897,39 +896,39 @@ client.on('message_create', async msg => {
         // Règle : Si un texte > 100 chars est suivi par un média du même expéditeur, on groupe.
         if (messageData.hasMedia && !messageData.isFromMe) {
             try {
-                // Chercher le message précédent du même expéditeur dans le même chat
+                // ❌ DÉSACTIVÉ : Auto-groupement en temps réel
+                // La sélection des messages se fait maintenant manuellement via l'interface
+                /*
                 const prevMsgQuery = `
-                    SELECT id, body, property_group_id, timestamp, has_media 
-                    FROM messages 
+                    SELECT id, body, property_group_id, timestamp, has_media
+                    FROM messages
                     WHERE chat_id = $1 AND sender_id = $2 AND id != $3
                     ORDER BY timestamp DESC LIMIT 1
                 `;
                 const { rows: prevRows } = await db.query(prevMsgQuery, [messageData.chatId, messageData.senderId, messageData.messageId]);
-                
+
                 if (prevRows.length > 0) {
                     const prevMsg = prevRows[0];
                     const timeDiff = messageData.timestamp - prevMsg.timestamp;
-                    
-                    // Récupérer l'ID numérique du message actuel
+
                     const { rows: currRows } = await db.query("SELECT id FROM messages WHERE message_id = $1", [messageData.messageId]);
                     if (currRows.length > 0) {
                         const currId = currRows[0].id;
 
-                        // RÈGLE UNIQUE : Média arrivant après un texte pur (>100 car) sans média
                         const prevIsStrictParent = prevMsg.body && prevMsg.body.length > 100 && !prevMsg.has_media;
-                        
+
                         if (messageData.hasMedia && prevIsStrictParent && timeDiff < 420 && !prevMsg.real_property_id) {
                             const groupId = prevMsg.property_group_id || `auto_prop_parent_${prevMsg.id}`;
                             await db.query("UPDATE messages SET property_group_id = $1 WHERE id IN ($2, $3)", [groupId, prevMsg.id, currId]);
                             console.log(`📎 Heuristique ULTRA-STRICTE : ${groupId}`);
-                        } 
-                        // Extension si le précédent était déjà un médià lié à un groupe auto
+                        }
                         else if (messageData.hasMedia && prevMsg.property_group_id && prevMsg.property_group_id.startsWith('auto_prop_parent_') && timeDiff < 420 && !prevMsg.real_property_id) {
                             await db.query("UPDATE messages SET property_group_id = $1 WHERE id = $2", [prevMsg.property_group_id, currId]);
                             console.log(`📎 Extension Heuristique ULTRA-STRICTE : ${currId}`);
                         }
                     }
                 }
+                */
             } catch (groupErr) {
                 console.error("❌ Erreur auto-groupement:", groupErr);
             }
