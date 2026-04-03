@@ -890,7 +890,7 @@ function App() {
         if (isGrouped) {
           const wrapper = groupWrappers.get(item.property_group_id);
           if (wrapper) {
-            wrapper.children.push(batchElement);
+            wrapper.children.push({ type: 'media', element: batchElement, timestamp: item.messages[0].timestamp });
             if (!processedGroupIds.has(item.property_group_id)) {
               result.push(wrapper);
               processedGroupIds.add(item.property_group_id);
@@ -916,7 +916,7 @@ function App() {
         if (msg.property_group_id) {
           const wrapper = groupWrappers.get(msg.property_group_id);
           if (wrapper) {
-            wrapper.children.push(bubble);
+            wrapper.children.push({ type: 'text', element: bubble, timestamp: msg.timestamp, hasMedia: !!msg.has_media });
             if (!processedGroupIds.has(msg.property_group_id)) {
               result.push(wrapper);
               processedGroupIds.add(msg.property_group_id);
@@ -1248,7 +1248,20 @@ function App() {
                         ) : item.label}
                       </div>
                       <div className="property-group-content">
-                        {item.children}
+                        {item.children
+                          .sort((a, b) => {
+                            // 1. Priorité au texte SANS média (la description principale)
+                            const isTextA = a.type === 'text' && !a.hasMedia;
+                            const isTextB = b.type === 'text' && !b.hasMedia;
+                            if (isTextA && !isTextB) return -1;
+                            if (!isTextA && isTextB) return 1;
+                            // 2. Sinon ordre chronologique croissant (du plus vieux au plus récent)
+                            return a.timestamp - b.timestamp;
+                          })
+                          .map((child, cIdx) => (
+                            <React.Fragment key={cIdx}>{child.element}</React.Fragment>
+                          ))
+                        }
                       </div>
                     </div>
                   );
