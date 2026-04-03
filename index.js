@@ -211,15 +211,10 @@ Texte à analyser : "${description}"
                     const sender = msg.sender_id;
 
                     // Condition 1: Texte pur > 100 chars = nouveau parent potentiel
-                    // On vérifie strictement !msg.has_media pour ne pas prendre une légende d'image comme parent de groupe
+                    // On ne met pas encore à jour la base de données, on garde juste en mémoire
                     if (msg.body && msg.body.length > 100 && !msg.has_media) {
                         parentMsgBySender[sender] = msg;
                         inGroupingModeBySender[sender] = true;  
-                        // On initialise un groupe potentiel si pas déjà fait
-                        if (!msg.property_group_id) {
-                            msg.property_group_id = `auto_prop_parent_${msg.id}`;
-                            await db.query("UPDATE messages SET property_group_id = $1 WHERE id = $2", [msg.property_group_id, msg.id]);
-                        }
                     }
                     // Condition 2: Média arrivant APRÈS un parent valide
                     else if (msg.has_media && inGroupingModeBySender[sender]) {
@@ -229,8 +224,14 @@ Texte à analyser : "${description}"
                         // Sécurité : le média doit être chronologiquement APRÈS ou égal (id > parent.id)
                         // Si le timeDiff est trop grand (> 7 min), on arrête de grouper
                         if (parent && timeDiff >= 0 && timeDiff < 420 && !parent.real_property_id && !msg.real_property_id) {
-                            const groupId = parent.property_group_id;
-                            await db.query("UPDATE messages SET property_group_id = $1 WHERE id = $2", [groupId, msg.id]);
+                            // On crée le groupId si c'est la toute première fois qu'on lie ces messages
+                            const groupId = parent.property_group_id || `auto_prop_parent_${parent.id}`;
+                            
+                            // On update les DEUX (parent + enfant actuel)
+                            await db.query("UPDATE messages SET property_group_id = $1 WHERE id IN ($2, $3)", [groupId, parent.id, msg.id]);
+                            
+                            // On met à jour l'objet en mémoire pour que les médias suivants réutilisent le même ID
+                            parent.property_group_id = groupId;
                             msg.property_group_id = groupId;
                             groupsFound++;
                         } else {
