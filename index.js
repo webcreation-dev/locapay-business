@@ -265,13 +265,27 @@ Texte à analyser : "${description}"
                 try {
                     // Calculer le nombre de messages non traités (is_analyzed = false) pour chaque groupe
                     const query = `
-                        WITH chat_counts AS (
+                        WITH chat_msgs AS (
+                            SELECT m.id, m.chat_id, m.body, m.has_media, m.message_type, m.is_analyzed, m.is_from_me, m.property_group_id
+                            FROM messages m
+                            JOIN chats c ON m.chat_id = c.whatsapp_chat_id
+                            WHERE c.whatsapp_chat_id != 'status@broadcast'
+                        ),
+                        banned_groups AS (
+                            SELECT DISTINCT property_group_id 
+                            FROM chat_msgs 
+                            WHERE body ~* 'vendre|vente|parcelle|terrain|titre foncier| tf'
+                            AND property_group_id IS NOT NULL
+                        ),
+                        chat_counts AS (
                             SELECT c.*, 
-                            (SELECT COUNT(*) FROM messages m 
+                            (SELECT COUNT(*) FROM chat_msgs m 
+                             LEFT JOIN banned_groups bg ON m.property_group_id = bg.property_group_id
                              WHERE m.chat_id = c.whatsapp_chat_id 
                              AND m.is_analyzed = FALSE 
                              AND m.is_from_me = FALSE
-                             AND (m.body IS NULL OR m.body !~* 'vendre|vente|parcelle|terrain|titre foncier| tf')
+                             AND bg.property_group_id IS NULL -- Le groupe complet n'est pas banni
+                             AND (m.body IS NULL OR m.body !~* 'vendre|vente|parcelle|terrain|titre foncier| tf') -- Le message seul n'est pas banni
                              AND ( (m.body IS NOT NULL AND TRIM(m.body) != '') OR m.has_media = TRUE )
                              AND m.message_type NOT IN ('audio', 'ptt', 'sticker')
                             ) as unread_count
@@ -297,16 +311,31 @@ Texte à analyser : "${description}"
                     let query, params;
                     // Construction d'un CTE pour pré-filtrer et identifier les "sandwichs" de texte
                     const cteBase = `
-                        WITH filtered_msgs AS (
-                            SELECT id, message_id, body, timestamp, is_from_me, is_group, chat_id, sender_id, sender_name, has_media, media_path, media_mime_type, property_group_id, real_property_id, neighborhood, district, municipality, analysis_error, ia_property_id,
+                        WITH raw_msgs AS (
+                            SELECT id, message_id, body, timestamp, is_from_me, is_group, chat_id, sender_id, sender_name, has_media, media_path, media_mime_type, property_group_id, real_property_id, neighborhood, district, municipality, analysis_error, ia_property_id, message_type, is_analyzed, analyzed_at
+                            FROM messages 
+                            WHERE chat_id = $1
+                        ),
+                        banned_groups AS (
+                            SELECT DISTINCT property_group_id 
+                            FROM raw_msgs 
+                            WHERE body ~* 'vendre|vente|parcelle|terrain|titre foncier| tf'
+                            AND property_group_id IS NOT NULL
+                        ),
+                        filtered_msgs_raw AS (
+                            SELECT r.* FROM raw_msgs r
+                            LEFT JOIN banned_groups bg ON r.property_group_id = bg.property_group_id
+                            WHERE (r.is_analyzed = FALSE OR r.analyzed_at >= CURRENT_TIMESTAMP - INTERVAL '1 hour')
+                            AND bg.property_group_id IS NULL -- Exclure TOUS les membres d'un groupe contenant 'vendre'
+                            AND (r.body IS NULL OR r.body !~* 'vendre|vente|parcelle|terrain|titre foncier| tf') -- Vérif individuelle au cas où (message non groupé)
+                            AND ( (r.body IS NOT NULL AND TRIM(r.body) != '') OR r.has_media = TRUE )
+                            AND r.message_type NOT IN ('audio', 'ptt', 'sticker')
+                        ),
+                        filtered_msgs AS (
+                            SELECT fm.*,
                                    LAG(has_media) OVER(ORDER BY timestamp ASC) as prev_has_media,
                                    LEAD(has_media) OVER(ORDER BY timestamp ASC) as next_has_media
-                            FROM messages 
-                            WHERE chat_id = $1 
-                            AND (is_analyzed = FALSE OR analyzed_at >= CURRENT_TIMESTAMP - INTERVAL '1 hour')
-                            AND (body IS NULL OR body !~* 'vendre|vente|parcelle|terrain|titre foncier| tf')
-                            AND ( (body IS NOT NULL AND TRIM(body) != '') OR has_media = TRUE )
-                            AND message_type NOT IN ('audio', 'ptt', 'sticker')
+                            FROM filtered_msgs_raw fm
                         )
                     `;
 
