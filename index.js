@@ -180,17 +180,55 @@ Texte à analyser : "${description}"
                 }
             }
 
-            // --- ROUTE MANUELLE POUR LANCER L'IA ---
-            app.post('/api/messages/force-analyze', async (req, res) => {
+            // 🤖 FONCTION DE BALAYAGE AUTO (HEURISTIQUE)
+            const runAutoGroupHeuristicAllChats = async () => {
                 try {
-                    // On lance le segmenter en tâche de fond pour ne pas bloquer la requête HTTP
-                    const { runSegmentation } = require('./segmenter');
-                    runSegmentation().catch(err => console.error("❌ Erreur segmentation manuelle:", err));
-                    res.json({ success: true, message: "L'analyse IA a été lancée en arrière-plan !" });
+                    const { rows: chats } = await db.query("SELECT DISTINCT chat_id FROM messages");
+                    console.log(`🧹 Balayage heuristique sur ${chats.length} conversations...`);
+                    for (let chat of chats) {
+                        await internalAnalyzeChat(chat.chat_id);
+                    }
+                } catch (e) { console.error("❌ Error runAutoGroupHeuristicAllChats:", e); }
+            };
+
+            const internalAnalyzeChat = async (chatId) => {
+                const { rows: msgs } = await db.query(
+                    "SELECT id, body, has_media, property_group_id, sender_id, timestamp, real_property_id FROM messages WHERE chat_id = $1 ORDER BY timestamp ASC",
+                    [chatId]
+                );
+                let lastTextMsgsBySender = {};
+                for (let msg of msgs) {
+                    const sender = msg.sender_id;
+                    if (msg.body && msg.body.length > 100) {
+                        lastTextMsgsBySender[sender] = msg;
+                    } else if (msg.has_media) {
+                        const lastText = lastTextMsgsBySender[sender];
+                        const timeDiff = lastText ? (msg.timestamp - lastText.timestamp) : null;
+                        if (lastText && timeDiff < 300 && !lastText.real_property_id) {
+                            const groupId = lastText.property_group_id && lastText.property_group_id.startsWith('auto_prop_') 
+                                ? lastText.property_group_id 
+                                : `auto_prop_${Date.now()}_${lastText.id}`;
+                            if (!msg.real_property_id) {
+                                await db.query("UPDATE messages SET property_group_id = $1 WHERE id IN ($2, $3)", [groupId, lastText.id, msg.id]);
+                                lastText.property_group_id = groupId;
+                            }
+                        }
+                    } else { lastTextMsgsBySender[sender] = null; }
+                }
+            };
+
+            // 🤖 ANALYSE AUTO (HEURISTIQUE) SUR TOUT LE CHAT
+            app.post('/api/messages/analyze-chat/:chatId', async (req, res) => {
+                try {
+                    await internalAnalyzeChat(req.params.chatId);
+                    res.json({ success: true, message: `Analyse heuristique terminée.` });
                 } catch (e) {
                     res.status(500).json({ error: e.message });
                 }
             });
+
+            // Exposer pour usage dans ready
+            app.set('runAutoGroupHeuristicAllChats', runAutoGroupHeuristicAllChats);
 
             // 🤖 ANALYSE AUTO (HEURISTIQUE) SUR TOUT LE CHAT
             app.post('/api/messages/analyze-chat/:chatId', async (req, res) => {
@@ -733,12 +771,17 @@ client.on('ready', () => {
     botStatus = 'CONNECTED';
     currentQR = null;
 
-    // Démarrer la segmentation automatique toutes les 5 minutes
-    console.log('🤖 Activation de la segmentation IA automatique...');
-    const { runSegmentation } = require('./segmenter');
-    setInterval(() => {
-        runSegmentation().catch(err => console.error("❌ Erreur segmentation automatique:", err));
-    }, 5 * 60 * 1000); // 5 minutes
+    // Démarrer le balayage automatique périodique (Heuristique Stricte) toutes les 10 minutes
+    console.log('🤖 Activation du balayage automatique (Règle 100 caractères)...');
+    const runAll = app.get('runAutoGroupHeuristicAllChats');
+    if (runAll) {
+        // Premier passage au démarrage
+        runAll().catch(e => console.error("❌ Error initial runAll:", e));
+        // Puis périodiquement
+        setInterval(() => {
+            runAll().catch(err => console.error("❌ Erreur balayage automatique:", err));
+        }, 10 * 60 * 1000); 
+    }
 });
 
 client.on('authenticated', () => {
