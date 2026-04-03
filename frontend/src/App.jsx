@@ -140,6 +140,7 @@ function App() {
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [isLoadingProperties, setIsLoadingProperties] = useState(false);
+  const [showCreatedOnly, setShowCreatedOnly] = useState(false);
 
   const containerRef = useRef(null);       // ref vers la div messages-container
   const scrollPositionBeforeSubmit = useRef(null); // Position scroll avant soumission
@@ -762,7 +763,15 @@ function App() {
     const filteredMessages = messages.filter(msg => {
       const isFromMe = msg.is_from_me === true || msg.is_from_me === 1 || msg.is_from_me === "true";
       const isNoise = msg.property_group_id === 'noise';
-      return !isFromMe && !isNoise;
+      // Si on filtre, on regarde si le real_property_id est là ou pas
+      const isCreated = msg.real_property_id !== null && msg.real_property_id !== undefined;
+      
+      if (showCreatedOnly) {
+        return !isFromMe && !isNoise && isCreated;
+      } else {
+        // Mode normal : cacher les déjà créés
+        return !isFromMe && !isNoise && !isCreated;
+      }
     });
 
     // 2. Pré-calculer les groupes pour ceux qui ont un property_group_id
@@ -934,7 +943,7 @@ function App() {
     });
 
     return result;
-  }, [messages, selectedMessageIds, toggleMessageSelection, toggleMultipleSelection]);
+  }, [messages, selectedMessageIds, toggleMessageSelection, toggleMultipleSelection, showCreatedOnly]);
 
   const currentChatName = chats.find(c => c.whatsapp_chat_id === currentChatId)?.chat_name || currentChatId;
 
@@ -1177,6 +1186,14 @@ function App() {
                     }}
                   >
                     🚀 Batch Submit
+                  </button>
+                  <button
+                    className={`auto-analyze-btn ${showCreatedOnly ? 'active-filter' : ''}`}
+                    title={showCreatedOnly ? "Voir les messages à traiter" : "Voir uniquement les biens créés"}
+                    style={{ backgroundColor: showCreatedOnly ? '#3b82f6' : '#667781' }}
+                    onClick={() => setShowCreatedOnly(!showCreatedOnly)}
+                  >
+                    {showCreatedOnly ? '📂 Voir à traiter' : '✅ Voir créés'}
                   </button>
                 </div>
               </div>
