@@ -197,7 +197,14 @@ Texte à analyser : "${description}"
             };
 
             const internalAnalyzeChat = async (chatId) => {
-                // Tri strict par timestamp PUIS par id pour garantir l'ordre d'arrivée exact
+                // 1. On commence par NETTOYER tous les anciens groupements automatiques (non validés) 
+                // pour ce chat, afin de repartir sur une base saine.
+                await db.query(
+                    "UPDATE messages SET property_group_id = NULL WHERE chat_id = $1 AND property_group_id LIKE 'auto_prop_%' AND real_property_id IS NULL",
+                    [chatId]
+                );
+
+                // 2. On récupère les messages triés strictement
                 const { rows: msgs } = await db.query(
                     "SELECT id, body, has_media, property_group_id, sender_id, timestamp, real_property_id FROM messages WHERE chat_id = $1 ORDER BY timestamp ASC, id ASC",
                     [chatId]
@@ -210,37 +217,28 @@ Texte à analyser : "${description}"
                 for (let msg of msgs) {
                     const sender = msg.sender_id;
 
-                    // Condition 1: Texte pur > 100 chars = nouveau parent potentiel
-                    // On ne met pas encore à jour la base de données, on garde juste en mémoire
+                    // Condition 1: Texte long TOUT SEUL (Parent)
                     if (msg.body && msg.body.length > 100 && !msg.has_media) {
                         parentMsgBySender[sender] = msg;
                         inGroupingModeBySender[sender] = true;  
                     }
-                    // Condition 2: Média arrivant APRÈS un parent valide
-                    else if (msg.has_media && inGroupingModeBySender[sender]) {
+                    // Condition 2: Média (presque) TOUT SEUL arrivant APRÈS un parent valide
+                    else if (msg.has_media && inGroupingModeBySender[sender] && (!msg.body || msg.body.length < 40)) {
                         const parent = parentMsgBySender[sender];
                         const timeDiff = msg.timestamp - parent.timestamp;
                         
-                        // Sécurité : le média doit être chronologiquement APRÈS ou égal (id > parent.id)
-                        // Si le timeDiff est trop grand (> 7 min), on arrête de grouper
                         if (parent && timeDiff >= 0 && timeDiff < 420 && !parent.real_property_id && !msg.real_property_id) {
-                            // On crée le groupId si c'est la toute première fois qu'on lie ces messages
                             const groupId = parent.property_group_id || `auto_prop_parent_${parent.id}`;
-                            
-                            // On update les DEUX (parent + enfant actuel)
                             await db.query("UPDATE messages SET property_group_id = $1 WHERE id IN ($2, $3)", [groupId, parent.id, msg.id]);
-                            
-                            // On met à jour l'objet en mémoire pour que les médias suivants réutilisent le même ID
                             parent.property_group_id = groupId;
                             msg.property_group_id = groupId;
                             groupsFound++;
                         } else {
-                            // Trop loin ou incohérent, on casse la chaîne
                             inGroupingModeBySender[sender] = false;
                             parentMsgBySender[sender] = null;
                         }
                     }
-                    // Condition 3: Tout autre message du même expéditeur casse la chaîne
+                    // Condition 3: Tout autre message (texte court, ou média avec gros texte) CASSE la chaîne
                     else {
                         inGroupingModeBySender[sender] = false;
                         parentMsgBySender[sender] = null;
@@ -887,17 +885,23 @@ client.on('message_create', async msg => {
 
                     if (currId) {
 
-                        // Condition STRICTE : Le parent doit être un texte > 100 chars SANS média
+                        // Parent : Texte long seul
                         const prevIsStrictParent = prevMsg.body && prevMsg.body.length > 100 && !prevMsg.has_media;
+                        // Enfant : Média seul (ou légende minuscule)
+                        const currIsStrictChild = messageData.hasMedia && (!messageData.body || messageData.body.length < 40);
 
-                        if (messageData.hasMedia && prevIsStrictParent && timeDiff < 420 && !prevMsg.real_property_id) {
+                        if (currIsStrictChild && prevIsStrictParent && timeDiff < 420 && !prevMsg.real_property_id) {
                             const groupId = prevMsg.property_group_id || `auto_prop_parent_${prevMsg.id}`;
                             await db.query("UPDATE messages SET property_group_id = $1 WHERE id IN ($2, $3)", [groupId, prevMsg.id, currId]);
                             console.log(`📎 Heuristique ULTRA-STRICTE : ${groupId}`);
                         }
                         else if (messageData.hasMedia && prevMsg.property_group_id && prevMsg.property_group_id.startsWith('auto_prop_parent_') && timeDiff < 420 && !prevMsg.real_property_id) {
-                            await db.query("UPDATE messages SET property_group_id = $1 WHERE id = $2", [prevMsg.property_group_id, currId]);
-                            console.log(`📎 Extension Heuristique ULTRA-STRICTE : ${currId}`);
+                            // Extension d'un groupe existant (pour les albums)
+                            // On vérifie aussi que ce média n'a pas une description trop longue pour être un "enfant"
+                            if (!messageData.body || messageData.body.length < 40) {
+                                await db.query("UPDATE messages SET property_group_id = $1 WHERE id = $2", [prevMsg.property_group_id, currId]);
+                                console.log(`📎 Extension Heuristique ULTRA-STRICTE : ${currId}`);
+                            }
                         }
                     }
                 }
