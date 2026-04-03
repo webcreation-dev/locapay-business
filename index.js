@@ -109,6 +109,7 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
             await db.query('CREATE INDEX IF NOT EXISTS idx_messages_chat_id ON messages(chat_id);');
             await db.query('CREATE INDEX IF NOT EXISTS idx_messages_chat_id_ts ON messages(chat_id, timestamp DESC);');
             await db.query('CREATE INDEX IF NOT EXISTS idx_messages_is_analyzed ON messages(is_analyzed);');
+            await db.query('CREATE INDEX IF NOT EXISTS idx_messages_unread ON messages(chat_id, is_analyzed, is_from_me) WHERE is_analyzed = FALSE AND is_from_me = FALSE;');
             await db.query('CREATE INDEX IF NOT EXISTS idx_messages_property_group_id ON messages(property_group_id);');
             await db.query('CREATE INDEX IF NOT EXISTS idx_messages_real_property_id ON messages(real_property_id);');
 
@@ -263,37 +264,32 @@ Texte à analyser : "${description}"
 
             app.get('/api/chats', async (req, res) => {
                 try {
-                    // Calculer le nombre de messages non traités (is_analyzed = false) pour chaque groupe
+                    // Requête optimisée : calcul du unread_count via GROUP BY au lieu de sous-requêtes corrélées
                     const query = `
-                        WITH unread_candidates AS (
-                            SELECT m.id, m.chat_id, m.body, m.has_media, m.message_type, m.property_group_id
+                        WITH banned_groups AS (
+                            SELECT DISTINCT property_group_id
+                            FROM messages
+                            WHERE property_group_id IS NOT NULL
+                            AND body ILIKE ANY(ARRAY['%vendre%', '%vente%', '%parcelle%', '%terrain%', '%titre foncier%', '% tf %', '% tf'])
+                        ),
+                        unread_counts AS (
+                            SELECT m.chat_id, COUNT(*) as unread_count
                             FROM messages m
-                            WHERE m.is_analyzed = FALSE 
+                            LEFT JOIN banned_groups bg ON m.property_group_id = bg.property_group_id
+                            WHERE m.is_analyzed = FALSE
                             AND m.is_from_me = FALSE
-                            AND m.chat_id != 'status@broadcast'
-                        ),
-                        banned_groups AS (
-                            SELECT DISTINCT property_group_id 
-                            FROM unread_candidates 
-                            WHERE body ~* 'vendre|vente|parcelle|terrain|titre foncier| tf'
-                            AND property_group_id IS NOT NULL
-                        ),
-                        chat_counts AS (
-                            SELECT c.*, 
-                            (SELECT COUNT(*) FROM unread_candidates u
-                             LEFT JOIN banned_groups bg ON u.property_group_id = bg.property_group_id
-                             WHERE u.chat_id = c.whatsapp_chat_id 
-                             AND bg.property_group_id IS NULL -- Groupe non banni
-                             AND (u.body IS NULL OR u.body !~* 'vendre|vente|parcelle|terrain|titre foncier| tf') -- Message non banni
-                             AND ( (u.body IS NOT NULL AND TRIM(u.body) != '') OR u.has_media = TRUE )
-                             AND u.message_type NOT IN ('audio', 'ptt', 'sticker')
-                            ) as unread_count
-                            FROM chats c 
-                            WHERE c.whatsapp_chat_id != 'status@broadcast'
+                            AND bg.property_group_id IS NULL
+                            AND (m.body IS NULL OR NOT (m.body ILIKE ANY(ARRAY['%vendre%', '%vente%', '%parcelle%', '%terrain%', '%titre foncier%', '% tf %', '% tf'])))
+                            AND (COALESCE(m.body, '') != '' OR m.has_media = TRUE)
+                            AND COALESCE(m.message_type, '') NOT IN ('audio', 'ptt', 'sticker')
+                            GROUP BY m.chat_id
+                            HAVING COUNT(*) > 0
                         )
-                        SELECT * FROM chat_counts 
-                        WHERE unread_count > 0
-                        ORDER BY updated_at DESC
+                        SELECT c.*, COALESCE(u.unread_count, 0) as unread_count
+                        FROM chats c
+                        INNER JOIN unread_counts u ON c.whatsapp_chat_id = u.chat_id
+                        WHERE c.whatsapp_chat_id != 'status@broadcast'
+                        ORDER BY c.updated_at DESC
                     `;
                     const { rows } = await db.query(query);
                     res.json(rows);
