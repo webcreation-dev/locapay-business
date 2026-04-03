@@ -210,24 +210,34 @@ Texte à analyser : "${description}"
                     "SELECT id, body, has_media, media_mime_type, property_group_id, sender_id, timestamp, real_property_id FROM messages WHERE chat_id = $1 ORDER BY timestamp ASC, id ASC",
                     [chatId]
                 );
-                
-                let parentMsgBySender = {};      
-                let inGroupingModeBySender = {}; 
+
+                let parentMsgBySender = {};
+                let inGroupingModeBySender = {};
                 let groupsFound = 0;
 
                 for (let msg of msgs) {
                     const sender = msg.sender_id;
 
+                    // Condition 0: Message complet (texte > 100 chars + média image/vidéo) → groupe autonome
+                    if (msg.body && msg.body.length > 100 && msg.has_media &&
+                        (msg.media_mime_type?.startsWith('image/') || msg.media_mime_type?.startsWith('video/')) &&
+                        !msg.real_property_id && !msg.property_group_id) {
+                        const groupId = `auto_prop_self_${msg.id}`;
+                        await db.query("UPDATE messages SET property_group_id = $1 WHERE id = $2", [groupId, msg.id]);
+                        groupsFound++;
+                        continue; // Ce message est autonome, on passe au suivant
+                    }
+
                     // Condition 1: Texte long TOUT SEUL (Parent)
                     if (msg.body && msg.body.length > 100 && !msg.has_media) {
                         parentMsgBySender[sender] = msg;
-                        inGroupingModeBySender[sender] = true;  
+                        inGroupingModeBySender[sender] = true;
                     }
                     // Condition 2: IMAGE ou VIDÉO uniquement arrivant APRÈS un parent valide
                     else if (msg.has_media && (msg.media_mime_type?.startsWith('image/') || msg.media_mime_type?.startsWith('video/')) && inGroupingModeBySender[sender] && (!msg.body || msg.body.length < 40)) {
                         const parent = parentMsgBySender[sender];
                         const timeDiff = msg.timestamp - parent.timestamp;
-                        
+
                         if (parent && timeDiff >= 0 && timeDiff < 420 && !parent.real_property_id && !msg.real_property_id) {
                             const groupId = parent.property_group_id || `auto_prop_parent_${parent.id}`;
                             await db.query("UPDATE messages SET property_group_id = $1 WHERE id IN ($2, $3)", [groupId, parent.id, msg.id]);
@@ -341,7 +351,7 @@ Texte à analyser : "${description}"
                                 SELECT id, message_id, body, timestamp, is_from_me, is_group, chat_id, sender_id, sender_name, has_media, media_path, media_mime_type, property_group_id, real_property_id, neighborhood, district, municipality, analysis_error, ia_property_id
                                 FROM filtered_msgs 
                                 WHERE timestamp < $2
-                                AND NOT (has_media = FALSE AND COALESCE(prev_has_media, TRUE) = FALSE AND COALESCE(next_has_media, TRUE) = FALSE)
+                                AND (property_group_id IS NOT NULL OR NOT (has_media = FALSE AND COALESCE(prev_has_media, TRUE) = FALSE AND COALESCE(next_has_media, TRUE) = FALSE))
                                 ORDER BY timestamp DESC 
                                 LIMIT $3
                             ) AS sub 
@@ -354,7 +364,7 @@ Texte à analyser : "${description}"
                             SELECT * FROM (
                                 SELECT id, message_id, body, timestamp, is_from_me, is_group, chat_id, sender_id, sender_name, has_media, media_path, media_mime_type, property_group_id, real_property_id, neighborhood, district, municipality, analysis_error, ia_property_id
                                 FROM filtered_msgs 
-                                WHERE NOT (has_media = FALSE AND COALESCE(prev_has_media, TRUE) = FALSE AND COALESCE(next_has_media, TRUE) = FALSE)
+                                WHERE (property_group_id IS NOT NULL OR NOT (has_media = FALSE AND COALESCE(prev_has_media, TRUE) = FALSE AND COALESCE(next_has_media, TRUE) = FALSE))
                                 ORDER BY timestamp DESC 
                                 LIMIT $2
                             ) AS sub 
@@ -362,35 +372,35 @@ Texte à analyser : "${description}"
                         `;
                         params = [req.params.chatId, safeLimit];
                     }
-                const { rows } = await db.query(query, params);
-                res.json(rows);
-            } catch (e) {
-                res.status(500).json({ error: e.message });
-            }
-        });
+                    const { rows } = await db.query(query, params);
+                    res.json(rows);
+                } catch (e) {
+                    res.status(500).json({ error: e.message });
+                }
+            });
 
-        // 🔍 Endpoint de polling spécifique aux IDs (Robuste)
-        app.get('/api/messages-status', async (req, res) => {
-            try {
-                const ids = req.query.ids ? req.query.ids.split(',') : [];
-                if (ids.length === 0) return res.json([]);
-                const { rows } = await db.query(
-                    'SELECT id, property_group_id, real_property_id, neighborhood, district, municipality, analysis_error, ia_property_id FROM messages WHERE id = ANY($1)',
-                    [ids.map(id => parseInt(id))]
-                );
-                res.json(rows);
-            } catch (e) {
-                res.status(500).json({ error: e.message });
-            }
-        });
+            // 🔍 Endpoint de polling spécifique aux IDs (Robuste)
+            app.get('/api/messages-status', async (req, res) => {
+                try {
+                    const ids = req.query.ids ? req.query.ids.split(',') : [];
+                    if (ids.length === 0) return res.json([]);
+                    const { rows } = await db.query(
+                        'SELECT id, property_group_id, real_property_id, neighborhood, district, municipality, analysis_error, ia_property_id FROM messages WHERE id = ANY($1)',
+                        [ids.map(id => parseInt(id))]
+                    );
+                    res.json(rows);
+                } catch (e) {
+                    res.status(500).json({ error: e.message });
+                }
+            });
 
-        // 🔎 Recherche de messages liés à des BIENS RÉELS
-        app.get('/api/messages/search', async (req, res) => {
-            try {
-                const { q } = req.query;
-                if (!q || q.length < 2) return res.json([]);
+            // 🔎 Recherche de messages liés à des BIENS RÉELS
+            app.get('/api/messages/search', async (req, res) => {
+                try {
+                    const { q } = req.query;
+                    if (!q || q.length < 2) return res.json([]);
 
-                const query = `
+                    const query = `
                     SELECT id, message_id, body, timestamp, chat_name, sender_name, real_property_id, neighborhood, district, municipality, media_path, media_mime_type, property_group_id
                     FROM messages 
                     WHERE (real_property_id IS NOT NULL OR (property_group_id IS NOT NULL AND property_group_id != 'noise'))
@@ -398,31 +408,31 @@ Texte à analyser : "${description}"
                     ORDER BY timestamp DESC
                     LIMIT 50
                 `;
-                const { rows } = await db.query(query, [q]);
-                res.json(rows);
-            } catch (e) {
-                res.status(500).json({ error: e.message });
-            }
-        });
-
-        // 📅 Liste AGGRÉGÉE des BIENS avec FILTRE PAR DATE (Conversations confondues)
-        app.get('/api/properties/all', async (req, res) => {
-            try {
-                const { start, end } = req.query; // Expectations: timestamp en secondes ou ISO string
-                
-                let dateFilter = "WHERE m.real_property_id IS NOT NULL";
-                const params = [];
-
-                if (start) {
-                    params.push(parseInt(start));
-                    dateFilter += ` AND m.timestamp >= $${params.length}`;
+                    const { rows } = await db.query(query, [q]);
+                    res.json(rows);
+                } catch (e) {
+                    res.status(500).json({ error: e.message });
                 }
-                if (end) {
-                    params.push(parseInt(end));
-                    dateFilter += ` AND m.timestamp <= $${params.length}`;
-                }
+            });
 
-                const query = `
+            // 📅 Liste AGGRÉGÉE des BIENS avec FILTRE PAR DATE (Conversations confondues)
+            app.get('/api/properties/all', async (req, res) => {
+                try {
+                    const { start, end } = req.query; // Expectations: timestamp en secondes ou ISO string
+
+                    let dateFilter = "WHERE m.real_property_id IS NOT NULL";
+                    const params = [];
+
+                    if (start) {
+                        params.push(parseInt(start));
+                        dateFilter += ` AND m.timestamp >= $${params.length}`;
+                    }
+                    if (end) {
+                        params.push(parseInt(end));
+                        dateFilter += ` AND m.timestamp <= $${params.length}`;
+                    }
+
+                    const query = `
                     WITH property_groups AS (
                         SELECT 
                             real_property_id,
@@ -448,14 +458,14 @@ Texte à analyser : "${description}"
                     SELECT * FROM property_groups
                     ORDER BY last_updated DESC
                 `;
-                const { rows } = await db.query(query, params);
-                res.json(rows);
-            } catch (e) {
-                res.status(500).json({ error: e.message });
-            }
-        });
+                    const { rows } = await db.query(query, params);
+                    res.json(rows);
+                } catch (e) {
+                    res.status(500).json({ error: e.message });
+                }
+            });
 
-        // ROUTE DE GROUPEMENT MANUEL + SOUMISSION À NESTJS
+            // ROUTE DE GROUPEMENT MANUEL + SOUMISSION À NESTJS
 
             app.post('/api/messages/submit-property', async (req, res) => {
                 const { messageIds } = req.body;
@@ -556,7 +566,7 @@ Texte à analyser : "${description}"
                     (async () => {
                         console.log(`🤖 Analyse Mistral en cours pour ${texts.length} messages...`);
                         const extractedData = await extractPropertyDataWithAI(finalDescription);
-                        
+
                         if (!extractedData) {
                             const errMsg = "L'IA a échoué à analyser l'annonce. Réessayez ou vérifiez votre connexion Mistral.";
                             console.error(`❌ ${errMsg}`);
@@ -578,52 +588,52 @@ Texte à analyser : "${description}"
                             maxContentLength: 50 * 1024 * 1024, // 50MB max
                             maxBodyLength: 50 * 1024 * 1024
                         }).then(async (response) => {
-                        const raw = response.data;
-                        // 🔍 LOG de la réponse brute pour diagnostic
-                        console.log(`📡 Réponse NestJS brute:`, JSON.stringify(raw).substring(0, 300));
+                            const raw = response.data;
+                            // 🔍 LOG de la réponse brute pour diagnostic
+                            console.log(`📡 Réponse NestJS brute:`, JSON.stringify(raw).substring(0, 300));
 
-                        // NestJS peut envelopper la réponse via un intercepteur global : { data: {...} }
-                        // On gère les deux formats
-                        const nestData = raw?.data || raw;
+                            // NestJS peut envelopper la réponse via un intercepteur global : { data: {...} }
+                            // On gère les deux formats
+                            const nestData = raw?.data || raw;
 
-                        if (nestData.success) {
-                            const property_id = nestData.property_id || nestData.propertyId;
-                            const { location } = nestData;
-                            await db.query(
-                                `UPDATE messages SET property_group_id = $1, real_property_id = $2, neighborhood = $3, district = $4, municipality = $5, is_analyzed = TRUE, analyzed_at = CURRENT_TIMESTAMP, analysis_error = NULL WHERE id = ANY($6)`,
-                                [`real_prop_${property_id}`, property_id, location?.neighborhood || '', location?.district || '', location?.municipality || '', messageIds]
-                            );
-                            console.log(`✅ Succès NestJS : Bien #${property_id} créé.`);
-                        } else {
-                            // On affiche d'abord le message d'erreur principal
-                            let errMsg = nestData.error || nestData.message || "Erreur de traitement";
-                            
-                            // On ajoute les précisions sur les champs si elles existent
-                            if (nestData.missingFields && Array.isArray(nestData.missingFields) && nestData.missingFields.length > 0) {
-                                const fieldsList = nestData.missingFields.map(f => f.field).join(', ');
-                                errMsg += ` (${fieldsList})`;
+                            if (nestData.success) {
+                                const property_id = nestData.property_id || nestData.propertyId;
+                                const { location } = nestData;
+                                await db.query(
+                                    `UPDATE messages SET property_group_id = $1, real_property_id = $2, neighborhood = $3, district = $4, municipality = $5, is_analyzed = TRUE, analyzed_at = CURRENT_TIMESTAMP, analysis_error = NULL WHERE id = ANY($6)`,
+                                    [`real_prop_${property_id}`, property_id, location?.neighborhood || '', location?.district || '', location?.municipality || '', messageIds]
+                                );
+                                console.log(`✅ Succès NestJS : Bien #${property_id} créé.`);
+                            } else {
+                                // On affiche d'abord le message d'erreur principal
+                                let errMsg = nestData.error || nestData.message || "Erreur de traitement";
+
+                                // On ajoute les précisions sur les champs si elles existent
+                                if (nestData.missingFields && Array.isArray(nestData.missingFields) && nestData.missingFields.length > 0) {
+                                    const fieldsList = nestData.missingFields.map(f => f.field).join(', ');
+                                    errMsg += ` (${fieldsList})`;
+                                }
+
+                                console.error(`❌ Échec NestJS (Métier) :`, errMsg);
+                                await db.query(`UPDATE messages SET property_group_id = NULL, real_property_id = NULL, is_analyzed = FALSE, analysis_error = $1 WHERE id = ANY($2)`, [errMsg, messageIds]);
                             }
-                            
-                            console.error(`❌ Échec NestJS (Métier) :`, errMsg);
-                            await db.query(`UPDATE messages SET property_group_id = NULL, real_property_id = NULL, is_analyzed = FALSE, analysis_error = $1 WHERE id = ANY($2)`, [errMsg, messageIds]);
-                        }
-                    }).catch(async (err) => {
-                        let errMsg = "Erreur backend inconnue";
-                        if (err.response) {
-                            // On essaie d'extraire le message d'erreur spécifique renvoyé par Nest
-                            const data = err.response.data;
-                            errMsg = data.error || data.message || `Erreur ${err.response.status}`;
-                        } else if (err.request) {
-                            errMsg = `Serveur NestJS INJOIGNABLE sur ${nestUrl}`;
-                        } else {
-                            errMsg = `Erreur lors de la requête : ${err.message}`;
-                        }
-                        console.error(`❌ ${errMsg}`);
-                        await db.query(
-                            `UPDATE messages SET property_group_id = NULL, real_property_id = NULL, is_analyzed = FALSE, analysis_error = $1 WHERE id = ANY($2)`,
-                            [errMsg, messageIds]
-                        );
-                        console.log(`↩️ Messages dégroupés suite à l'erreur.`);
+                        }).catch(async (err) => {
+                            let errMsg = "Erreur backend inconnue";
+                            if (err.response) {
+                                // On essaie d'extraire le message d'erreur spécifique renvoyé par Nest
+                                const data = err.response.data;
+                                errMsg = data.error || data.message || `Erreur ${err.response.status}`;
+                            } else if (err.request) {
+                                errMsg = `Serveur NestJS INJOIGNABLE sur ${nestUrl}`;
+                            } else {
+                                errMsg = `Erreur lors de la requête : ${err.message}`;
+                            }
+                            console.error(`❌ ${errMsg}`);
+                            await db.query(
+                                `UPDATE messages SET property_group_id = NULL, real_property_id = NULL, is_analyzed = FALSE, analysis_error = $1 WHERE id = ANY($2)`,
+                                [errMsg, messageIds]
+                            );
+                            console.log(`↩️ Messages dégroupés suite à l'erreur.`);
                         });
                     })();
 
@@ -665,7 +675,7 @@ Texte à analyser : "${description}"
             app.post('/api/send-message', async (req, res) => {
                 try {
                     const { phoneNumber, message } = req.body;
-                    
+
                     if (!phoneNumber || !message) {
                         return res.status(400).json({ error: "Les champs phoneNumber et message sont requis." });
                     }
@@ -680,25 +690,25 @@ Texte à analyser : "${description}"
                     }
 
                     if (currentState !== 'CONNECTED' && botStatus !== 'CONNECTED') {
-                        return res.status(503).json({ 
-                            error: "Le bot WhatsApp n'est pas connecté.", 
-                            details: `Statut variable: ${botStatus}, Statut client: ${currentState}` 
+                        return res.status(503).json({
+                            error: "Le bot WhatsApp n'est pas connecté.",
+                            details: `Statut variable: ${botStatus}, Statut client: ${currentState}`
                         });
                     }
 
                     // Nettoyage : retirer le '+' initial s'il est présent
                     const cleanNumber = phoneNumber.toString().replace(/^\\+/, '');
-                    
+
                     // Format de l'ID WhatsApp requis par la librairie
                     const chatId = `${cleanNumber}@c.us`;
 
                     // Envoi du message via client (whatsapp-web.js)
                     const response = await client.sendMessage(chatId, message);
-                    
-                    res.json({ 
-                        success: true, 
+
+                    res.json({
+                        success: true,
                         message: "Message envoyé avec succès.",
-                        messageId: response.id._serialized 
+                        messageId: response.id._serialized
 
                     });
                 } catch (error) {
@@ -890,10 +900,19 @@ client.on('message_create', async msg => {
         const currId = resInsert.rows[0]?.id;
         console.log(`💾 Message archivé dans PostgreSQL avec succès (ID: ${currId}) ! ✅`);
 
+        // 🤖 NOUVELLE RÈGLE : Message complet (texte > 100 chars + média image/vidéo) → groupe autonome
+        if (messageData.hasMedia && messageData.body && messageData.body.length > 100 &&
+            (messageData.mediaMimeType?.startsWith('image/') || messageData.mediaMimeType?.startsWith('video/')) &&
+            !messageData.isFromMe && currId) {
+            const groupId = `auto_prop_self_${currId}`;
+            await db.query("UPDATE messages SET property_group_id = $1 WHERE id = $2", [groupId, currId]);
+            console.log(`📎 Message complet auto-groupé : ${groupId}`);
+        }
+
         // 🤖 HEURISTIQUE DE GROUPEMENT AUTOMATIQUE (Simplification demandée par le USER)
         // Règle : Si un texte > 100 chars (SANS média) est suivi par un média du même expéditeur, on groupe.
         // ✅ ACTIVÉ : Auto-groupement en temps réel
-        if (messageData.hasMedia && !messageData.isFromMe) {
+        else if (messageData.hasMedia && !messageData.isFromMe) {
             try {
                 const prevMsgQuery = `
                     SELECT id, body, property_group_id, timestamp, has_media, real_property_id
