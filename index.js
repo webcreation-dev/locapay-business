@@ -198,27 +198,38 @@ Texte à analyser : "${description}"
 
             const internalAnalyzeChat = async (chatId) => {
                 const { rows: msgs } = await db.query(
-                    "SELECT id, body, has_media, property_group_id, sender_id, timestamp, real_property_id FROM messages WHERE chat_id = $1 ORDER BY timestamp ASC",
+                    "SELECT id, body, has_media, property_group_id, sender_id, timestamp, real_property_id FROM messages WHERE chat_id = $1 ORDER BY timestamp ASC, id ASC",
                     [chatId]
                 );
-                let lastTextMsgsBySender = {};
+                let parentMsgBySender = {};      // Le texte parent potentiel
+                let inGroupingModeBySender = {}; // Est-on en mode groupement actif ?
+
                 for (let msg of msgs) {
                     const sender = msg.sender_id;
+
+                    // Condition 1: Texte pur > 100 chars = nouveau parent potentiel
                     if (msg.body && msg.body.length > 100 && !msg.has_media) {
-                        lastTextMsgsBySender[sender] = msg;
-                    } else if (msg.has_media) {
-                        const lastText = lastTextMsgsBySender[sender];
-                        const timeDiff = lastText ? (msg.timestamp - lastText.timestamp) : null;
-                        if (lastText && timeDiff < 300 && !lastText.real_property_id) {
-                            const groupId = lastText.property_group_id && lastText.property_group_id.startsWith('auto_prop_') 
-                                ? lastText.property_group_id 
-                                : `auto_prop_${Date.now()}_${lastText.id}`;
-                            if (!msg.real_property_id) {
-                                await db.query("UPDATE messages SET property_group_id = $1 WHERE id IN ($2, $3)", [groupId, lastText.id, msg.id]);
-                                lastText.property_group_id = groupId;
-                            }
+                        parentMsgBySender[sender] = msg;
+                        inGroupingModeBySender[sender] = true;  // On démarre le mode groupement
+                    }
+                    // Condition 2: Média APRÈS un parent valide = on groupe
+                    else if (msg.has_media && inGroupingModeBySender[sender]) {
+                        const parent = parentMsgBySender[sender];
+                        const timeDiff = parent ? (msg.timestamp - parent.timestamp) : null;
+                        if (parent && timeDiff < 300 && !parent.real_property_id && !msg.real_property_id) {
+                            const groupId = parent.property_group_id && parent.property_group_id.startsWith('auto_prop_')
+                                ? parent.property_group_id
+                                : `auto_prop_${Date.now()}_${parent.id}`;
+                            await db.query("UPDATE messages SET property_group_id = $1 WHERE id IN ($2, $3)", [groupId, parent.id, msg.id]);
+                            parent.property_group_id = groupId;
                         }
-                    } else { lastTextMsgsBySender[sender] = null; }
+                        // On reste en mode groupement pour les médias suivants (album)
+                    }
+                    // Condition 3: Tout autre message (média sans parent, texte court, etc.) CASSE la chaîne
+                    else {
+                        inGroupingModeBySender[sender] = false;
+                        parentMsgBySender[sender] = null;
+                    }
                 }
             };
 
