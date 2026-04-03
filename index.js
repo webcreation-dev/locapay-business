@@ -206,7 +206,7 @@ Texte à analyser : "${description}"
 
                 // 2. On récupère les messages triés strictement
                 const { rows: msgs } = await db.query(
-                    "SELECT id, body, has_media, property_group_id, sender_id, timestamp, real_property_id FROM messages WHERE chat_id = $1 ORDER BY timestamp ASC, id ASC",
+                    "SELECT id, body, has_media, media_mime_type, property_group_id, sender_id, timestamp, real_property_id FROM messages WHERE chat_id = $1 ORDER BY timestamp ASC, id ASC",
                     [chatId]
                 );
                 
@@ -222,8 +222,8 @@ Texte à analyser : "${description}"
                         parentMsgBySender[sender] = msg;
                         inGroupingModeBySender[sender] = true;  
                     }
-                    // Condition 2: Média (presque) TOUT SEUL arrivant APRÈS un parent valide
-                    else if (msg.has_media && inGroupingModeBySender[sender] && (!msg.body || msg.body.length < 40)) {
+                    // Condition 2: IMAGE ou VIDÉO uniquement arrivant APRÈS un parent valide
+                    else if (msg.has_media && (msg.media_mime_type?.startsWith('image/') || msg.media_mime_type?.startsWith('video/')) && inGroupingModeBySender[sender] && (!msg.body || msg.body.length < 40)) {
                         const parent = parentMsgBySender[sender];
                         const timeDiff = msg.timestamp - parent.timestamp;
                         
@@ -887,15 +887,15 @@ client.on('message_create', async msg => {
 
                         // Parent : Texte long seul
                         const prevIsStrictParent = prevMsg.body && prevMsg.body.length > 100 && !prevMsg.has_media;
-                        // Enfant : Média seul (ou légende minuscule)
-                        const currIsStrictChild = messageData.hasMedia && (!messageData.body || messageData.body.length < 40);
+                        // Enfant : IMAGE ou VIDÉO seule (ou légende minuscule)
+                        const currIsStrictChild = messageData.hasMedia && (messageData.mediaMimeType?.startsWith('image/') || messageData.mediaMimeType?.startsWith('video/')) && (!messageData.body || messageData.body.length < 40);
 
                         if (currIsStrictChild && prevIsStrictParent && timeDiff < 420 && !prevMsg.real_property_id) {
                             const groupId = prevMsg.property_group_id || `auto_prop_parent_${prevMsg.id}`;
                             await db.query("UPDATE messages SET property_group_id = $1 WHERE id IN ($2, $3)", [groupId, prevMsg.id, currId]);
                             console.log(`📎 Heuristique ULTRA-STRICTE : ${groupId}`);
                         }
-                        else if (messageData.hasMedia && prevMsg.property_group_id && prevMsg.property_group_id.startsWith('auto_prop_parent_') && timeDiff < 420 && !prevMsg.real_property_id) {
+                        else if (messageData.hasMedia && (messageData.mediaMimeType?.startsWith('image/') || messageData.mediaMimeType?.startsWith('video/')) && prevMsg.property_group_id && prevMsg.property_group_id.startsWith('auto_prop_parent_') && timeDiff < 420 && !prevMsg.real_property_id) {
                             // Extension d'un groupe existant (pour les albums)
                             // On vérifie aussi que ce média n'a pas une description trop longue pour être un "enfant"
                             if (!messageData.body || messageData.body.length < 40) {
