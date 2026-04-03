@@ -204,7 +204,7 @@ Texte à analyser : "${description}"
                 let lastTextMsgsBySender = {};
                 for (let msg of msgs) {
                     const sender = msg.sender_id;
-                    if (msg.body && msg.body.length > 100) {
+                    if (msg.body && msg.body.length > 100 && !msg.has_media) {
                         lastTextMsgsBySender[sender] = msg;
                     } else if (msg.has_media) {
                         const lastText = lastTextMsgsBySender[sender];
@@ -773,16 +773,15 @@ client.on('ready', () => {
     botStatus = 'CONNECTED';
     currentQR = null;
 
-    // ❌ DÉSACTIVÉ : Balayage automatique périodique (Heuristique Stricte)
-    // console.log('🤖 Activation du balayage automatique (Règle 100 caractères)...');
-    // const runAll = app.get('runAutoGroupHeuristicAllChats');
-    // if (runAll) {
-    //     runAll().catch(e => console.error("❌ Error initial runAll:", e));
-    //     setInterval(() => {
-    //         runAll().catch(err => console.error("❌ Erreur balayage automatique:", err));
-    //     }, 10 * 60 * 1000);
-    // }
-    console.log('⚠️ Balayage automatique DÉSACTIVÉ — Sélection manuelle uniquement.');
+    // ✅ ACTIVÉ : Balayage automatique périodique (Heuristique Stricte)
+    console.log('🤖 Activation du balayage automatique (Règle 100 caractères)...');
+    const runAll = app.get('runAutoGroupHeuristicAllChats');
+    if (runAll) {
+        runAll().catch(e => console.error("❌ Error initial runAll:", e));
+        setInterval(() => {
+            runAll().catch(err => console.error("❌ Erreur balayage automatique:", err));
+        }, 10 * 60 * 1000);
+    }
 });
 
 client.on('authenticated', () => {
@@ -893,14 +892,12 @@ client.on('message_create', async msg => {
         console.log("💾 Message archivé dans PostgreSQL avec succès ! ✅");
 
         // 🤖 HEURISTIQUE DE GROUPEMENT AUTOMATIQUE (Simplification demandée par le USER)
-        // Règle : Si un texte > 100 chars est suivi par un média du même expéditeur, on groupe.
+        // Règle : Si un texte > 100 chars (SANS média) est suivi par un média du même expéditeur, on groupe.
+        // ✅ ACTIVÉ : Auto-groupement en temps réel
         if (messageData.hasMedia && !messageData.isFromMe) {
             try {
-                // ❌ DÉSACTIVÉ : Auto-groupement en temps réel
-                // La sélection des messages se fait maintenant manuellement via l'interface
-                /*
                 const prevMsgQuery = `
-                    SELECT id, body, property_group_id, timestamp, has_media
+                    SELECT id, body, property_group_id, timestamp, has_media, real_property_id
                     FROM messages
                     WHERE chat_id = $1 AND sender_id = $2 AND id != $3
                     ORDER BY timestamp DESC LIMIT 1
@@ -915,6 +912,7 @@ client.on('message_create', async msg => {
                     if (currRows.length > 0) {
                         const currId = currRows[0].id;
 
+                        // Condition STRICTE : Le parent doit être un texte > 100 chars SANS média
                         const prevIsStrictParent = prevMsg.body && prevMsg.body.length > 100 && !prevMsg.has_media;
 
                         if (messageData.hasMedia && prevIsStrictParent && timeDiff < 420 && !prevMsg.real_property_id) {
@@ -928,7 +926,6 @@ client.on('message_create', async msg => {
                         }
                     }
                 }
-                */
             } catch (groupErr) {
                 console.error("❌ Erreur auto-groupement:", groupErr);
             }
