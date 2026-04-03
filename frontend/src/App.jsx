@@ -1059,18 +1059,23 @@ function App() {
       <main className="chat-view">
         {viewMode === 'properties' ? (
           <div className="properties-dashboard">
-            <header className="chat-header">
+            <header className="chat-header properties-header">
               <div className="chat-header-info">
                 <div className="name">Tous les Biens Créés</div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                  Regroupement par bien immobiliers
-                </div>
+                <div className="subtitle">Exploration croisée par période</div>
               </div>
-              <div className="date-filters">
-                <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-                <span>au</span>
-                <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
-                <button className="refresh-btn" onClick={fetchProperties}>🔄</button>
+              <div className="date-filter-panel">
+                <div className="filter-group">
+                    <span className="filter-label">Du</span>
+                    <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="date-input" />
+                </div>
+                <div className="filter-group">
+                    <span className="filter-label">au</span>
+                    <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="date-input" />
+                </div>
+                <button className="refresh-fab" onClick={fetchProperties} title="Refresh">
+                    🔄
+                </button>
               </div>
             </header>
 
