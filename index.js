@@ -136,6 +136,11 @@ Tu es un extracteur de données immobilières pour WhatsApp. Analyse la descript
 📚 EXEMPLES CONCRETS D'EXTRACTION :
 Exemple 1: "Chambre salon à Calavi Tokan, loyer 25000" -> {"type": "APARTMENT", "rent_price": 25000, "localisation": "Calavi Tokan", "number_rooms": 1, "number_living_rooms": 1, "sanitary": "YES"}
 Exemple 2: "Entrée couchée à Maria Gleta, loyer 20000" -> {"type": "STUDIO", "rent_price": 20000, "localisation": "Maria Gleta", "number_rooms": 0, "number_living_rooms": 1, "sanitary": "YES"}
+Exemple 3: "Magasin à louer à Godomey, loyer 50000" -> {"type": "STORE", "rent_price": 50000, "localisation": "Godomey", "number_rooms": 1, "number_living_rooms": 0, "sanitary": "YES"}
+Exemple 4: "Boutique disponible à Cotonou centre, 35000 FCFA" -> {"type": "STORE", "rent_price": 35000, "localisation": "Cotonou centre", "number_rooms": 1, "number_living_rooms": 0, "sanitary": "YES"}
+
+⚠️ RÈGLE SPÉCIALE MAGASINS/BOUTIQUES :
+Pour les types STORE, SHOP, OFFICE (magasins, boutiques, bureaux) : TOUJOURS mettre "number_rooms": 1 et "number_living_rooms": 0 par défaut.
 
 🎯 CHAMPS À EXTRAIRE (SI MENTIONNÉS) :
 - "type": "HOUSE|APARTMENT|STUDIO|VILLA|SHOP|STORE|PARCEL|OFFICE|BUILDING"
