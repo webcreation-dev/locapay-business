@@ -191,9 +191,9 @@ function App() {
     return () => clearInterval(id);
   }, []);
 
-  // ─── EFFACER TOAST APRÈS 8s ────────────────────────────────────────────────
+  // ─── EFFACER TOAST APRÈS 8s (sauf si persistent) ───────────────────────────
   useEffect(() => {
-    if (toast) {
+    if (toast && !toast.persistent) {
       const id = setTimeout(() => setToast(null), 8000);
       return () => clearTimeout(id);
     }
@@ -986,7 +986,7 @@ function App() {
               className="global-action-btn"
               title="Regrouper toutes les conversations"
               onClick={async () => {
-                setToast({ message: "🔄 Regroupement de toutes les conversations...", type: 'success' });
+                setToast({ message: "🔄 Regroupement de toutes les conversations en cours...", type: 'success', persistent: true });
                 try {
                   const res = await fetch('/api/chats/analyze-all', { method: 'POST' });
                   const data = await res.json();
@@ -1003,7 +1003,7 @@ function App() {
               className="global-action-btn submit"
               title="Soumettre tous les groupes"
               onClick={async () => {
-                setToast({ message: "🚀 Soumission de tous les groupes...", type: 'success' });
+                setToast({ message: "🚀 Soumission de tous les groupes en cours...", type: 'success', persistent: true });
                 try {
                   const res = await fetch('/api/chats/batch-submit-all', { method: 'POST' });
                   const data = await res.json();
