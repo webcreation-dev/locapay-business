@@ -360,7 +360,7 @@ Texte à analyser : "${description}"
                         filtered_msgs_raw AS (
                             SELECT r.* FROM raw_msgs r
                             LEFT JOIN banned_groups bg ON r.property_group_id = bg.property_group_id
-                            WHERE (r.is_analyzed = FALSE OR r.analyzed_at >= CURRENT_TIMESTAMP - INTERVAL '1 hour')
+                            WHERE (r.is_analyzed = FALSE OR r.real_property_id IS NOT NULL)
                             AND bg.property_group_id IS NULL -- Exclure TOUS les membres d'un groupe contenant 'vendre'
                             AND (r.body IS NULL OR r.body !~* 'vendre|vente|parcelle|terrain|titre foncier| tf') -- Vérif individuelle au cas où (message non groupé)
                             AND ( (r.body IS NOT NULL AND TRIM(r.body) != '') OR r.has_media = TRUE )
