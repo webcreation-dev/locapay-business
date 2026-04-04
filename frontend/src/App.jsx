@@ -983,6 +983,39 @@ function App() {
           </div>
           <div className="sidebar-controls">
             <button
+              className="global-action-btn"
+              title="Regrouper toutes les conversations"
+              onClick={async () => {
+                setToast({ message: "🔄 Regroupement de toutes les conversations...", type: 'success' });
+                try {
+                  const res = await fetch('/api/chats/analyze-all', { method: 'POST' });
+                  const data = await res.json();
+                  setToast({ message: `✅ ${data.message}`, type: 'success' });
+                  fetchChats();
+                } catch (e) {
+                  setToast({ message: "❌ Échec du regroupement global", type: 'error' });
+                }
+              }}
+            >
+              🔄
+            </button>
+            <button
+              className="global-action-btn submit"
+              title="Soumettre tous les groupes"
+              onClick={async () => {
+                setToast({ message: "🚀 Soumission de tous les groupes...", type: 'success' });
+                try {
+                  const res = await fetch('/api/chats/batch-submit-all', { method: 'POST' });
+                  const data = await res.json();
+                  setToast({ message: `✅ ${data.message}`, type: 'success' });
+                } catch (e) {
+                  setToast({ message: "❌ Échec de la soumission globale", type: 'error' });
+                }
+              }}
+            >
+              🚀
+            </button>
+            <button
               className={`view-toggle ${viewMode === 'chats' ? 'active' : ''}`}
               onClick={() => { setViewMode('chats'); setSearchTerm(''); }}
             >

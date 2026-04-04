@@ -279,6 +279,25 @@ Texte à analyser : "${description}"
                 }
             });
 
+            // 🔄 ANALYSE AUTO SUR TOUTES LES CONVERSATIONS
+            app.post('/api/chats/analyze-all', async (req, res) => {
+                try {
+                    const { rows: chats } = await db.query(
+                        "SELECT DISTINCT whatsapp_chat_id FROM chats WHERE whatsapp_chat_id != 'status@broadcast'"
+                    );
+
+                    let totalGroups = 0;
+                    for (const chat of chats) {
+                        const groups = await internalAnalyzeChat(chat.whatsapp_chat_id);
+                        totalGroups += groups;
+                    }
+
+                    res.json({ success: true, message: `${totalGroups} groupes détectés sur ${chats.length} conversations.` });
+                } catch (e) {
+                    res.status(500).json({ error: e.message });
+                }
+            });
+
             // Exposer pour usage dans ready
             app.set('runAutoGroupHeuristicAllChats', runAutoGroupHeuristicAllChats);
 
@@ -553,6 +572,13 @@ Texte à analyser : "${description}"
                         return { success: false, error: errMsg };
                     }
 
+                    // Validation du prix du loyer (champ obligatoire)
+                    if (!extractedData.rent_price || extractedData.rent_price <= 0) {
+                        const errMsg = "Prix du loyer manquant ou invalide dans l'annonce.";
+                        await db.query(`UPDATE messages SET analysis_error = $1 WHERE id = ANY($2)`, [errMsg, messageIds]);
+                        return { success: false, error: errMsg };
+                    }
+
                     const nestUrl = process.env.NESTJS_API_URL || 'http://host.docker.internal:4000/properties/create-from-whatsapp';
                     
                     try {
@@ -664,6 +690,50 @@ Texte à analyser : "${description}"
                         console.log(`🏁 Batch terminé. Succès: ${successCount}, Échecs: ${errorCount}`);
                     })();
 
+                } catch (e) {
+                    res.status(500).json({ error: e.message });
+                }
+            });
+
+            // 🚀 BATCH SUBMIT GLOBAL : Traiter tous les groupements de toutes les conversations
+            app.post('/api/chats/batch-submit-all', async (req, res) => {
+                try {
+                    // Trouver tous les groupes en attente (toutes conversations confondues)
+                    const { rows: groups } = await db.query(`
+                        SELECT DISTINCT property_group_id, chat_id
+                        FROM messages
+                        WHERE property_group_id IS NOT NULL
+                        AND property_group_id != 'noise'
+                        AND real_property_id IS NULL
+                        AND property_group_id NOT LIKE 'real_prop_%'
+                    `);
+
+                    if (groups.length === 0) {
+                        return res.json({ success: true, message: "Aucun groupement à traiter." });
+                    }
+
+                    res.status(202).json({ success: true, message: `Traitement de ${groups.length} groupes lancé.` });
+
+                    // Traitement en arrière-plan
+                    (async () => {
+                        console.log(`🌀 Début du batch global pour ${groups.length} groupes...`);
+                        let successCount = 0, errorCount = 0;
+                        for (const group of groups) {
+                            try {
+                                const { rows: msgIds } = await db.query(
+                                    "SELECT id FROM messages WHERE property_group_id = $1",
+                                    [group.property_group_id]
+                                );
+                                const result = await internalProcessPropertySubmission(msgIds.map(m => m.id));
+                                if (result.success) successCount++; else errorCount++;
+                                await new Promise(r => setTimeout(r, 2000)); // Délai entre soumissions
+                            } catch (groupError) {
+                                errorCount++;
+                                console.error(`❌ Erreur sur groupe ${group.property_group_id}:`, groupError);
+                            }
+                        }
+                        console.log(`✅ Batch global terminé: ${successCount} succès, ${errorCount} erreurs`);
+                    })();
                 } catch (e) {
                     res.status(500).json({ error: e.message });
                 }
