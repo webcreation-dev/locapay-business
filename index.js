@@ -695,10 +695,20 @@ Texte à analyser : "${description}"
                 }
             });
 
-            // 🚀 BATCH SUBMIT GLOBAL : Traiter tous les groupements de toutes les conversations
-            app.post('/api/chats/batch-submit-all', async (req, res) => {
+            // 🚀 BATCH SUBMIT GLOBAL : Traiter tous les groupements (avec SSE pour progress)
+            app.get('/api/chats/batch-submit-all', async (req, res) => {
+                // Configuration SSE
+                res.setHeader('Content-Type', 'text/event-stream');
+                res.setHeader('Cache-Control', 'no-cache');
+                res.setHeader('Connection', 'keep-alive');
+                res.flushHeaders();
+
+                const sendEvent = (data) => {
+                    res.write(`data: ${JSON.stringify(data)}\n\n`);
+                };
+
                 try {
-                    // Trouver tous les groupes en attente (toutes conversations confondues)
+                    // Trouver tous les groupes en attente
                     const { rows: groups } = await db.query(`
                         SELECT DISTINCT property_group_id, chat_id
                         FROM messages
@@ -709,33 +719,40 @@ Texte à analyser : "${description}"
                     `);
 
                     if (groups.length === 0) {
-                        return res.json({ success: true, message: "Aucun groupement à traiter." });
+                        sendEvent({ type: 'complete', message: "Aucun groupement à traiter.", success: 0, errors: 0 });
+                        return res.end();
                     }
 
-                    res.status(202).json({ success: true, message: `Traitement de ${groups.length} groupes lancé.` });
+                    sendEvent({ type: 'start', total: groups.length, message: `Traitement de ${groups.length} groupes...` });
 
-                    // Traitement en arrière-plan
-                    (async () => {
-                        console.log(`🌀 Début du batch global pour ${groups.length} groupes...`);
-                        let successCount = 0, errorCount = 0;
-                        for (const group of groups) {
-                            try {
-                                const { rows: msgIds } = await db.query(
-                                    "SELECT id FROM messages WHERE property_group_id = $1",
-                                    [group.property_group_id]
-                                );
-                                const result = await internalProcessPropertySubmission(msgIds.map(m => m.id));
-                                if (result.success) successCount++; else errorCount++;
-                                await new Promise(r => setTimeout(r, 2000)); // Délai entre soumissions
-                            } catch (groupError) {
+                    let successCount = 0, errorCount = 0;
+                    for (let i = 0; i < groups.length; i++) {
+                        const group = groups[i];
+                        try {
+                            const { rows: msgIds } = await db.query(
+                                "SELECT id FROM messages WHERE property_group_id = $1",
+                                [group.property_group_id]
+                            );
+                            const result = await internalProcessPropertySubmission(msgIds.map(m => m.id));
+                            if (result.success) {
+                                successCount++;
+                                sendEvent({ type: 'progress', current: i + 1, total: groups.length, success: successCount, errors: errorCount, propertyId: result.propertyId });
+                            } else {
                                 errorCount++;
-                                console.error(`❌ Erreur sur groupe ${group.property_group_id}:`, groupError);
+                                sendEvent({ type: 'progress', current: i + 1, total: groups.length, success: successCount, errors: errorCount, error: result.error });
                             }
+                            await new Promise(r => setTimeout(r, 2000));
+                        } catch (groupError) {
+                            errorCount++;
+                            sendEvent({ type: 'progress', current: i + 1, total: groups.length, success: successCount, errors: errorCount, error: groupError.message });
                         }
-                        console.log(`✅ Batch global terminé: ${successCount} succès, ${errorCount} erreurs`);
-                    })();
+                    }
+
+                    sendEvent({ type: 'complete', message: `Terminé : ${successCount} biens créés, ${errorCount} erreurs.`, success: successCount, errors: errorCount });
+                    res.end();
                 } catch (e) {
-                    res.status(500).json({ error: e.message });
+                    sendEvent({ type: 'error', message: e.message });
+                    res.end();
                 }
             });
 

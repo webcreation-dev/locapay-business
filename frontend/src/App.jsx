@@ -1002,15 +1002,34 @@ function App() {
             <button
               className="global-action-btn submit"
               title="Soumettre tous les groupes"
-              onClick={async () => {
-                setToast({ message: "🚀 Soumission de tous les groupes en cours...", type: 'success', persistent: true });
-                try {
-                  const res = await fetch('/api/chats/batch-submit-all', { method: 'POST' });
-                  const data = await res.json();
-                  setToast({ message: `✅ ${data.message}`, type: 'success' });
-                } catch (e) {
-                  setToast({ message: "❌ Échec de la soumission globale", type: 'error' });
-                }
+              onClick={() => {
+                setToast({ message: "🚀 Connexion au serveur...", type: 'success', persistent: true });
+                const eventSource = new EventSource('/api/chats/batch-submit-all');
+
+                eventSource.onmessage = (event) => {
+                  const data = JSON.parse(event.data);
+                  if (data.type === 'start') {
+                    setToast({ message: `🚀 Traitement de ${data.total} groupes...`, type: 'success', persistent: true });
+                  } else if (data.type === 'progress') {
+                    setToast({
+                      message: `🚀 ${data.current}/${data.total} — ✅ ${data.success} créés${data.errors > 0 ? ` | ❌ ${data.errors} erreurs` : ''}`,
+                      type: 'success',
+                      persistent: true
+                    });
+                  } else if (data.type === 'complete') {
+                    setToast({ message: `✅ ${data.message}`, type: 'success' });
+                    fetchChats();
+                    eventSource.close();
+                  } else if (data.type === 'error') {
+                    setToast({ message: `❌ ${data.message}`, type: 'error' });
+                    eventSource.close();
+                  }
+                };
+
+                eventSource.onerror = () => {
+                  setToast({ message: "❌ Connexion perdue", type: 'error' });
+                  eventSource.close();
+                };
               }}
             >
               🚀
