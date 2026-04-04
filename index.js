@@ -119,6 +119,17 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
             await db.query('CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);');
 
             // -- ROUTES API EXPRESS (Déclarées ici car on a besoin de db prêt) --
+
+            // --- PRÉ-TRAITEMENT DES ABRÉVIATIONS DE PRIX ---
+            // Normalise les abréviations locales (mil, k) avant envoi à Mistral
+            // Ex: "28mil" → "28000", "1.5mil" → "1500", "50k" → "50000"
+            function normalizePriceAbbreviations(text) {
+                return text.replace(/(\d+)[.,]?(\d*)\s*(mil|k)\b/gi, (match, int, dec, unit) => {
+                    let number = parseFloat(int + (dec ? '.' + dec : ''));
+                    return String(Math.round(number * 1000));
+                });
+            }
+
             // --- FONCTION D'EXTRACTION IA MISTRAL ---
             async function extractPropertyDataWithAI(description) {
                 const MISTRAL_API_KEY = process.env.MISTRAL_API_KEY;
@@ -531,9 +542,10 @@ Texte à analyser : "${description}"
                         return { success: false, error: errMsg };
                     }
 
-                    // 4. Analyser avec Mistral
+                    // 4. Normaliser les abréviations de prix et analyser avec Mistral
+                    const normalizedDescription = normalizePriceAbbreviations(finalDescription);
                     console.log(`🤖 Analyse Mistral en cours pour ${texts.length} messages...`);
-                    const extractedData = await extractPropertyDataWithAI(finalDescription);
+                    const extractedData = await extractPropertyDataWithAI(normalizedDescription);
 
                     if (!extractedData) {
                         const errMsg = "L'IA a échoué à analyser l'annonce.";
