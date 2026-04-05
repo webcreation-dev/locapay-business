@@ -301,7 +301,7 @@ Texte à analyser : "${description}"
             // Exposer pour usage dans ready
             app.set('runAutoGroupHeuristicAllChats', runAutoGroupHeuristicAllChats);
 
-            // 📊 API pour les groupes rejetés
+            // 📊 API pour les groupes rejetés (exclut les mots interdits qui sont marqués noise)
             app.get('/api/rejected-groups', async (req, res) => {
                 try {
                     const { rows } = await db.query(`
@@ -318,7 +318,9 @@ Texte à analyser : "${description}"
                         LEFT JOIN chats c ON m.chat_id = c.whatsapp_chat_id
                         WHERE m.analysis_error IS NOT NULL
                         AND m.property_group_id IS NOT NULL
+                        AND m.property_group_id != 'noise'
                         AND m.real_property_id IS NULL
+                        AND NOT (m.body ~* 'vendre|vente|parcelle|terrain|titre foncier| tf|domaine')
                         GROUP BY m.property_group_id, m.chat_id, c.chat_name, m.analysis_error
                         ORDER BY m.analysis_error, MIN(m.timestamp) DESC
                     `);
@@ -621,9 +623,9 @@ Texte à analyser : "${description}"
                     const foundKeyword = forbiddenKeywords.find(kw => descriptionLower.includes(kw));
 
                     if (foundKeyword) {
-                        const errMsg = `Désolé, nous n'acceptons que les locations. Ce message semble concerner une vente ou un terrain (${foundKeyword}).`;
-                        await db.query(`UPDATE messages SET submission_failed = TRUE, analysis_error = $1 WHERE id = ANY($2)`, [errMsg, messageIds]);
-                        return { success: false, error: errMsg };
+                        // Marquer comme noise directement - ces messages ne doivent plus apparaître
+                        await db.query(`UPDATE messages SET property_group_id = 'noise', submission_failed = TRUE WHERE id = ANY($1)`, [messageIds]);
+                        return { success: false, error: `Ignoré: contient "${foundKeyword}"` };
                     }
 
                     if (imagesBase64.length === 0) {
