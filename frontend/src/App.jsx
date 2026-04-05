@@ -280,6 +280,22 @@ function App() {
     }
   };
 
+  const handleClearByError = async (errorLabel) => {
+    if (!window.confirm(`Ignorer définitivement TOUS les groupes avec l'erreur :\n"${errorLabel}" ?`)) return;
+    try {
+      const res = await fetch(`/api/rejected-groups/clear-by-error`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ errorLabel })
+      });
+      const data = await res.json();
+      setToast({ message: `✅ ${data.message}`, type: 'success' });
+      fetchRejectedGroups();
+    } catch (e) {
+      setToast({ message: `❌ Erreur: ${e.message}`, type: 'error' });
+    }
+  };
+
   // ─── POLLING MESSAGES (NOUVEAUX SEULEMENT) ───────────────────────────────────
   useEffect(() => {
     if (!currentChatId) return;
@@ -1263,13 +1279,19 @@ function App() {
               ) : (
                 Object.entries(rejectedGroups.by_error).map(([error, groups]) => (
                   <div key={error} className="error-category">
-                    <div
-                      className="error-category-header"
-                      onClick={() => setExpandedErrors(prev => ({ ...prev, [error]: !prev[error] }))}
-                    >
-                      <span className="error-toggle">{expandedErrors[error] ? '▼' : '▶'}</span>
-                      <span className="error-message">{error}</span>
-                      <span className="error-count">{groups.length} groupes</span>
+                    <div className="error-category-header">
+                      <div className="error-info" onClick={() => setExpandedErrors(prev => ({ ...prev, [error]: !prev[error] }))} style={{ flex: 1, display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                        <span className="error-toggle">{expandedErrors[error] ? '▼' : '▶'}</span>
+                        <span className="error-message">{error}</span>
+                        <span className="error-count">{groups.length} groupes</span>
+                      </div>
+                      <button
+                        className="btn-clear-error"
+                        onClick={(e) => { e.stopPropagation(); handleClearByError(error); }}
+                        title="Ignorer TOUS les groupes pour cette erreur"
+                      >
+                        🗑️ Tout ignorer
+                      </button>
                     </div>
                     {expandedErrors[error] && (
                       <div className="error-groups-list">

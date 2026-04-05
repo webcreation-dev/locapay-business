@@ -209,16 +209,26 @@ Texte à analyser : "${description}"
             };
 
             const internalAnalyzeChat = async (chatId) => {
-                // 1. On commence par NETTOYER tous les anciens groupements automatiques (non validés) 
+                // Mots interdits (ventes, terrains, etc.)
+                const FORBIDDEN_REGEX = 'vendre|vente|parcelle|terrain|titre\\sfoncier|\\stf\\s|\\stf\n|domaine|\\stf$';
+                const forbiddenPattern = new RegExp(FORBIDDEN_REGEX.replace(/\\/g, '\\'), 'i');
+
+                // 1. Marquer comme noise tous les messages avec mots interdits et EFFACER les erreurs
+                await db.query(
+                    `UPDATE messages SET property_group_id = 'noise', analysis_error = NULL WHERE chat_id = $1 AND property_group_id IS DISTINCT FROM 'noise' AND real_property_id IS NULL AND body ~* $2`,
+                    [chatId, FORBIDDEN_REGEX]
+                );
+
+                // 2. On commence par NETTOYER tous les anciens groupements automatiques (non validés)
                 // pour ce chat, afin de repartir sur une base saine.
                 await db.query(
                     "UPDATE messages SET property_group_id = NULL WHERE chat_id = $1 AND property_group_id LIKE 'auto_prop_%' AND real_property_id IS NULL",
                     [chatId]
                 );
 
-                // 2. On récupère les messages triés strictement (exclure ceux déjà associés à un bien)
+                // 3. On récupère les messages triés strictement (exclure noise et ceux déjà associés à un bien)
                 const { rows: msgs } = await db.query(
-                    "SELECT id, body, has_media, media_mime_type, property_group_id, sender_id, timestamp, real_property_id FROM messages WHERE chat_id = $1 AND real_property_id IS NULL ORDER BY timestamp ASC, id ASC",
+                    "SELECT id, body, has_media, media_mime_type, property_group_id, sender_id, timestamp, real_property_id FROM messages WHERE chat_id = $1 AND real_property_id IS NULL AND (property_group_id IS NULL OR property_group_id NOT IN ('noise')) ORDER BY timestamp ASC, id ASC",
                     [chatId]
                 );
 
@@ -228,6 +238,14 @@ Texte à analyser : "${description}"
 
                 for (let msg of msgs) {
                     const sender = msg.sender_id;
+
+                    // Skip si contient des mots interdits (double vérification)
+                    if (msg.body && forbiddenPattern.test(msg.body)) {
+                        await db.query("UPDATE messages SET property_group_id = 'noise' WHERE id = $1", [msg.id]);
+                        inGroupingModeBySender[sender] = false;
+                        parentMsgBySender[sender] = null;
+                        continue;
+                    }
 
                     // Condition 0: Message complet (texte > 100 chars + média image/vidéo) → groupe autonome
                     if (msg.body && msg.body.length > 100 && msg.has_media &&
@@ -320,7 +338,7 @@ Texte à analyser : "${description}"
                         AND m.property_group_id IS NOT NULL
                         AND m.property_group_id != 'noise'
                         AND m.real_property_id IS NULL
-                        AND NOT (m.body ~* 'vendre|vente|parcelle|terrain|titre foncier| tf|domaine')
+                        AND NOT (m.body ~* 'vendre|vente|parcelle|terrain|titre\\sfoncier|\\stf\\s|\\stf\n|domaine|\\stf$')
                         GROUP BY m.property_group_id, m.chat_id, c.chat_name, m.analysis_error
                         ORDER BY m.analysis_error, MIN(m.timestamp) DESC
                     `);
@@ -355,6 +373,27 @@ Texte à analyser : "${description}"
                         WHERE property_group_id = $1
                     `, [propertyGroupId]);
                     res.json({ success: true, message: 'Groupe réinitialisé pour retraitement' });
+                } catch (e) {
+                    res.status(500).json({ error: e.message });
+                }
+            });
+
+            // 🗑️ Ignorer en masse par message d'erreur
+            app.post('/api/rejected-groups/clear-by-error', async (req, res) => {
+                const { errorLabel } = req.body;
+                if (!errorLabel) return res.status(400).json({ error: "L'erreur est requise." });
+
+                try {
+                    await db.query(`
+                        UPDATE messages 
+                        SET property_group_id = 'noise', analysis_error = NULL, submission_failed = TRUE
+                        WHERE analysis_error = $1 
+                        AND real_property_id IS NULL 
+                        AND property_group_id IS NOT NULL 
+                        AND property_group_id != 'noise'
+                    `, [errorLabel]);
+
+                    res.json({ success: true, message: `Tous les groupes avec l'erreur "${errorLabel}" ont été ignorés.` });
                 } catch (e) {
                     res.status(500).json({ error: e.message });
                 }
@@ -623,9 +662,9 @@ Texte à analyser : "${description}"
                     const foundKeyword = forbiddenKeywords.find(kw => descriptionLower.includes(kw));
 
                     if (foundKeyword) {
-                        // Marquer comme noise directement - ces messages ne doivent plus apparaître
-                        await db.query(`UPDATE messages SET property_group_id = 'noise', submission_failed = TRUE WHERE id = ANY($1)`, [messageIds]);
-                        return { success: false, error: `Ignoré: contient "${foundKeyword}"` };
+                        // Marquer comme noise directement et effacer l'erreur pour qu'il disparaisse des rejets
+                        await db.query(`UPDATE messages SET property_group_id = 'noise', submission_failed = TRUE, analysis_error = NULL WHERE id = ANY($1)`, [messageIds]);
+                        return { success: false, error: `Ignoré (Vente/Terrain): "${foundKeyword}"` };
                     }
 
                     if (imagesBase64.length === 0) {
