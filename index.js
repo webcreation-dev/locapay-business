@@ -224,7 +224,7 @@ Texte à analyser : "${description}"
 
                 let parentMsgBySender = {};
                 let inGroupingModeBySender = {};
-                let groupsFound = 0;
+                let uniqueGroups = new Set();
 
                 for (let msg of msgs) {
                     const sender = msg.sender_id;
@@ -235,7 +235,7 @@ Texte à analyser : "${description}"
                         !msg.real_property_id && !msg.property_group_id) {
                         const groupId = `auto_prop_self_${msg.id}`;
                         await db.query("UPDATE messages SET property_group_id = $1 WHERE id = $2", [groupId, msg.id]);
-                        groupsFound++;
+                        uniqueGroups.add(groupId);
                         continue; // Ce message est autonome, on passe au suivant
                     }
 
@@ -254,7 +254,7 @@ Texte à analyser : "${description}"
                             await db.query("UPDATE messages SET property_group_id = $1 WHERE id IN ($2, $3)", [groupId, parent.id, msg.id]);
                             parent.property_group_id = groupId;
                             msg.property_group_id = groupId;
-                            groupsFound++;
+                            uniqueGroups.add(groupId);
                         } else {
                             inGroupingModeBySender[sender] = false;
                             parentMsgBySender[sender] = null;
@@ -266,7 +266,7 @@ Texte à analyser : "${description}"
                         parentMsgBySender[sender] = null;
                     }
                 }
-                return groupsFound;
+                return uniqueGroups.size;
             };
 
             // 🤖 ANALYSE AUTO (HEURISTIQUE) SUR TOUT LE CHAT
