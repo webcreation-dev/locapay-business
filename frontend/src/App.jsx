@@ -1502,6 +1502,11 @@ function App() {
                 }
                 if (item?.type === 'wrapper') {
                   const isPending = !item.isCreated;
+                  
+                  // NOUVEAU : Si c'est en attente de validation (Détection/IA), 
+                  // on le masque de la vue chat car c'est maintenant dans le Dashboard 📂
+                  if (isPending && !showCreatedOnly) return null;
+
                   const isAi = item.isAiSuggestion;
                   return (
                     <div
