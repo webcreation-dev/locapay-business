@@ -424,6 +424,8 @@ Texte à analyser : "${description}"
                         AND m.property_group_id NOT LIKE 'real_prop_%'
                         AND m.real_property_id IS NULL
                         AND m.analysis_error IS NULL
+                        -- Double sécurité : exclure les mots interdits même s'ils sont déjà groupés
+                        AND NOT (m.body ~* 'vendre|vente|parcelle|terrain|titre\\sfoncier|\\stf\\s|\\stf\n|domaine|\\stf$|opportunite|recherche')
                         GROUP BY m.property_group_id, m.chat_id, c.chat_name
                         ORDER BY MIN(m.timestamp) DESC
                     `);
@@ -486,6 +488,8 @@ Texte à analyser : "${description}"
                             AND m.property_group_id IS NULL
                             AND m.is_from_me = FALSE
                             AND COALESCE(m.message_type, '') NOT IN ('audio', 'ptt', 'sticker')
+                            -- On ne compte rien qui contienne les mots bannis
+                            AND NOT (COALESCE(m.body, '') ~* 'vendre|vente|parcelle|terrain|titre\\sfoncier|\\stf\\s|\\stf\n|domaine|\\stf$|opportunite|recherche')
                             GROUP BY m.chat_id
                         )
                         SELECT c.*, COALESCE(p.unread_count, 0) as unread_count

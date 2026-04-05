@@ -1492,14 +1492,21 @@ function App() {
               )}
 
               {/* Bulles */}
-              {groupedContent.filter(item => {
-                // Règle d'or : Dans la vue Chat, on cache les détections en attente
-                // car elles ont maintenant leur propre vue globale 📂
-                if (viewMode === 'chats' && item.type === 'wrapper' && !item.isCreated) {
-                  return false;
-                }
-                return true;
-              }).map((item, idx) => {
+              {(() => {
+                const FORBIDDEN_PATTERN = /vendre|vente|parcelle|terrain|titre\sfoncier|\stf\s|\stf\n|domaine|\stf$|opportunite|recherche/i;
+                return groupedContent.filter(item => {
+                  // 1. Cacher les détections déjà dans le Dashboard 📂
+                  if (viewMode === 'chats' && item.type === 'wrapper' && !item.isCreated) {
+                    return false;
+                  }
+                  // 2. Cacher les messages bruts qui contiennent "vente/tf" par sécurité
+                  if (viewMode === 'chats' && item.type === 'message' && item.msg?.body) {
+                    if (FORBIDDEN_PATTERN.test(item.msg.body.normalize('NFKD').replace(/[\u0300-\u036f]/g, ""))) {
+                      return false;
+                    }
+                  }
+                  return true;
+                }).map((item, idx) => {
                 if (item?.type === 'date-header') {
                   return (
                     <div key={item.key || idx} className="date-header">
@@ -1600,7 +1607,9 @@ function App() {
                   );
                 }
                 return item;
-              })}
+              })
+            })()
+            }
             </div>
 
             {/* Bouton nouveaux messages */}
