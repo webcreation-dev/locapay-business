@@ -551,13 +551,13 @@ Texte à analyser : "${description}"
 
                     if (foundKeyword) {
                         const errMsg = `Désolé, nous n'acceptons que les locations. Ce message semble concerner une vente ou un terrain (${foundKeyword}).`;
-                        await db.query(`UPDATE messages SET analysis_error = $1 WHERE id = ANY($2)`, [errMsg, messageIds]);
+                        await db.query(`UPDATE messages SET submission_failed = TRUE, analysis_error = $1 WHERE id = ANY($2)`, [errMsg, messageIds]);
                         return { success: false, error: errMsg };
                     }
 
                     if (imagesBase64.length === 0) {
                         const errMsg = "Au moins une image ou vidéo est requise.";
-                        await db.query(`UPDATE messages SET analysis_error = $1 WHERE id = ANY($2)`, [errMsg, messageIds]);
+                        await db.query(`UPDATE messages SET submission_failed = TRUE, analysis_error = $1 WHERE id = ANY($2)`, [errMsg, messageIds]);
                         return { success: false, error: errMsg };
                     }
 
@@ -568,14 +568,14 @@ Texte à analyser : "${description}"
 
                     if (!extractedData) {
                         const errMsg = "L'IA a échoué à analyser l'annonce.";
-                        await db.query(`UPDATE messages SET analysis_error = $1 WHERE id = ANY($2)`, [errMsg, messageIds]);
+                        await db.query(`UPDATE messages SET submission_failed = TRUE, analysis_error = $1 WHERE id = ANY($2)`, [errMsg, messageIds]);
                         return { success: false, error: errMsg };
                     }
 
                     // Validation du prix du loyer (champ obligatoire)
                     if (!extractedData.rent_price || extractedData.rent_price <= 0) {
                         const errMsg = "Prix du loyer manquant ou invalide dans l'annonce.";
-                        await db.query(`UPDATE messages SET analysis_error = $1 WHERE id = ANY($2)`, [errMsg, messageIds]);
+                        await db.query(`UPDATE messages SET submission_failed = TRUE, analysis_error = $1 WHERE id = ANY($2)`, [errMsg, messageIds]);
                         return { success: false, error: errMsg };
                     }
 
@@ -607,12 +607,12 @@ Texte à analyser : "${description}"
                             return { success: true, propertyId: property_id };
                         } else {
                             let errMsg = nestData.error || nestData.message || "Erreur de traitement";
-                            await db.query(`UPDATE messages SET property_group_id = NULL, real_property_id = NULL, is_analyzed = FALSE, analysis_error = $1 WHERE id = ANY($2)`, [errMsg, messageIds]);
+                            await db.query(`UPDATE messages SET submission_failed = TRUE, property_group_id = NULL, real_property_id = NULL, is_analyzed = FALSE, analysis_error = $1 WHERE id = ANY($2)`, [errMsg, messageIds]);
                             return { success: false, error: errMsg };
                         }
                     } catch (err) {
                         let errMsg = err.response ? (err.response.data.error || err.response.data.message || `Erreur ${err.response.status}`) : err.message;
-                        await db.query(`UPDATE messages SET property_group_id = NULL, real_property_id = NULL, is_analyzed = FALSE, analysis_error = $1 WHERE id = ANY($2)`, [errMsg, messageIds]);
+                        await db.query(`UPDATE messages SET submission_failed = TRUE, property_group_id = NULL, real_property_id = NULL, is_analyzed = FALSE, analysis_error = $1 WHERE id = ANY($2)`, [errMsg, messageIds]);
                         return { success: false, error: errMsg };
                     }
                 } catch (e) {
@@ -645,7 +645,7 @@ Texte à analyser : "${description}"
                 try {
                     // 1. Trouver tous les groupes uniques qui n'ont pas encore de real_property_id
                     const { rows: groups } = await db.query(
-                        "SELECT DISTINCT property_group_id FROM messages WHERE chat_id = $1 AND property_group_id IS NOT NULL AND property_group_id != 'noise' AND real_property_id IS NULL AND property_group_id NOT LIKE 'real_prop_%'",
+                        "SELECT DISTINCT property_group_id FROM messages WHERE chat_id = $1 AND property_group_id IS NOT NULL AND property_group_id != 'noise' AND real_property_id IS NULL AND property_group_id NOT LIKE 'real_prop_%' AND submission_failed = FALSE",
                         [chatId]
                     );
 
@@ -708,7 +708,7 @@ Texte à analyser : "${description}"
                 };
 
                 try {
-                    // Trouver tous les groupes en attente
+                    // Trouver tous les groupes en attente (exclure les échecs)
                     const { rows: groups } = await db.query(`
                         SELECT DISTINCT property_group_id, chat_id
                         FROM messages
@@ -716,6 +716,7 @@ Texte à analyser : "${description}"
                         AND property_group_id != 'noise'
                         AND real_property_id IS NULL
                         AND property_group_id NOT LIKE 'real_prop_%'
+                        AND submission_failed = FALSE
                     `);
 
                     if (groups.length === 0) {
