@@ -239,10 +239,15 @@ Texte à analyser : "${description}"
                 const FORBIDDEN_REGEX = 'vendre|vente|parcelle|terrain|titre\\sfoncier|\\stf\\s|\\stf\n|domaine|\\stf$|opportunite|recherche';
                 const forbiddenPattern = new RegExp(FORBIDDEN_REGEX.replace(/\\/g, '\\'), 'i');
 
-                // 1. Marquer comme noise tous les messages avec mots interdits et EFFACER les erreurs
                 await db.query(
                     `UPDATE messages SET property_group_id = 'noise', analysis_error = NULL WHERE chat_id = $1 AND property_group_id IS DISTINCT FROM 'noise' AND real_property_id IS NULL AND body ~* $2`,
                     [chatId, FORBIDDEN_REGEX]
+                );
+
+                // 1.1 Marquer comme noise les messages très courts sans média (< 20 caractères)
+                await db.query(
+                    `UPDATE messages SET property_group_id = 'noise' WHERE chat_id = $1 AND property_group_id IS NULL AND real_property_id IS NULL AND has_media = FALSE AND LENGTH(COALESCE(body, '')) < 20`,
+                    [chatId]
                 );
 
                 // 2. On commence par NETTOYER tous les anciens groupements automatiques (non validés)
@@ -488,6 +493,8 @@ Texte à analyser : "${description}"
                             AND m.property_group_id IS NULL
                             AND m.is_from_me = FALSE
                             AND COALESCE(m.message_type, '') NOT IN ('audio', 'ptt', 'sticker')
+                            -- Ne pas compter les messages trop courts sans média (Bruit)
+                            AND (m.has_media = TRUE OR LENGTH(COALESCE(m.body, '')) >= 20)
                             -- On ne compte rien qui contienne les mots bannis
                             AND NOT (COALESCE(m.body, '') ~* 'vendre|vente|parcelle|terrain|titre\\sfoncier|\\stf\\s|\\stf\n|domaine|\\stf$|opportunite|recherche')
                             GROUP BY m.chat_id

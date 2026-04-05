@@ -839,7 +839,7 @@ function App() {
       const isNoise = msg.property_group_id === 'noise';
       // Si on filtre, on regarde si le real_property_id est là ou pas
       const isCreated = msg.real_property_id !== null && msg.real_property_id !== undefined;
-      
+
       if (showCreatedOnly) {
         return !isFromMe && !isNoise && isCreated;
       } else {
@@ -1435,12 +1435,12 @@ function App() {
                   {(() => {
                     const pendingCount = groupedContent.filter(item => item.type === 'wrapper' && !item.isCreated).length;
                     return (
-                      <div style={{ 
-                        backgroundColor: pendingCount === 0 ? '#667781' : '#3b82f6', 
-                        color: 'white', 
-                        padding: '4px 8px', 
-                        borderRadius: '12px', 
-                        fontSize: '11px', 
+                      <div style={{
+                        backgroundColor: pendingCount === 0 ? '#667781' : '#3b82f6',
+                        color: 'white',
+                        padding: '4px 8px',
+                        borderRadius: '12px',
+                        fontSize: '11px',
                         fontWeight: '600',
                         opacity: pendingCount === 0 ? 0.6 : 1
                       }}>
@@ -1515,117 +1515,120 @@ function App() {
                   if (viewMode === 'chats' && item.type === 'wrapper' && !item.isCreated) {
                     return false;
                   }
-                  // 2. Cacher les messages bruts qui contiennent "vente/tf" par sécurité
+                  // 2. Cacher les messages bruts qui contiennent "vente/tf" ou trop courts sans média
                   if (viewMode === 'chats' && item.type === 'message' && item.msg?.body) {
-                    if (FORBIDDEN_PATTERN.test(item.msg.body.normalize('NFKD').replace(/[\u0300-\u036f]/g, ""))) {
+                    const body = item.msg.body.normalize('NFKD').replace(/[\u0300-\u036f]/g, "");
+                    // Bruit ou Vente
+                    const isLongEnough = item.msg.hasMedia || body.length >= 20;
+                    if (FORBIDDEN_PATTERN.test(body) || !isLongEnough) {
                       return false;
                     }
                   }
                   return true;
                 }).map((item, idx) => {
-                if (item?.type === 'date-header') {
-                  return (
-                    <div key={item.key || idx} className="date-header">
-                      <span>{item.label}</span>
-                    </div>
-                  );
-                }
-                if (item?.type === 'wrapper') {
-                  const isPending = !item.isCreated;
-                  const isAi = item.isAiSuggestion;
-                  return (
-                    <div
-                      key={item.key || idx}
-                      className={`property-group-wrapper ${item.isCreated ? 'created' : ''} ${isPending ? 'pending' : ''}`}
-                      style={isAi ? { border: '2px dashed #3b82f6', backgroundColor: '#eff6ff' } : {}}
-                    >
-                      <div className="property-group-header-label" style={isAi ? { color: '#2563eb', fontWeight: 'bold' } : {}}>
-                        {item.propertyId ? (
-                          <>
-                            ✅ BIEN CRÉÉ{' '}
-                            <a
-                              href={`https://admin-locapay.vercel.app/properties/${item.propertyId}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="property-link"
-                            >
-                              #{item.propertyId}
-                            </a>
-                            {item.locationLabel}
-                          </>
-                        ) : isPending ? (
-                          <div className="property-group-header-suggestion" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
-                            <div className="suggestion-status">
-                              {activeSubmissions[item.key] ? (
-                                <div className="pending-indicator">
-                                  <span className="pending-icon">
-                                    {activeSubmissions[item.key].status === 'verifying' ? '🔍' : '📤'}
-                                  </span>
-                                  <span className="pending-text">
-                                    {activeSubmissions[item.key].status === 'verifying' ? 'Vérification...' : 'Creation...'}
-                                  </span>
-                                </div>
-                              ) : (
-                                item.isAutoSuggestion ? (
-                                  <span className="suggestion-label auto">🤖 DÉTECTION AUTO (#{item.key})</span>
+                  if (item?.type === 'date-header') {
+                    return (
+                      <div key={item.key || idx} className="date-header">
+                        <span>{item.label}</span>
+                      </div>
+                    );
+                  }
+                  if (item?.type === 'wrapper') {
+                    const isPending = !item.isCreated;
+                    const isAi = item.isAiSuggestion;
+                    return (
+                      <div
+                        key={item.key || idx}
+                        className={`property-group-wrapper ${item.isCreated ? 'created' : ''} ${isPending ? 'pending' : ''}`}
+                        style={isAi ? { border: '2px dashed #3b82f6', backgroundColor: '#eff6ff' } : {}}
+                      >
+                        <div className="property-group-header-label" style={isAi ? { color: '#2563eb', fontWeight: 'bold' } : {}}>
+                          {item.propertyId ? (
+                            <>
+                              ✅ BIEN CRÉÉ{' '}
+                              <a
+                                href={`https://admin-locapay.vercel.app/properties/${item.propertyId}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="property-link"
+                              >
+                                #{item.propertyId}
+                              </a>
+                              {item.locationLabel}
+                            </>
+                          ) : isPending ? (
+                            <div className="property-group-header-suggestion" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                              <div className="suggestion-status">
+                                {activeSubmissions[item.key] ? (
+                                  <div className="pending-indicator">
+                                    <span className="pending-icon">
+                                      {activeSubmissions[item.key].status === 'verifying' ? '🔍' : '📤'}
+                                    </span>
+                                    <span className="pending-text">
+                                      {activeSubmissions[item.key].status === 'verifying' ? 'Vérification...' : 'Creation...'}
+                                    </span>
+                                  </div>
                                 ) : (
-                                  <span className="suggestion-label ai">🧠 SUGGESTION IA (#{item.key})</span>
-                                )
+                                  item.isAutoSuggestion ? (
+                                    <span className="suggestion-label auto">🤖 DÉTECTION AUTO (#{item.key})</span>
+                                  ) : (
+                                    <span className="suggestion-label ai">🧠 SUGGESTION IA (#{item.key})</span>
+                                  )
+                                )}
+                              </div>
+
+                              {!activeSubmissions[item.key] && (
+                                <>
+                                  <button
+                                    className="btn-action btn-noise"
+                                    onClick={() => {
+                                      const groupMsgIds = messages.filter(m => m.property_group_id === item.key).map(m => m.id);
+                                      if (groupMsgIds.length > 0) {
+                                        handleManualAction('noise', groupMsgIds);
+                                      }
+                                    }}
+                                  >
+                                    🗑️ Ignorer
+                                  </button>
+                                  <button
+                                    className="btn-action btn-create-direct"
+                                    onClick={() => {
+                                      const groupMsgIds = messages.filter(m => m.property_group_id === item.key).map(m => m.id);
+                                      if (groupMsgIds.length > 0) {
+                                        handleManualAction('group', groupMsgIds);
+                                      }
+                                    }}
+                                  >
+                                    🚀 Créer un bien
+                                  </button>
+                                </>
                               )}
                             </div>
-
-                            {!activeSubmissions[item.key] && (
-                              <>
-                                <button
-                                  className="btn-action btn-noise"
-                                  onClick={() => {
-                                    const groupMsgIds = messages.filter(m => m.property_group_id === item.key).map(m => m.id);
-                                    if (groupMsgIds.length > 0) {
-                                      handleManualAction('noise', groupMsgIds);
-                                    }
-                                  }}
-                                >
-                                  🗑️ Ignorer
-                                </button>
-                                <button
-                                  className="btn-action btn-create-direct"
-                                  onClick={() => {
-                                    const groupMsgIds = messages.filter(m => m.property_group_id === item.key).map(m => m.id);
-                                    if (groupMsgIds.length > 0) {
-                                      handleManualAction('group', groupMsgIds);
-                                    }
-                                  }}
-                                >
-                                  🚀 Créer un bien
-                                </button>
-                              </>
-                            )}
-                          </div>
-                        ) : item.label}
+                          ) : item.label}
+                        </div>
+                        <div className="property-group-content">
+                          {item.children
+                            .sort((a, b) => {
+                              // 1. Priorité au texte SANS média (la description principale)
+                              const isTextA = a.type === 'text' && !a.hasMedia;
+                              const isTextB = b.type === 'text' && !b.hasMedia;
+                              if (isTextA && !isTextB) return -1;
+                              if (!isTextA && isTextB) return 1;
+                              // 2. Sinon ordre chronologique croissant (du plus vieux au plus récent)
+                              return a.timestamp - b.timestamp;
+                            })
+                            .map((child, cIdx) => (
+                              <React.Fragment key={cIdx}>{child.element}</React.Fragment>
+                            ))
+                          }
+                        </div>
                       </div>
-                      <div className="property-group-content">
-                        {item.children
-                          .sort((a, b) => {
-                            // 1. Priorité au texte SANS média (la description principale)
-                            const isTextA = a.type === 'text' && !a.hasMedia;
-                            const isTextB = b.type === 'text' && !b.hasMedia;
-                            if (isTextA && !isTextB) return -1;
-                            if (!isTextA && isTextB) return 1;
-                            // 2. Sinon ordre chronologique croissant (du plus vieux au plus récent)
-                            return a.timestamp - b.timestamp;
-                          })
-                          .map((child, cIdx) => (
-                            <React.Fragment key={cIdx}>{child.element}</React.Fragment>
-                          ))
-                        }
-                      </div>
-                    </div>
-                  );
-                }
-                return item;
-              })
-            })()
-            }
+                    );
+                  }
+                  return item;
+                })
+              })()
+              }
             </div>
 
             {/* Bouton nouveaux messages */}
