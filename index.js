@@ -475,7 +475,7 @@ Texte à analyser : "${description}"
 
             app.get('/api/chats', async (req, res) => {
                 try {
-                    // Compte UNIQUEMENT les messages récents (dernières 48h) qui n'ont pas encore été catégorisés ou groupés
+                    // Compte UNIQUEMENT les messages "bruts" qui n'ont pas encore été catégorisés ou groupés
                     const query = `
                         WITH pending_counts AS (
                             SELECT 
@@ -485,7 +485,6 @@ Texte à analyser : "${description}"
                             WHERE m.real_property_id IS NULL 
                             AND m.property_group_id IS NULL
                             AND m.is_from_me = FALSE
-                            AND m.timestamp > EXTRACT(EPOCH FROM (NOW() - INTERVAL '48 hours'))
                             AND COALESCE(m.message_type, '') NOT IN ('audio', 'ptt', 'sticker')
                             GROUP BY m.chat_id
                         )
