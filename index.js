@@ -381,7 +381,7 @@ Texte à analyser : "${description}"
                             SELECT DISTINCT property_group_id
                             FROM messages
                             WHERE property_group_id IS NOT NULL
-                            AND body ILIKE ANY(ARRAY['%vendre%', '%vente%', '%parcelle%', '%terrain%', '%titre foncier%', '% tf %', '% tf'])
+                            AND body ILIKE ANY(ARRAY['%vendre%', '%vente%', '%parcelle%', '%terrain%', '%titre foncier%', '% tf %', '% tf', '%domaine%'])
                         ),
                         unread_counts AS (
                             SELECT m.chat_id, COUNT(*) as unread_count
@@ -390,7 +390,7 @@ Texte à analyser : "${description}"
                             WHERE m.is_analyzed = FALSE
                             AND m.is_from_me = FALSE
                             AND bg.property_group_id IS NULL
-                            AND (m.body IS NULL OR NOT (m.body ILIKE ANY(ARRAY['%vendre%', '%vente%', '%parcelle%', '%terrain%', '%titre foncier%', '% tf %', '% tf'])))
+                            AND (m.body IS NULL OR NOT (m.body ILIKE ANY(ARRAY['%vendre%', '%vente%', '%parcelle%', '%terrain%', '%titre foncier%', '% tf %', '% tf', '%domaine%'])))
                             AND (COALESCE(m.body, '') != '' OR m.has_media = TRUE)
                             AND COALESCE(m.message_type, '') NOT IN ('audio', 'ptt', 'sticker')
                             GROUP BY m.chat_id
@@ -423,9 +423,9 @@ Texte à analyser : "${description}"
                             WHERE chat_id = $1
                         ),
                         banned_groups AS (
-                            SELECT DISTINCT property_group_id 
-                            FROM raw_msgs 
-                            WHERE body ~* 'vendre|vente|parcelle|terrain|titre foncier| tf'
+                            SELECT DISTINCT property_group_id
+                            FROM raw_msgs
+                            WHERE body ~* 'vendre|vente|parcelle|terrain|titre foncier| tf|domaine'
                             AND property_group_id IS NOT NULL
                         ),
                         filtered_msgs_raw AS (
@@ -433,7 +433,7 @@ Texte à analyser : "${description}"
                             LEFT JOIN banned_groups bg ON r.property_group_id = bg.property_group_id
                             WHERE (r.is_analyzed = FALSE OR r.real_property_id IS NOT NULL)
                             AND bg.property_group_id IS NULL -- Exclure TOUS les membres d'un groupe contenant 'vendre'
-                            AND (r.body IS NULL OR r.body !~* 'vendre|vente|parcelle|terrain|titre foncier| tf') -- Vérif individuelle au cas où (message non groupé)
+                            AND (r.body IS NULL OR r.body !~* 'vendre|vente|parcelle|terrain|titre foncier| tf|domaine') -- Vérif individuelle au cas où (message non groupé)
                             AND ( (r.body IS NOT NULL AND TRIM(r.body) != '') OR r.has_media = TRUE )
                             AND r.message_type NOT IN ('audio', 'ptt', 'sticker')
                         ),
@@ -616,7 +616,7 @@ Texte à analyser : "${description}"
                     const finalDescription = texts.join('\n\n').trim() || '(Annonce immobilière WhatsApp - Sans texte)';
 
                     // FILTRES DE SÉCURITÉ
-                    const forbiddenKeywords = ['vendre', 'vente', 'parcelle', 'terrain', 'titre foncier', ' tf ', ' tf\n'];
+                    const forbiddenKeywords = ['vendre', 'vente', 'parcelle', 'terrain', 'titre foncier', ' tf ', ' tf\n', 'domaine'];
                     const descriptionLower = finalDescription.toLowerCase();
                     const foundKeyword = forbiddenKeywords.find(kw => descriptionLower.includes(kw));
 
