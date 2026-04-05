@@ -226,14 +226,14 @@ Texte à analyser : "${description}"
             // 🗑️ Grande Purge massive des messages parasites (Ventes, Courts, Orphelins)
             app.post('/api/chats/purge-noise', async (req, res) => {
                 try {
-                    // 1. Purge des mots interdits et messages trop courts (< 20 chars sans média)
+                    // 1. Purge des mots interdits et TOUT ce qui est trop court (< 20 chars, même avec photo)
                     const res1 = await db.query(`
                         UPDATE messages 
                         SET property_group_id = 'noise', analysis_error = NULL
                         WHERE real_property_id IS NULL AND property_group_id IS NULL
                         AND (
                             body ~* 'vendre|vente|parcelle|terrain|vendeurs|titre\\sfoncier|\\stf\\s|\\stf\n|domaine|\\stf$|opportunite|recherche'
-                            OR (LENGTH(COALESCE(body, '')) < 20 AND has_media = FALSE)
+                            OR (LENGTH(COALESCE(body, '')) < 20)
                         )
                     `);
 

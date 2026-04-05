@@ -1467,7 +1467,7 @@ function App() {
                       </div>
                     );
                   })()}
-                  <button
+                  {/* <button
                     className="auto-analyze-btn"
                     title="Analyse automatique de l'historique"
                     onClick={async () => {
@@ -1509,7 +1509,7 @@ function App() {
                     onClick={() => setShowCreatedOnly(!showCreatedOnly)}
                   >
                     {showCreatedOnly ? '📂 Voir à traiter' : '✅ Voir créés'}
-                  </button>
+                  </button> */}
                 </div>
               </div>
             </header>
