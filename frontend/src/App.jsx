@@ -1432,6 +1432,22 @@ function App() {
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
                     {isLoadingMore ? 'Chargement...' : 'En ligne'}
                   </div>
+                  {(() => {
+                    const pendingCount = groupedContent.filter(item => item.type === 'wrapper' && !item.isCreated).length;
+                    if (pendingCount === 0) return null;
+                    return (
+                      <div style={{ 
+                        backgroundColor: '#3b82f6', 
+                        color: 'white', 
+                        padding: '4px 8px', 
+                        borderRadius: '12px', 
+                        fontSize: '11px', 
+                        fontWeight: '600' 
+                      }}>
+                        📂 {pendingCount} détectés
+                      </div>
+                    );
+                  })()}
                   <button
                     className="auto-analyze-btn"
                     title="Analyse automatique de l'historique"
