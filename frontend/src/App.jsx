@@ -134,7 +134,9 @@ function App() {
   // ─── NOUVEAUX ÉTATS (RECHERCHE & BIENS) ──────────────────────────────────────
   const [viewMode, setViewMode] = useState('chats'); // 'chats', 'properties' ou 'rejected'
   const [rejectedGroups, setRejectedGroups] = useState({ total: 0, by_error: {}, groups: [] });
+  const [pendingGroups, setPendingGroups] = useState({ total: 0, groups: [] });
   const [isLoadingRejected, setIsLoadingRejected] = useState(false);
+  const [isLoadingPending, setIsLoadingPending] = useState(false);
   const [expandedErrors, setExpandedErrors] = useState({});
   const [searchTerm, setSearchTerm] = useState('');
   const [searchResults, setSearchResults] = useState([]);
@@ -254,9 +256,24 @@ function App() {
     finally { setIsLoadingRejected(false); }
   }, [viewMode]);
 
+  const fetchPendingGroups = useCallback(async () => {
+    if (viewMode !== 'pending') return;
+    setIsLoadingPending(true);
+    try {
+      const res = await fetch('/api/pending-groups');
+      const data = await res.json();
+      setPendingGroups(data);
+    } catch (e) { console.error('fetchPendingGroups error', e); }
+    finally { setIsLoadingPending(false); }
+  }, [viewMode]);
+
   useEffect(() => {
     fetchRejectedGroups();
   }, [fetchRejectedGroups]);
+
+  useEffect(() => {
+    fetchPendingGroups();
+  }, [fetchPendingGroups]);
 
   const handleRetryGroup = async (propertyGroupId) => {
     try {
@@ -1104,6 +1121,13 @@ function App() {
               🏠
             </button>
             <button
+              className={`view-toggle ${viewMode === 'pending' ? 'active' : ''}`}
+              onClick={() => { setViewMode('pending'); setSearchTerm(''); }}
+              title="Annonces détectées (Attentes)"
+            >
+              📂
+            </button>
+            <button
               className={`view-toggle ${viewMode === 'rejected' ? 'active' : ''}`}
               onClick={() => { setViewMode('rejected'); setSearchTerm(''); }}
               title="Groupes rejetés"
@@ -1253,6 +1277,73 @@ function App() {
                     </div>
                   </div>
                 ))
+              )}
+            </div>
+          </div>
+        ) : viewMode === 'pending' ? (
+          <div className="rejected-dashboard">
+            <header className="chat-header properties-header">
+              <div className="chat-header-info">
+                <div className="name">Annonces Détectées</div>
+                <div className="subtitle">{pendingGroups.total} groupes en attente de validation</div>
+              </div>
+              <button className="refresh-fab" onClick={fetchPendingGroups} title="Actualiser">
+                🔄
+              </button>
+            </header>
+
+            <div className="messages-container rejected-list">
+              {isLoadingPending ? (
+                <div className="loading-state">Chargement des attentes...</div>
+              ) : pendingGroups.total === 0 ? (
+                <div className="empty-state">
+                  <h1>Aucune détection en attente</h1>
+                  <p>Bravo ! Toutes les annonces ont été traitées.</p>
+                </div>
+              ) : (
+                <div className="pending-groups-list" style={{ padding: '20px' }}>
+                  {pendingGroups.groups.map(group => (
+                    <div key={group.property_group_id} className="rejected-group-item pending-item" style={{ borderLeft: '4px solid #3b82f6' }}>
+                      <div className="rejected-group-header">
+                        <span className="rejected-group-chat" style={{ color: '#2563eb' }}>{group.chat_name || group.chat_id}</span>
+                        <span className="rejected-group-count">{group.message_count} msg • {new Date(group.first_message_at * 1000).toLocaleString()}</span>
+                      </div>
+                      {group.description && (
+                        <div className="rejected-group-description" style={{ maxHeight: '150px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {group.description}
+                        </div>
+                      )}
+                      <div className="rejected-group-actions">
+                        <button
+                          className="btn-create-direct"
+                          onClick={async () => {
+                            try {
+                              setToast({ message: "🚀 Création du bien...", type: 'success' });
+                              const res = await fetch(`/api/messages/submit-group/${encodeURIComponent(group.property_group_id)}`, { method: 'POST' });
+                              const data = await res.json();
+                              setToast({ message: "✅ Bien créé avec succès", type: 'success' });
+                              fetchPendingGroups();
+                            } catch (e) {
+                              setToast({ message: "❌ Échec de création", type: 'error' });
+                            }
+                          }}
+                        >
+                          🚀 Créer le BIEN
+                        </button>
+                        <button
+                          className="btn-ignore"
+                          onClick={async () => {
+                            if (!window.confirm("Ignorer cette annonce ?")) return;
+                            await handleIgnoreGroup(group.property_group_id);
+                            fetchPendingGroups();
+                          }}
+                        >
+                          🗑️ Ignorer
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
           </div>

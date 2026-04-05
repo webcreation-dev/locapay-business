@@ -405,6 +405,38 @@ Texte à analyser : "${description}"
                 }
             });
 
+            // 📊 API pour les groupes EN ATTENTE (ceux qui n'ont ni erreur, ni noise, ni bien créé)
+            app.get('/api/pending-groups', async (req, res) => {
+                try {
+                    const { rows } = await db.query(`
+                        SELECT
+                            m.property_group_id,
+                            m.chat_id,
+                            c.chat_name,
+                            MIN(m.timestamp) as first_message_at,
+                            COUNT(*) as message_count,
+                            MAX(CASE WHEN m.body IS NOT NULL AND LENGTH(m.body) > 50 THEN LEFT(m.body, 1000) END) as description,
+                            ARRAY_AGG(DISTINCT m.id) as message_ids
+                        FROM messages m
+                        LEFT JOIN chats c ON m.chat_id = c.whatsapp_chat_id
+                        WHERE m.property_group_id IS NOT NULL 
+                        AND m.property_group_id != 'noise'
+                        AND m.property_group_id NOT LIKE 'real_prop_%'
+                        AND m.real_property_id IS NULL
+                        AND m.analysis_error IS NULL
+                        GROUP BY m.property_group_id, m.chat_id, c.chat_name
+                        ORDER BY MIN(m.timestamp) DESC
+                    `);
+
+                    res.json({
+                        total: rows.length,
+                        groups: rows
+                    });
+                } catch (e) {
+                    res.status(500).json({ error: e.message });
+                }
+            });
+
             // 🗑️ Ignorer en masse par message d'erreur
             app.post('/api/rejected-groups/clear-by-error', async (req, res) => {
                 const { errorLabel } = req.body;
@@ -443,7 +475,7 @@ Texte à analyser : "${description}"
 
             app.get('/api/chats', async (req, res) => {
                 try {
-                    // Compte le nombre de MESSAGES physiques qui ne sont pas du bruit et pas encore validés
+                    // Compte UNIQUEMENT les messages "bruts" qui n'ont pas encore été catégorisés ou groupés
                     const query = `
                         WITH pending_counts AS (
                             SELECT 
@@ -451,7 +483,7 @@ Texte à analyser : "${description}"
                                 COUNT(*) as unread_count
                             FROM messages m
                             WHERE m.real_property_id IS NULL 
-                            AND (m.property_group_id IS NULL OR m.property_group_id != 'noise')
+                            AND m.property_group_id IS NULL
                             AND m.is_from_me = FALSE
                             AND COALESCE(m.message_type, '') NOT IN ('audio', 'ptt', 'sticker')
                             GROUP BY m.chat_id
