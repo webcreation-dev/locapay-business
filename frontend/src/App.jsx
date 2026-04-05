@@ -1434,15 +1434,15 @@ function App() {
                   </div>
                   {(() => {
                     const pendingCount = groupedContent.filter(item => item.type === 'wrapper' && !item.isCreated).length;
-                    if (pendingCount === 0) return null;
                     return (
                       <div style={{ 
-                        backgroundColor: '#3b82f6', 
+                        backgroundColor: pendingCount === 0 ? '#667781' : '#3b82f6', 
                         color: 'white', 
                         padding: '4px 8px', 
                         borderRadius: '12px', 
                         fontSize: '11px', 
-                        fontWeight: '600' 
+                        fontWeight: '600',
+                        opacity: pendingCount === 0 ? 0.6 : 1
                       }}>
                         📂 {pendingCount} détectés
                       </div>
