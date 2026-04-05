@@ -223,22 +223,53 @@ Texte à analyser : "${description}"
                 }
             }
 
-            // 🗑️ Grande Purge des messages orphelins (Bruit et Ventes)
+            // 🗑️ Grande Purge massive des messages parasites (Ventes, Courts, Orphelins)
             app.post('/api/chats/purge-noise', async (req, res) => {
                 try {
-                    const result = await db.query(`
+                    // 1. Purge des mots interdits et messages trop courts (< 20 chars sans média)
+                    const res1 = await db.query(`
                         UPDATE messages 
-                        SET property_group_id = 'noise', 
-                            analysis_error = NULL
-                        WHERE real_property_id IS NULL 
-                        AND property_group_id IS NULL
+                        SET property_group_id = 'noise', analysis_error = NULL
+                        WHERE real_property_id IS NULL AND property_group_id IS NULL
                         AND (
                             body ~* 'vendre|vente|parcelle|terrain|vendeurs|titre\\sfoncier|\\stf\\s|\\stf\n|domaine|\\stf$|opportunite|recherche'
-                            OR
-                            (LENGTH(COALESCE(body, '')) < 20)
+                            OR (LENGTH(COALESCE(body, '')) < 20 AND has_media = FALSE)
                         )
                     `);
-                    res.json({ success: true, message: `${result.rowCount} messages nettoyés.` });
+
+                    // 2. Purge avancée des textes orphelins (On ne garde que le titre collé à l'image)
+                    const res2 = await db.query(`
+                        UPDATE messages
+                        SET property_group_id = 'noise', analysis_error = NULL
+                        WHERE id IN (
+                            WITH msg_groups AS (
+                                SELECT id, chat_id, has_media, rn,
+                                    MIN(CASE WHEN has_media = TRUE THEN rn END) OVER (
+                                        PARTITION BY chat_id ORDER BY rn ASC 
+                                        ROWS BETWEEN 1 FOLLOWING AND UNBOUNDED FOLLOWING
+                                    ) as next_media_rn
+                                FROM (
+                                    SELECT id, chat_id, has_media,
+                                           ROW_NUMBER() OVER (PARTITION BY chat_id ORDER BY timestamp ASC, id ASC) as rn
+                                    FROM messages
+                                    WHERE real_property_id IS NULL AND property_group_id IS NULL
+                                ) t
+                            ),
+                            last_text_check AS (
+                                SELECT id, has_media, rn,
+                                    MAX(CASE WHEN has_media = FALSE THEN rn END) OVER (
+                                        PARTITION BY chat_id, next_media_rn
+                                    ) as last_text_rn
+                                FROM msg_groups
+                                WHERE next_media_rn IS NOT NULL
+                            )
+                            SELECT id FROM last_text_check
+                            WHERE has_media = FALSE AND rn < last_text_rn
+                        )
+                    `);
+
+                    const total = (res1.rowCount || 0) + (res2.rowCount || 0);
+                    res.json({ success: true, message: `${total} messages nettoyés au total.` });
                 } catch (e) {
                     res.status(500).json({ error: e.message });
                 }
