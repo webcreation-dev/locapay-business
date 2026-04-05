@@ -269,7 +269,6 @@ Texte à analyser : "${description}"
                     `);
 
                     // 3. Purge des images orphelines (images sans texte descriptif dans les 10 min précédentes)
-                    // 10 minutes = 600000 millisecondes (timestamp est en ms)
                     const res3 = await db.query(`
                         UPDATE messages
                         SET property_group_id = 'noise', analysis_error = NULL
@@ -285,7 +284,7 @@ Texte à analyser : "${description}"
                                 AND txt.has_media = FALSE
                                 AND LENGTH(txt.body) > 100
                                 AND txt.timestamp < m.timestamp
-                                AND txt.timestamp >= m.timestamp - 600000
+                                AND txt.timestamp >= m.timestamp - 600
                             )
                         )
                     `);
@@ -306,7 +305,7 @@ Texte à analyser : "${description}"
                                 WHERE img.chat_id = m.chat_id
                                 AND img.has_media = TRUE
                                 AND img.timestamp > m.timestamp
-                                AND img.timestamp <= m.timestamp + 600000
+                                AND img.timestamp <= m.timestamp + 600
                             )
                         )
                     `);
@@ -580,12 +579,13 @@ Texte à analyser : "${description}"
                     // Compte UNIQUEMENT les messages "bruts" qui n'ont pas encore été catégorisés ou groupés
                     const query = `
                         WITH pending_counts AS (
-                            SELECT 
-                                m.chat_id, 
+                            SELECT
+                                m.chat_id,
                                 COUNT(*) as unread_count
                             FROM messages m
-                            WHERE m.real_property_id IS NULL 
+                            WHERE m.real_property_id IS NULL
                             AND m.property_group_id IS NULL
+                            AND m.is_analyzed = FALSE
                             AND m.is_from_me = FALSE
                             AND COALESCE(m.message_type, '') NOT IN ('audio', 'ptt', 'sticker')
                             -- Ne pas compter les messages trop courts sans média (Bruit)
