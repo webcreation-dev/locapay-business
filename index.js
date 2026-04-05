@@ -416,30 +416,22 @@ Texte à analyser : "${description}"
 
             app.get('/api/chats', async (req, res) => {
                 try {
-                    // Requête optimisée : calcul du unread_count via GROUP BY au lieu de sous-requêtes corrélées
+                    // Compte le nombre de MESSAGES physiques qui ne sont pas du bruit et pas encore validés
                     const query = `
-                        WITH banned_groups AS (
-                            SELECT DISTINCT property_group_id
-                            FROM messages
-                            WHERE property_group_id IS NOT NULL
-                            AND body ILIKE ANY(ARRAY['%vendre%', '%vente%', '%parcelle%', '%terrain%', '%titre foncier%', '% tf %', '% tf', '%domaine%'])
-                        ),
-                        unread_counts AS (
-                            SELECT m.chat_id, COUNT(*) as unread_count
+                        WITH pending_counts AS (
+                            SELECT 
+                                m.chat_id, 
+                                COUNT(*) as unread_count
                             FROM messages m
-                            LEFT JOIN banned_groups bg ON m.property_group_id = bg.property_group_id
-                            WHERE m.is_analyzed = FALSE
+                            WHERE m.real_property_id IS NULL 
+                            AND (m.property_group_id IS NULL OR m.property_group_id != 'noise')
                             AND m.is_from_me = FALSE
-                            AND bg.property_group_id IS NULL
-                            AND (m.body IS NULL OR NOT (m.body ILIKE ANY(ARRAY['%vendre%', '%vente%', '%parcelle%', '%terrain%', '%titre foncier%', '% tf %', '% tf', '%domaine%'])))
-                            AND (COALESCE(m.body, '') != '' OR m.has_media = TRUE)
                             AND COALESCE(m.message_type, '') NOT IN ('audio', 'ptt', 'sticker')
                             GROUP BY m.chat_id
-                            HAVING COUNT(*) > 0
                         )
-                        SELECT c.*, COALESCE(u.unread_count, 0) as unread_count
+                        SELECT c.*, COALESCE(p.unread_count, 0) as unread_count
                         FROM chats c
-                        INNER JOIN unread_counts u ON c.whatsapp_chat_id = u.chat_id
+                        INNER JOIN pending_counts p ON c.whatsapp_chat_id = p.chat_id
                         WHERE c.whatsapp_chat_id != 'status@broadcast'
                         ORDER BY c.updated_at DESC
                     `;
