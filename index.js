@@ -130,6 +130,32 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
                 });
             }
 
+            // --- NORMALISATION DES CARACTÈRES SPÉCIAUX (Bolds, Italics Unicode) ---
+            function normalizeStyledText(text) {
+                if (!text) return "";
+                // 1. Gérer les caractères mathématiques stylisés (gras, italique, etc.)
+                // On convertit les blocs Unicode 1D400-1D7FF vers les caractères A-Z, a-z, 0-9
+                const result = Array.from(text).map(char => {
+                    const cp = char.codePointAt(0);
+                    if (cp >= 0x1D400 && cp <= 0x1D7FF) {
+                        // Majuscules (Bold, Italic, Sans, etc.)
+                        if (cp >= 0x1D400 && cp <= 0x1D419) return String.fromCodePoint(cp - 0x1D400 + 0x41); // Bold A
+                        if (cp >= 0x1D41A && cp <= 0x1D433) return String.fromCodePoint(cp - 0x1D41A + 0x61); // Bold a
+                        if (cp >= 0x1D434 && cp <= 0x1D44D) return String.fromCodePoint(cp - 0x1D434 + 0x41); // Italic A
+                        if (cp >= 0x1D44E && cp <= 0x1D467) return String.fromCodePoint(cp - 0x1D44E + 0x61); // Italic a
+                        if (cp >= 0x1D468 && cp <= 0x1D481) return String.fromCodePoint(cp - 0x1D468 + 0x41); // Bold Italic A
+                        if (cp >= 0x1D482 && cp <= 0x1D49B) return String.fromCodePoint(cp - 0x1D482 + 0x61); // Bold Italic a
+                        if (cp >= 0x1D49C && cp <= 0x1D4B5) return String.fromCodePoint(cp - 0x1D49C + 0x41); // Script A
+                        // Chiffres Bold
+                        if (cp >= 0x1D7CE && cp <= 0x1D7D7) return String.fromCodePoint(cp - 0x1D7CE + 0x30);
+                    }
+                    return char;
+                }).join('');
+                
+                // 2. Normaliser les accents et mettre en minuscule
+                return result.normalize('NFKD').replace(/[\u0300-\u036f]/g, "").toLowerCase();
+            }
+
             // --- FONCTION D'EXTRACTION IA MISTRAL ---
             async function extractPropertyDataWithAI(description) {
                 const MISTRAL_API_KEY = process.env.MISTRAL_API_KEY;
@@ -209,8 +235,8 @@ Texte à analyser : "${description}"
             };
 
             const internalAnalyzeChat = async (chatId) => {
-                // Mots interdits (ventes, terrains, etc.)
-                const FORBIDDEN_REGEX = 'vendre|vente|parcelle|terrain|titre\\sfoncier|\\stf\\s|\\stf\n|domaine|\\stf$';
+                // Mots interdits (ventes, terrains, recherches, etc.)
+                const FORBIDDEN_REGEX = 'vendre|vente|parcelle|terrain|titre\\sfoncier|\\stf\\s|\\stf\n|domaine|\\stf$|opportunite|recherche';
                 const forbiddenPattern = new RegExp(FORBIDDEN_REGEX.replace(/\\/g, '\\'), 'i');
 
                 // 1. Marquer comme noise tous les messages avec mots interdits et EFFACER les erreurs
@@ -238,10 +264,11 @@ Texte à analyser : "${description}"
 
                 for (let msg of msgs) {
                     const sender = msg.sender_id;
+                    const normalizedBody = normalizeStyledText(msg.body);
 
-                    // Skip si contient des mots interdits (double vérification)
-                    if (msg.body && forbiddenPattern.test(msg.body)) {
-                        await db.query("UPDATE messages SET property_group_id = 'noise' WHERE id = $1", [msg.id]);
+                    // Skip si contient des mots interdits (double vérification après normalisation)
+                    if (normalizedBody && forbiddenPattern.test(normalizedBody)) {
+                        await db.query("UPDATE messages SET property_group_id = 'noise', analysis_error = NULL WHERE id = $1", [msg.id]);
                         inGroupingModeBySender[sender] = false;
                         parentMsgBySender[sender] = null;
                         continue;
@@ -338,7 +365,7 @@ Texte à analyser : "${description}"
                         AND m.property_group_id IS NOT NULL
                         AND m.property_group_id != 'noise'
                         AND m.real_property_id IS NULL
-                        AND NOT (m.body ~* 'vendre|vente|parcelle|terrain|titre\\sfoncier|\\stf\\s|\\stf\n|domaine|\\stf$')
+                        AND NOT (m.body ~* 'vendre|vente|parcelle|terrain|titre\\sfoncier|\\stf\\s|\\stf\n|domaine|\\stf$|opportunite|recherche')
                         GROUP BY m.property_group_id, m.chat_id, c.chat_name, m.analysis_error
                         ORDER BY m.analysis_error, MIN(m.timestamp) DESC
                     `);
@@ -648,10 +675,10 @@ Texte à analyser : "${description}"
 
                     const finalDescription = texts.join('\n\n').trim() || '(Annonce immobilière WhatsApp - Sans texte)';
 
-                    // FILTRES DE SÉCURITÉ
-                    const forbiddenKeywords = ['vendre', 'vente', 'parcelle', 'terrain', 'titre foncier', ' tf ', ' tf\n', 'domaine'];
-                    const descriptionLower = finalDescription.toLowerCase();
-                    const foundKeyword = forbiddenKeywords.find(kw => descriptionLower.includes(kw));
+                    // FILTRES DE SÉCURITÉ (avec normalisation)
+                    const forbiddenKeywords = ['vendre', 'vente', 'parcelle', 'terrain', 'titre foncier', ' tf ', ' tf\n', 'domaine', 'opportunite', 'recherche'];
+                    const descriptionNormalized = normalizeStyledText(finalDescription);
+                    const foundKeyword = forbiddenKeywords.find(kw => descriptionNormalized.includes(kw));
 
                     if (foundKeyword) {
                         // Marquer comme noise directement et effacer l'erreur pour qu'il disparaisse des rejets
