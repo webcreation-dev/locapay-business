@@ -245,7 +245,7 @@ Texte à analyser : "${description}"
                             WITH msg_groups AS (
                                 SELECT id, chat_id, has_media, rn,
                                     MIN(CASE WHEN has_media = TRUE THEN rn END) OVER (
-                                        PARTITION BY chat_id ORDER BY rn ASC 
+                                        PARTITION BY chat_id ORDER BY rn ASC
                                         ROWS BETWEEN 1 FOLLOWING AND UNBOUNDED FOLLOWING
                                     ) as next_media_rn
                                 FROM (
@@ -268,8 +268,50 @@ Texte à analyser : "${description}"
                         )
                     `);
 
-                    const total = (res1.rowCount || 0) + (res2.rowCount || 0);
-                    res.json({ success: true, message: `${total} messages nettoyés au total.` });
+                    // 3. Purge des images orphelines (images sans texte descriptif dans les 10 min précédentes)
+                    const res3 = await db.query(`
+                        UPDATE messages
+                        SET property_group_id = 'noise', analysis_error = NULL
+                        WHERE id IN (
+                            SELECT m.id
+                            FROM messages m
+                            WHERE m.has_media = TRUE
+                            AND m.property_group_id IS NULL
+                            AND m.real_property_id IS NULL
+                            AND NOT EXISTS (
+                                SELECT 1 FROM messages txt
+                                WHERE txt.chat_id = m.chat_id
+                                AND txt.has_media = FALSE
+                                AND LENGTH(txt.body) > 100
+                                AND txt.timestamp < m.timestamp
+                                AND txt.timestamp >= m.timestamp - INTERVAL '10 minutes'
+                            )
+                        )
+                    `);
+
+                    // 4. Purge des textes orphelins (descriptions sans images dans les 10 min suivantes)
+                    const res4 = await db.query(`
+                        UPDATE messages
+                        SET property_group_id = 'noise', analysis_error = NULL
+                        WHERE id IN (
+                            SELECT m.id
+                            FROM messages m
+                            WHERE m.has_media = FALSE
+                            AND LENGTH(m.body) > 100
+                            AND m.property_group_id IS NULL
+                            AND m.real_property_id IS NULL
+                            AND NOT EXISTS (
+                                SELECT 1 FROM messages img
+                                WHERE img.chat_id = m.chat_id
+                                AND img.has_media = TRUE
+                                AND img.timestamp > m.timestamp
+                                AND img.timestamp <= m.timestamp + INTERVAL '10 minutes'
+                            )
+                        )
+                    `);
+
+                    const total = (res1.rowCount || 0) + (res2.rowCount || 0) + (res3.rowCount || 0) + (res4.rowCount || 0);
+                    res.json({ success: true, message: `${total} messages nettoyés au total (${res3.rowCount || 0} images orphelines, ${res4.rowCount || 0} textes orphelins).` });
                 } catch (e) {
                     res.status(500).json({ error: e.message });
                 }

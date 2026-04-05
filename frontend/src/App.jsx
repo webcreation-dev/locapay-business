@@ -1463,7 +1463,7 @@ function App() {
                         fontWeight: '600',
                         opacity: pendingCount === 0 ? 0.6 : 1
                       }}>
-                        📂 {pendingCount} détectés
+                        📂 {pendingCount} groupe détectés
                       </div>
                     );
                   })()}
