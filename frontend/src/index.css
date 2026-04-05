@@ -1378,3 +1378,148 @@ body {
     gap: 8px;
     font-size: 12px;
 }
+
+/* ─── REJECTED GROUPS VIEW ─────────────────────────────────────────────────── */
+.rejected-dashboard {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    background: var(--bg-chat);
+}
+
+.rejected-list {
+    padding: 15px;
+    overflow-y: auto;
+}
+
+.error-category {
+    background: var(--bg-sidebar);
+    border-radius: 10px;
+    margin-bottom: 12px;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.error-category-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 16px;
+    cursor: pointer;
+    background: #fff5f5;
+    border-bottom: 1px solid var(--border-lighter);
+    transition: background 0.2s;
+}
+
+.error-category-header:hover {
+    background: #ffecec;
+}
+
+.error-toggle {
+    font-size: 10px;
+    color: var(--text-muted);
+    width: 16px;
+}
+
+.error-message {
+    flex: 1;
+    font-size: 13px;
+    color: #c53030;
+    font-weight: 600;
+}
+
+.error-count {
+    background: #fed7d7;
+    color: #c53030;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.error-groups-list {
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.rejected-group-item {
+    background: #fafafa;
+    border: 1px solid var(--border-lighter);
+    border-radius: 8px;
+    padding: 12px;
+}
+
+.rejected-group-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.rejected-group-chat {
+    font-weight: 600;
+    font-size: 12px;
+    color: var(--text-main);
+}
+
+.rejected-group-count {
+    font-size: 11px;
+    color: var(--text-muted);
+    background: var(--hover-bg);
+    padding: 2px 8px;
+    border-radius: 10px;
+}
+
+.rejected-group-description {
+    font-size: 12px;
+    color: var(--text-muted);
+    line-height: 1.5;
+    margin-bottom: 10px;
+    padding: 8px;
+    background: #fff;
+    border-radius: 6px;
+    border-left: 3px solid #e9edef;
+    max-height: 100px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+}
+
+.rejected-group-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+.btn-retry, .btn-ignore {
+    padding: 6px 12px;
+    border-radius: 16px;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+    transition: all 0.2s;
+}
+
+.btn-retry {
+    background: #e6fffa;
+    color: #00a884;
+}
+
+.btn-retry:hover {
+    background: #00a884;
+    color: white;
+}
+
+.btn-ignore {
+    background: #f5f5f5;
+    color: #666;
+}
+
+.btn-ignore:hover {
+    background: #e53e3e;
+    color: white;
+}

@@ -301,6 +301,77 @@ Texte à analyser : "${description}"
             // Exposer pour usage dans ready
             app.set('runAutoGroupHeuristicAllChats', runAutoGroupHeuristicAllChats);
 
+            // 📊 API pour les groupes rejetés
+            app.get('/api/rejected-groups', async (req, res) => {
+                try {
+                    const { rows } = await db.query(`
+                        SELECT
+                            m.property_group_id,
+                            m.chat_id,
+                            c.name as chat_name,
+                            m.analysis_error,
+                            MIN(m.timestamp) as first_message_at,
+                            COUNT(*) as message_count,
+                            MAX(CASE WHEN m.body IS NOT NULL AND LENGTH(m.body) > 50 THEN LEFT(m.body, 300) END) as description,
+                            ARRAY_AGG(DISTINCT m.id) as message_ids
+                        FROM messages m
+                        LEFT JOIN chats c ON m.chat_id = c.whatsapp_chat_id
+                        WHERE m.analysis_error IS NOT NULL
+                        AND m.property_group_id IS NOT NULL
+                        AND m.real_property_id IS NULL
+                        GROUP BY m.property_group_id, m.chat_id, c.name, m.analysis_error
+                        ORDER BY m.analysis_error, MIN(m.timestamp) DESC
+                    `);
+
+                    // Grouper par type d'erreur
+                    const grouped = {};
+                    for (const row of rows) {
+                        const error = row.analysis_error;
+                        if (!grouped[error]) {
+                            grouped[error] = [];
+                        }
+                        grouped[error].push(row);
+                    }
+
+                    res.json({
+                        total: rows.length,
+                        by_error: grouped,
+                        groups: rows
+                    });
+                } catch (e) {
+                    res.status(500).json({ error: e.message });
+                }
+            });
+
+            // 🔄 Réinitialiser un groupe rejeté pour le retraiter
+            app.post('/api/rejected-groups/:propertyGroupId/retry', async (req, res) => {
+                try {
+                    const { propertyGroupId } = req.params;
+                    await db.query(`
+                        UPDATE messages
+                        SET analysis_error = NULL, submission_failed = FALSE
+                        WHERE property_group_id = $1
+                    `, [propertyGroupId]);
+                    res.json({ success: true, message: 'Groupe réinitialisé pour retraitement' });
+                } catch (e) {
+                    res.status(500).json({ error: e.message });
+                }
+            });
+
+            // 🗑️ Marquer un groupe rejeté comme noise (ignorer définitivement)
+            app.post('/api/rejected-groups/:propertyGroupId/ignore', async (req, res) => {
+                try {
+                    const { propertyGroupId } = req.params;
+                    await db.query(`
+                        UPDATE messages
+                        SET property_group_id = 'noise'
+                        WHERE property_group_id = $1
+                    `, [propertyGroupId]);
+                    res.json({ success: true, message: 'Groupe ignoré définitivement' });
+                } catch (e) {
+                    res.status(500).json({ error: e.message });
+                }
+            });
 
             app.get('/api/chats', async (req, res) => {
                 try {

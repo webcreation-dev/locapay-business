@@ -132,7 +132,10 @@ function App() {
   const [isGroupSelection, setIsGroupSelection] = useState(false);
 
   // ─── NOUVEAUX ÉTATS (RECHERCHE & BIENS) ──────────────────────────────────────
-  const [viewMode, setViewMode] = useState('chats'); // 'chats' ou 'properties'
+  const [viewMode, setViewMode] = useState('chats'); // 'chats', 'properties' ou 'rejected'
+  const [rejectedGroups, setRejectedGroups] = useState({ total: 0, by_error: {}, groups: [] });
+  const [isLoadingRejected, setIsLoadingRejected] = useState(false);
+  const [expandedErrors, setExpandedErrors] = useState({});
   const [searchTerm, setSearchTerm] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
@@ -238,6 +241,44 @@ function App() {
   useEffect(() => {
     fetchProperties();
   }, [fetchProperties]);
+
+  // ─── RÉCUPÉRATION DES GROUPES REJETÉS ─────────────────────────────────────────
+  const fetchRejectedGroups = useCallback(async () => {
+    if (viewMode !== 'rejected') return;
+    setIsLoadingRejected(true);
+    try {
+      const res = await fetch('/api/rejected-groups');
+      const data = await res.json();
+      setRejectedGroups(data);
+    } catch (e) { console.error('fetchRejectedGroups error', e); }
+    finally { setIsLoadingRejected(false); }
+  }, [viewMode]);
+
+  useEffect(() => {
+    fetchRejectedGroups();
+  }, [fetchRejectedGroups]);
+
+  const handleRetryGroup = async (propertyGroupId) => {
+    try {
+      const res = await fetch(`/api/rejected-groups/${encodeURIComponent(propertyGroupId)}/retry`, { method: 'POST' });
+      const data = await res.json();
+      setToast({ message: `✅ ${data.message}`, type: 'success' });
+      fetchRejectedGroups();
+    } catch (e) {
+      setToast({ message: `❌ Erreur: ${e.message}`, type: 'error' });
+    }
+  };
+
+  const handleIgnoreGroup = async (propertyGroupId) => {
+    try {
+      const res = await fetch(`/api/rejected-groups/${encodeURIComponent(propertyGroupId)}/ignore`, { method: 'POST' });
+      const data = await res.json();
+      setToast({ message: `✅ ${data.message}`, type: 'success' });
+      fetchRejectedGroups();
+    } catch (e) {
+      setToast({ message: `❌ Erreur: ${e.message}`, type: 'error' });
+    }
+  };
 
   // ─── POLLING MESSAGES (NOUVEAUX SEULEMENT) ───────────────────────────────────
   useEffect(() => {
@@ -1046,6 +1087,13 @@ function App() {
             >
               🏠
             </button>
+            <button
+              className={`view-toggle ${viewMode === 'rejected' ? 'active' : ''}`}
+              onClick={() => { setViewMode('rejected'); setSearchTerm(''); }}
+              title="Groupes rejetés"
+            >
+              ⚠️
+            </button>
           </div>
         </header>
 
@@ -1187,6 +1235,73 @@ function App() {
                         );
                       })()}
                     </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        ) : viewMode === 'rejected' ? (
+          <div className="rejected-dashboard">
+            <header className="chat-header properties-header">
+              <div className="chat-header-info">
+                <div className="name">Groupes Rejetés</div>
+                <div className="subtitle">{rejectedGroups.total} groupes avec erreurs</div>
+              </div>
+              <button className="refresh-fab" onClick={fetchRejectedGroups} title="Actualiser">
+                🔄
+              </button>
+            </header>
+
+            <div className="messages-container rejected-list">
+              {isLoadingRejected ? (
+                <div className="loading-state">Chargement des rejets...</div>
+              ) : rejectedGroups.total === 0 ? (
+                <div className="empty-state">
+                  <h1>Aucun groupe rejeté</h1>
+                  <p>Tous les groupes ont été traités avec succès.</p>
+                </div>
+              ) : (
+                Object.entries(rejectedGroups.by_error).map(([error, groups]) => (
+                  <div key={error} className="error-category">
+                    <div
+                      className="error-category-header"
+                      onClick={() => setExpandedErrors(prev => ({ ...prev, [error]: !prev[error] }))}
+                    >
+                      <span className="error-toggle">{expandedErrors[error] ? '▼' : '▶'}</span>
+                      <span className="error-message">{error}</span>
+                      <span className="error-count">{groups.length} groupes</span>
+                    </div>
+                    {expandedErrors[error] && (
+                      <div className="error-groups-list">
+                        {groups.map(group => (
+                          <div key={group.property_group_id} className="rejected-group-item">
+                            <div className="rejected-group-header">
+                              <span className="rejected-group-chat">{group.chat_name || group.chat_id}</span>
+                              <span className="rejected-group-count">{group.message_count} msg</span>
+                            </div>
+                            {group.description && (
+                              <div className="rejected-group-description">{group.description}</div>
+                            )}
+                            <div className="rejected-group-actions">
+                              <button
+                                className="btn-retry"
+                                onClick={() => handleRetryGroup(group.property_group_id)}
+                                title="Réessayer ce groupe"
+                              >
+                                🔄 Réessayer
+                              </button>
+                              <button
+                                className="btn-ignore"
+                                onClick={() => handleIgnoreGroup(group.property_group_id)}
+                                title="Ignorer définitivement"
+                              >
+                                🗑️ Ignorer
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 ))
               )}
