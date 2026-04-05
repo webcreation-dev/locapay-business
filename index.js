@@ -223,6 +223,27 @@ Texte à analyser : "${description}"
                 }
             }
 
+            // 🗑️ Grande Purge des messages orphelins (Bruit et Ventes)
+            app.post('/api/chats/purge-noise', async (req, res) => {
+                try {
+                    const result = await db.query(`
+                        UPDATE messages 
+                        SET property_group_id = 'noise', 
+                            analysis_error = NULL
+                        WHERE real_property_id IS NULL 
+                        AND property_group_id IS NULL
+                        AND (
+                            body ~* 'vendre|vente|parcelle|terrain|vendeurs|titre\\sfoncier|\\stf\\s|\\stf\n|domaine|\\stf$|opportunite|recherche'
+                            OR
+                            (LENGTH(COALESCE(body, '')) < 20)
+                        )
+                    `);
+                    res.json({ success: true, message: `${result.rowCount} messages nettoyés.` });
+                } catch (e) {
+                    res.status(500).json({ error: e.message });
+                }
+            });
+
             // 🤖 FONCTION DE BALAYAGE AUTO (HEURISTIQUE)
             const runAutoGroupHeuristicAllChats = async () => {
                 try {

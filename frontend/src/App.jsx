@@ -1074,6 +1074,25 @@ function App() {
               🔄
             </button>
             <button
+              className="global-action-btn"
+              style={{ backgroundColor: '#dc2626' }}
+              title="Grande Purge des Parasites (Ventes/Courts)"
+              onClick={async () => {
+                if (!window.confirm("Êtes-vous certain de vouloir archiver définitivement tous les messages trop courts et les annonces de vente ?")) return;
+                setToast({ message: "🧹 Grande Purge en cours...", type: 'success', persistent: true });
+                try {
+                  const res = await fetch('/api/chats/purge-noise', { method: 'POST' });
+                  const data = await res.json();
+                  setToast({ message: `✨ Nettoyage terminé : ${data.message}`, type: 'success' });
+                  fetchChats();
+                } catch (e) {
+                  setToast({ message: "❌ Échec de la purge", type: 'error' });
+                }
+              }}
+            >
+              🧹
+            </button>
+            <button
               className="global-action-btn submit"
               title="Soumettre tous les groupes"
               onClick={() => {
