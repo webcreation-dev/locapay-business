@@ -308,7 +308,7 @@ Texte à analyser : "${description}"
                         SELECT
                             m.property_group_id,
                             m.chat_id,
-                            c.name as chat_name,
+                            c.chat_name,
                             m.analysis_error,
                             MIN(m.timestamp) as first_message_at,
                             COUNT(*) as message_count,
@@ -319,7 +319,7 @@ Texte à analyser : "${description}"
                         WHERE m.analysis_error IS NOT NULL
                         AND m.property_group_id IS NOT NULL
                         AND m.real_property_id IS NULL
-                        GROUP BY m.property_group_id, m.chat_id, c.name, m.analysis_error
+                        GROUP BY m.property_group_id, m.chat_id, c.chat_name, m.analysis_error
                         ORDER BY m.analysis_error, MIN(m.timestamp) DESC
                     `);
 
