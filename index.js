@@ -269,6 +269,7 @@ Texte à analyser : "${description}"
                     `);
 
                     // 3. Purge des images orphelines (images sans texte descriptif dans les 10 min précédentes)
+                    // 10 minutes = 600000 millisecondes (timestamp est en ms)
                     const res3 = await db.query(`
                         UPDATE messages
                         SET property_group_id = 'noise', analysis_error = NULL
@@ -284,7 +285,7 @@ Texte à analyser : "${description}"
                                 AND txt.has_media = FALSE
                                 AND LENGTH(txt.body) > 100
                                 AND txt.timestamp < m.timestamp
-                                AND txt.timestamp >= m.timestamp - INTERVAL '10 minutes'
+                                AND txt.timestamp >= m.timestamp - 600000
                             )
                         )
                     `);
@@ -305,7 +306,7 @@ Texte à analyser : "${description}"
                                 WHERE img.chat_id = m.chat_id
                                 AND img.has_media = TRUE
                                 AND img.timestamp > m.timestamp
-                                AND img.timestamp <= m.timestamp + INTERVAL '10 minutes'
+                                AND img.timestamp <= m.timestamp + 600000
                             )
                         )
                     `);
