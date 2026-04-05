@@ -216,9 +216,9 @@ Texte à analyser : "${description}"
                     [chatId]
                 );
 
-                // 2. On récupère les messages triés strictement
+                // 2. On récupère les messages triés strictement (exclure ceux déjà associés à un bien)
                 const { rows: msgs } = await db.query(
-                    "SELECT id, body, has_media, media_mime_type, property_group_id, sender_id, timestamp, real_property_id FROM messages WHERE chat_id = $1 ORDER BY timestamp ASC, id ASC",
+                    "SELECT id, body, has_media, media_mime_type, property_group_id, sender_id, timestamp, real_property_id FROM messages WHERE chat_id = $1 AND real_property_id IS NULL ORDER BY timestamp ASC, id ASC",
                     [chatId]
                 );
 

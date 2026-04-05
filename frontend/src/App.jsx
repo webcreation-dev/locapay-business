@@ -1317,17 +1317,30 @@ function App() {
                             </div>
 
                             {!activeSubmissions[item.key] && (
-                              <button
-                                className="btn-action btn-create-direct"
-                                onClick={() => {
-                                  const groupMsgIds = messages.filter(m => m.property_group_id === item.key).map(m => m.id);
-                                  if (groupMsgIds.length > 0) {
-                                    handleManualAction('group', groupMsgIds);
-                                  }
-                                }}
-                              >
-                                🚀 Créer un bien
-                              </button>
+                              <>
+                                <button
+                                  className="btn-action btn-noise"
+                                  onClick={() => {
+                                    const groupMsgIds = messages.filter(m => m.property_group_id === item.key).map(m => m.id);
+                                    if (groupMsgIds.length > 0) {
+                                      handleManualAction('noise', groupMsgIds);
+                                    }
+                                  }}
+                                >
+                                  🗑️ Ignorer
+                                </button>
+                                <button
+                                  className="btn-action btn-create-direct"
+                                  onClick={() => {
+                                    const groupMsgIds = messages.filter(m => m.property_group_id === item.key).map(m => m.id);
+                                    if (groupMsgIds.length > 0) {
+                                      handleManualAction('group', groupMsgIds);
+                                    }
+                                  }}
+                                >
+                                  🚀 Créer un bien
+                                </button>
+                              </>
                             )}
                           </div>
                         ) : item.label}
