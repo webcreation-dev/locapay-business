@@ -223,10 +223,9 @@ Texte à analyser : "${description}"
                 }
             }
 
-            // 🗑️ Grande Purge massive des messages parasites (Ventes, Courts, Orphelins)
-            app.post('/api/chats/purge-noise', async (req, res) => {
+            // --- FONCTION DE PURGE MASSIVE ---
+            async function internalPurgeNoise() {
                 try {
-                    // 1. Purge des mots interdits et TOUT ce qui est trop court (< 20 chars, même avec photo)
                     const res1 = await db.query(`
                         UPDATE messages 
                         SET property_group_id = 'noise', analysis_error = NULL
@@ -236,8 +235,6 @@ Texte à analyser : "${description}"
                             OR (LENGTH(COALESCE(body, '')) < 20)
                         )
                     `);
-
-                    // 2. Purge avancée des textes orphelins (On ne garde que le titre collé à l'image)
                     const res2 = await db.query(`
                         UPDATE messages
                         SET property_group_id = 'noise', analysis_error = NULL
@@ -267,8 +264,6 @@ Texte à analyser : "${description}"
                             WHERE has_media = FALSE AND rn < last_text_rn
                         )
                     `);
-
-                    // 3. Purge des images orphelines (images sans texte descriptif dans les 10 min précédentes)
                     const res3 = await db.query(`
                         UPDATE messages
                         SET property_group_id = 'noise', analysis_error = NULL
@@ -288,8 +283,6 @@ Texte à analyser : "${description}"
                             )
                         )
                     `);
-
-                    // 4. Purge des textes orphelins (descriptions sans images dans les 10 min suivantes)
                     const res4 = await db.query(`
                         UPDATE messages
                         SET property_group_id = 'noise', analysis_error = NULL
@@ -309,9 +302,18 @@ Texte à analyser : "${description}"
                             )
                         )
                     `);
+                    return (res1.rowCount || 0) + (res2.rowCount || 0) + (res3.rowCount || 0) + (res4.rowCount || 0);
+                } catch (e) {
+                    console.error("❌ Error internalPurgeNoise:", e);
+                    throw e;
+                }
+            }
 
-                    const total = (res1.rowCount || 0) + (res2.rowCount || 0) + (res3.rowCount || 0) + (res4.rowCount || 0);
-                    res.json({ success: true, message: `${total} messages nettoyés au total (${res3.rowCount || 0} images orphelines, ${res4.rowCount || 0} textes orphelins).` });
+            // 🗑️ Grande Purge massive des messages parasites (Ventes, Courts, Orphelins)
+            app.post('/api/chats/purge-noise', async (req, res) => {
+                try {
+                    const total = await internalPurgeNoise();
+                    res.json({ success: true, message: `${total} messages nettoyés au total.` });
                 } catch (e) {
                     res.status(500).json({ error: e.message });
                 }
@@ -964,20 +966,9 @@ Texte à analyser : "${description}"
                 }
             });
 
-            // 🚀 BATCH SUBMIT GLOBAL : Traiter tous les groupements (avec SSE pour progress)
-            app.get('/api/chats/batch-submit-all', async (req, res) => {
-                // Configuration SSE
-                res.setHeader('Content-Type', 'text/event-stream');
-                res.setHeader('Cache-Control', 'no-cache');
-                res.setHeader('Connection', 'keep-alive');
-                res.flushHeaders();
-
-                const sendEvent = (data) => {
-                    res.write(`data: ${JSON.stringify(data)}\n\n`);
-                };
-
+            // --- FONCTION DE SOUMISSION EN MASSE ---
+            async function internalBatchSubmitAll(onProgress = null) {
                 try {
-                    // Trouver tous les groupes en attente (exclure les échecs)
                     const { rows: groups } = await db.query(`
                         SELECT DISTINCT property_group_id, chat_id
                         FROM messages
@@ -988,12 +979,7 @@ Texte à analyser : "${description}"
                         AND submission_failed = FALSE
                     `);
 
-                    if (groups.length === 0) {
-                        sendEvent({ type: 'complete', message: "Aucun groupement à traiter.", success: 0, errors: 0 });
-                        return res.end();
-                    }
-
-                    sendEvent({ type: 'start', total: groups.length, message: `Traitement de ${groups.length} groupes...` });
+                    if (groups.length === 0) return { success: 0, errors: 0, total: 0 };
 
                     let successCount = 0, errorCount = 0;
                     for (let i = 0; i < groups.length; i++) {
@@ -1004,27 +990,70 @@ Texte à analyser : "${description}"
                                 [group.property_group_id]
                             );
                             const result = await internalProcessPropertySubmission(msgIds.map(m => m.id));
-                            if (result.success) {
-                                successCount++;
-                                sendEvent({ type: 'progress', current: i + 1, total: groups.length, success: successCount, errors: errorCount, propertyId: result.propertyId });
-                            } else {
-                                errorCount++;
-                                sendEvent({ type: 'progress', current: i + 1, total: groups.length, success: successCount, errors: errorCount, error: result.error });
+                            if (result.success) successCount++;
+                            else errorCount++;
+
+                            if (onProgress) {
+                                onProgress({ type: 'progress', current: i + 1, total: groups.length, success: successCount, errors: errorCount });
                             }
                             await new Promise(r => setTimeout(r, 2000));
                         } catch (groupError) {
                             errorCount++;
-                            sendEvent({ type: 'progress', current: i + 1, total: groups.length, success: successCount, errors: errorCount, error: groupError.message });
+                            if (onProgress) onProgress({ type: 'error', message: groupError.message });
                         }
                     }
+                    return { success: successCount, errors: errorCount, total: groups.length };
+                } catch (e) {
+                    console.error("❌ Error internalBatchSubmitAll:", e);
+                    throw e;
+                }
+            }
 
-                    sendEvent({ type: 'complete', message: `Terminé : ${successCount} biens créés, ${errorCount} erreurs.`, success: successCount, errors: errorCount });
+            // 🚀 BATCH SUBMIT GLOBAL : Traiter tous les groupements (avec SSE pour progress)
+            app.get('/api/chats/batch-submit-all', async (req, res) => {
+                res.setHeader('Content-Type', 'text/event-stream');
+                res.setHeader('Cache-Control', 'no-cache');
+                res.setHeader('Connection', 'keep-alive');
+                res.flushHeaders();
+
+                const sendEvent = (data) => res.write(`data: ${JSON.stringify(data)}\n\n`);
+
+                try {
+                    const result = await internalBatchSubmitAll(sendEvent);
+                    sendEvent({ type: 'complete', message: `Terminé : ${result.success} biens créés, ${result.errors} erreurs.`, ...result });
                     res.end();
                 } catch (e) {
                     sendEvent({ type: 'error', message: e.message });
                     res.end();
                 }
             });
+
+            // 🔄 WORKFLOW AUTOMATISE (CRON)
+            async function globalAutomatedWorkflow() {
+                console.log('🕒 --- DÉBUT DU WORKFLOW AUTOMATISÉ (30 min) ---');
+                try {
+                    // 1. Purge
+                    console.log('🕒 Étape 1/3 : Grande Purge...');
+                    const purgeCount = await internalPurgeNoise();
+                    console.log(`🕒 Purge terminée : ${purgeCount} messages nettoyés.`);
+
+                    // 2. Analyse / Groupement
+                    console.log('🕒 Étape 2/3 : Analyse et Groupement...');
+                    const runAll = app.get('runAutoGroupHeuristicAllChats');
+                    if (runAll) await runAll();
+                    console.log('🕒 Analyse terminée.');
+
+                    // 3. Soumission
+                    console.log('🕒 Étape 3/3 : Soumission en lot...');
+                    const submitResult = await internalBatchSubmitAll();
+                    console.log(`🕒 Soumission terminée : ${submitResult.success} succès, ${submitResult.errors} erreurs.`);
+
+                    console.log('🕒 --- WORKFLOW AUTOMATISÉ TERMINÉ AVEC SUCCÈS ---');
+                } catch (e) {
+                    console.error('🕒 ❌ ERREUR DANS LE WORKFLOW AUTOMATISÉ:', e.message);
+                }
+            }
+            app.set('globalAutomatedWorkflow', globalAutomatedWorkflow);
 
             // ROUTE DE GROUPEMENT MANUEL (BRUIT SEULEMENT MAINTENANT)
             app.post('/api/messages/manual-group', async (req, res) => {
@@ -1164,14 +1193,19 @@ client.on('ready', () => {
     botStatus = 'CONNECTED';
     currentQR = null;
 
-    // ✅ ACTIVÉ : Balayage automatique périodique (Heuristique Stricte)
-    console.log('🤖 Activation du balayage automatique (Règle 100 caractères)...');
-    const runAll = app.get('runAutoGroupHeuristicAllChats');
-    if (runAll) {
-        runAll().catch(e => console.error("❌ Error initial runAll:", e));
+    // ✅ ACTIVÉ : Balayage automatique périodique (Workflow complet : Purge + Groupement + Soumission)
+    console.log('🤖 Activation du workflow automatisé complet (toutes les 30 min)...');
+    const globalWorkflow = app.get('globalAutomatedWorkflow');
+    if (globalWorkflow) {
+        // Premier lancement après 1 minute (laisser le temps au bot de se stabiliser)
+        setTimeout(() => {
+            globalWorkflow().catch(e => console.error("❌ Error initial workflow:", e));
+        }, 60 * 1000);
+
+        // Puis toutes les 30 minutes
         setInterval(() => {
-            runAll().catch(err => console.error("❌ Erreur balayage automatique:", err));
-        }, 10 * 60 * 1000);
+            globalWorkflow().catch(err => console.error("❌ Erreur workflow automatisé:", err));
+        }, 30 * 60 * 1000);
     }
 });
 
