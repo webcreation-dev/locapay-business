@@ -1361,4 +1361,23 @@ client.on('message_create', async msg => {
     }
 });
 
-client.initialize();
+
+(async () => {
+    const maxRetries = 10;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            console.log(`🔄 Tentative d'initialisation WhatsApp (${attempt}/${maxRetries})...`);
+            await client.initialize();
+            break; // succès → on sort de la boucle
+        } catch (err) {
+            console.error(`❌ Echec tentative ${attempt}: ${err.message}`);
+            if (attempt < maxRetries) {
+                console.log(`⏳ Nouvelle tentative dans 5 secondes...`);
+                await new Promise(r => setTimeout(r, 5000));
+            } else {
+                console.error('❌ Toutes les tentatives ont échoué. Arrêt.');
+                process.exit(1);
+            }
+        }
+    }
+})();
