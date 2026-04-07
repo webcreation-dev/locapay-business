@@ -615,7 +615,7 @@ Texte à analyser : "${description}"
                     const safeLimit = Math.min(parseInt(limit) || 30, 100);
 
                     let query, params;
-                    // Construction d'un CTE pour pré-filtrer et identifier les "sandwichs" de texte
+                    // Construction d'un CTE pour pré-filtrer et afficher les messages
                     const cteBase = `
                         WITH raw_msgs AS (
                             SELECT id, message_id, body, timestamp, is_from_me, is_group, chat_id, sender_id, sender_name, has_media, media_path, media_mime_type, property_group_id, real_property_id, neighborhood, district, municipality, analysis_error, ia_property_id, message_type, is_analyzed, analyzed_at
@@ -628,20 +628,14 @@ Texte à analyser : "${description}"
                             WHERE body ~* 'vendre|vente|parcelle|terrain|titre foncier| tf|domaine'
                             AND property_group_id IS NOT NULL
                         ),
-                        filtered_msgs_raw AS (
+                        filtered_msgs AS (
                             SELECT r.* FROM raw_msgs r
                             LEFT JOIN banned_groups bg ON r.property_group_id = bg.property_group_id
                             WHERE (r.is_analyzed = FALSE OR r.real_property_id IS NOT NULL)
                             AND bg.property_group_id IS NULL -- Exclure TOUS les membres d'un groupe contenant 'vendre'
                             AND (r.body IS NULL OR r.body !~* 'vendre|vente|parcelle|terrain|titre foncier| tf|domaine') -- Vérif individuelle au cas où (message non groupé)
-                            AND ( (r.body IS NOT NULL AND TRIM(r.body) != '') OR r.has_media = TRUE )
+                            AND ( (r.body IS NOT NULL AND LENGTH(TRIM(r.body)) >= 20) OR r.has_media = TRUE )
                             AND r.message_type NOT IN ('audio', 'ptt', 'sticker')
-                        ),
-                        filtered_msgs AS (
-                            SELECT fm.*,
-                                   LAG(has_media) OVER(ORDER BY timestamp ASC) as prev_has_media,
-                                   LEAD(has_media) OVER(ORDER BY timestamp ASC) as next_has_media
-                            FROM filtered_msgs_raw fm
                         )
                     `;
 
@@ -652,7 +646,6 @@ Texte à analyser : "${description}"
                                 SELECT id, message_id, body, timestamp, is_from_me, is_group, chat_id, sender_id, sender_name, has_media, media_path, media_mime_type, property_group_id, real_property_id, neighborhood, district, municipality, analysis_error, ia_property_id
                                 FROM filtered_msgs 
                                 WHERE timestamp < $2
-                                AND (property_group_id IS NOT NULL OR NOT (has_media = FALSE AND COALESCE(prev_has_media, TRUE) = FALSE AND COALESCE(next_has_media, TRUE) = FALSE))
                                 ORDER BY timestamp DESC 
                                 LIMIT $3
                             ) AS sub 
@@ -665,7 +658,6 @@ Texte à analyser : "${description}"
                             SELECT * FROM (
                                 SELECT id, message_id, body, timestamp, is_from_me, is_group, chat_id, sender_id, sender_name, has_media, media_path, media_mime_type, property_group_id, real_property_id, neighborhood, district, municipality, analysis_error, ia_property_id
                                 FROM filtered_msgs 
-                                WHERE (property_group_id IS NOT NULL OR NOT (has_media = FALSE AND COALESCE(prev_has_media, TRUE) = FALSE AND COALESCE(next_has_media, TRUE) = FALSE))
                                 ORDER BY timestamp DESC 
                                 LIMIT $2
                             ) AS sub 
