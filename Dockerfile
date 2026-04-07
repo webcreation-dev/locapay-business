@@ -17,7 +17,10 @@ ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 WORKDIR /usr/src/app
 COPY package*.json ./
-RUN npm install
+RUN git config --global url."https://github.com/".insteadOf "ssh://git@github.com/" \
+    && git config --global url."https://github.com/".insteadOf "git@github.com:" \
+    && rm -f package-lock.json \
+    && npm install
 COPY . .
 # Copier le build React dans un dossier dédié (séparé de public/)
 COPY --from=frontend-build /app/frontend/dist/ ./frontend-dist/
