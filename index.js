@@ -580,21 +580,28 @@ Texte à analyser : "${description}"
                 try {
                     // Compte UNIQUEMENT les messages "bruts" qui n'ont pas encore été catégorisés ou groupés
                     const query = `
-                        WITH pending_counts AS (
-                            SELECT
-                                m.chat_id,
-                                COUNT(*) as unread_count
+                        WITH banned_groups AS (
+                            SELECT DISTINCT property_group_id
+                            FROM messages
+                            WHERE body ~* 'vendre|vente|parcelle|terrain|titre foncier| tf|domaine'
+                            AND property_group_id IS NOT NULL
+                        ),
+                        valid_pending_msgs AS (
+                            SELECT m.chat_id
                             FROM messages m
+                            LEFT JOIN banned_groups bg ON m.property_group_id = bg.property_group_id
                             WHERE m.real_property_id IS NULL
-                            AND m.property_group_id IS NULL
                             AND m.is_analyzed = FALSE
                             AND m.is_from_me = FALSE
+                            AND bg.property_group_id IS NULL -- Exclure les membres d'un groupe interdit
                             AND COALESCE(m.message_type, '') NOT IN ('audio', 'ptt', 'sticker')
-                            -- Ne pas compter les messages trop courts sans média (Bruit)
-                            AND (m.has_media = TRUE OR LENGTH(COALESCE(m.body, '')) >= 20)
-                            -- On ne compte rien qui contienne les mots bannis
-                            AND NOT (COALESCE(m.body, '') ~* 'vendre|vente|parcelle|terrain|titre\\sfoncier|\\stf\\s|\\stf\n|domaine|\\stf$|opportunite|recherche')
-                            GROUP BY m.chat_id
+                            AND (m.body IS NULL OR m.body !~* 'vendre|vente|parcelle|terrain|titre foncier| tf|domaine')
+                            AND ((m.body IS NOT NULL AND LENGTH(TRIM(m.body)) >= 20) OR m.has_media = TRUE)
+                        ),
+                        pending_counts AS (
+                            SELECT chat_id, COUNT(*) as unread_count
+                            FROM valid_pending_msgs
+                            GROUP BY chat_id
                         )
                         SELECT c.*, COALESCE(p.unread_count, 0) as unread_count
                         FROM chats c
