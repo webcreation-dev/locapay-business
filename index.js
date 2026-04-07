@@ -1133,8 +1133,8 @@ connectToDbWithRetry();
 
 const puppeteerOptions = {
     headless: true,
-    bypassCSP: true,  // ← FIX: empêche WhatsApp de rediriger pendant l'injection
-    protocolTimeout: 60000, // ⏳ Augmentation du timeout (60s) pour les VPS lents
+    bypassCSP: true,
+    protocolTimeout: 120000, // ⏳ Augmentation du timeout (120s) pour les VPS lents
     args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
@@ -1142,6 +1142,7 @@ const puppeteerOptions = {
         '--disable-dev-shm-usage',
         '--disable-gpu',
         '--no-zygote',
+        '--single-process', // ← FIX: évite la destruction du contexte dans Docker
         '--no-first-run',
         '--disable-features=IsolateOrigins,site-per-process',
         '--disable-web-security',
