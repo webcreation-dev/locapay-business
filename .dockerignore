@@ -1,5 +1,6 @@
 node_modules
 npm-debug.log
+package-lock.json
 .wwebjs_auth
 .wwebjs_cache
 sessions
