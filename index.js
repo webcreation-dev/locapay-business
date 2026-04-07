@@ -412,6 +412,19 @@ Texte à analyser : "${description}"
                         parentMsgBySender[sender] = null;
                     }
                 }
+
+                // NOUVELLE RÈGLE MÉTIER RADICALE : Destruction des textes isolés (sans image)
+                // Si un message n'a pas reçu de groupe après 1 heure, et qu'il n'a pas d'image, c'est du bruit.
+                await db.query(`
+                    UPDATE messages 
+                    SET property_group_id = 'noise' 
+                    WHERE chat_id = $1 
+                    AND property_group_id IS NULL 
+                    AND real_property_id IS NULL 
+                    AND has_media = FALSE 
+                    AND timestamp < (EXTRACT(EPOCH FROM NOW()) - 3600)
+                `, [chatId]);
+
                 return uniqueGroups.size;
             };
 
