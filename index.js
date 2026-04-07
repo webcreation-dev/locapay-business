@@ -591,6 +591,7 @@ Texte à analyser : "${description}"
                             FROM messages m
                             LEFT JOIN banned_groups bg ON m.property_group_id = bg.property_group_id
                             WHERE m.real_property_id IS NULL
+                            AND m.property_group_id IS NULL -- Ne jamais compter ceux assignés à un groupe
                             AND m.is_analyzed = FALSE
                             AND m.is_from_me = FALSE
                             AND bg.property_group_id IS NULL -- Exclure les membres d'un groupe interdit
