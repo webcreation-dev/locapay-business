@@ -630,13 +630,11 @@ Texte à analyser : "${description}"
                         ),
                         filtered_msgs AS (
                             SELECT r.* FROM raw_msgs r
-                            WHERE r.real_property_id IS NULL
-                            AND r.property_group_id IS NULL
-                            AND r.is_analyzed = FALSE
-                            AND r.is_from_me = FALSE
-                            AND COALESCE(r.message_type, '') NOT IN ('audio', 'ptt', 'sticker')
-                            AND (r.has_media = TRUE OR LENGTH(COALESCE(r.body, '')) >= 20)
-                            AND NOT (COALESCE(r.body, '') ~* 'vendre|vente|parcelle|terrain|titre\sfoncier|\stf\s|\stf\n|domaine|\stf$|opportunite|recherche')
+                            LEFT JOIN banned_groups bg ON r.property_group_id = bg.property_group_id
+                            WHERE bg.property_group_id IS NULL -- Exclure TOUS les membres d'un groupe contenant 'vendre'
+                            AND (r.body IS NULL OR r.body !~* 'vendre|vente|parcelle|terrain|titre foncier| tf|domaine') -- Vérif individuelle au cas où (message non groupé)
+                            AND ( (r.body IS NOT NULL AND LENGTH(TRIM(r.body)) >= 20) OR r.has_media = TRUE )
+                            AND r.message_type NOT IN ('audio', 'ptt', 'sticker')
                         )
                     `;
 
