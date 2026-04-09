@@ -795,8 +795,17 @@ Texte à analyser : "${description}"
 
                     // 2. Fusionner les textes et collecter les images EN BASE64
                     const texts = [];
-                    const imagesBase64 = []; 
+                    const imagesBase64 = [];
                     let senderPhone = "";
+
+                    // ✅ TRAÇABILITÉ WHATSAPP : Extraire chat_id, chat_name et premier timestamp du groupe
+                    const firstMsg = fetchedMessages[0]; // déjà trié ASC par timestamp
+                    const whatsappGroupId = firstMsg?.chat_id || null;
+                    const whatsappGroupName = firstMsg?.chat_name || null;
+                    // Le timestamp WhatsApp est en secondes (Unix epoch) → convertir en ISO string
+                    const whatsappFirstMessageAt = firstMsg?.timestamp
+                        ? new Date(firstMsg.timestamp * 1000).toISOString()
+                        : null;
 
                     const externalMsg = fetchedMessages.find(m => !m.is_from_me);
                     if (externalMsg) {
@@ -867,13 +876,17 @@ Texte à analyser : "${description}"
                     const nestUrl = process.env.NESTJS_API_URL || 'http://host.docker.internal:4000/properties/create-from-whatsapp';
                     
                     try {
-                        console.log(`📤 Envoi à NestJS: ${imagesBase64.length} images...`);
+                        console.log(`📤 Envoi à NestJS: ${imagesBase64.length} images, groupe: ${whatsappGroupName} (${whatsappGroupId})...`);
                         const response = await axios.post(nestUrl, {
                             description: finalDescription,
                             manager_phone: senderPhone,
                             images_base64: imagesBase64,
                             user_id: process.env.LOCAPAY_BOT_USER_ID || 1,
-                            extracted_data: extractedData
+                            extracted_data: extractedData,
+                            // ✅ TRAÇABILITÉ : Métadonnées du groupe WhatsApp source
+                            whatsapp_group_id: whatsappGroupId,
+                            whatsapp_group_name: whatsappGroupName,
+                            whatsapp_first_message_at: whatsappFirstMessageAt
                         }, {
                             timeout: 60000,
                             maxContentLength: 50 * 1024 * 1024,
