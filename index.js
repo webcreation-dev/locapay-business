@@ -630,6 +630,25 @@ Texte à analyser : "${description}"
                 }
             });
 
+            // 📝 RÉCUPÉRER LA LISTE DES CHATS (Groupes en tête)
+            app.get('/api/chats/groups-list', async (req, res) => {
+                try {
+                    const query = `
+                        SELECT 
+                            whatsapp_chat_id as whatsapp_group_id, 
+                            chat_name as whatsapp_group_name,
+                            is_group
+                        FROM chats
+                        WHERE whatsapp_chat_id != 'status@broadcast'
+                        ORDER BY is_group DESC, updated_at DESC
+                    `;
+                    const { rows } = await db.query(query);
+                    res.json(rows);
+                } catch (e) {
+                    res.status(500).json({ error: e.message });
+                }
+            });
+
             app.get('/api/messages/:chatId', async (req, res) => {
                 try {
                     const { before, limit = 30 } = req.query;
