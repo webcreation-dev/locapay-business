@@ -713,6 +713,27 @@ Texte à analyser : "${description}"
                 }
             });
 
+            // 📡 FLUX LIVE : Récupérer les derniers messages de TOUTES les conversations (sans filtre)
+            app.get('/api/messages-live-feed', async (req, res) => {
+                try {
+                    const { limit = 50 } = req.query;
+                    const safeLimit = Math.min(parseInt(limit) || 50, 200);
+
+                    const query = `
+                        SELECT id, message_id, body, timestamp, is_from_me, is_group, chat_id, chat_name, sender_id, sender_name, has_media, media_path, media_mime_type, property_group_id, real_property_id, analysis_error
+                        FROM messages 
+                        WHERE chat_id != 'status@broadcast'
+                        ORDER BY timestamp DESC 
+                        LIMIT $1
+                    `;
+                    const { rows } = await db.query(query, [safeLimit]);
+                    res.json(rows);
+                } catch (e) {
+                    res.status(500).json({ error: e.message });
+                }
+            });
+
+
             // 🔍 Endpoint de polling spécifique aux IDs (Robuste)
             app.get('/api/messages-status', async (req, res) => {
                 try {

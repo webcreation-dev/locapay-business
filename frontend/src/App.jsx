@@ -146,6 +146,8 @@ function App() {
   const [endDate, setEndDate] = useState('');
   const [isLoadingProperties, setIsLoadingProperties] = useState(false);
   const [showCreatedOnly, setShowCreatedOnly] = useState(false);
+  const [liveMessages, setLiveMessages] = useState([]);
+  const [isLoadingLive, setIsLoadingLive] = useState(false);
 
   const containerRef = useRef(null);       // ref vers la div messages-container
   const scrollPositionBeforeSubmit = useRef(null); // Position scroll avant soumission
@@ -312,6 +314,30 @@ function App() {
       setToast({ message: `❌ Erreur: ${e.message}`, type: 'error' });
     }
   };
+
+  // ─── POLLING LIVE STREAM ─────────────────────────────────────────────────────
+  const fetchLiveMessages = useCallback(async () => {
+    if (viewMode !== 'stream') return;
+    setIsLoadingLive(true);
+    try {
+      const res = await fetch('/api/messages-live-feed?limit=50');
+      const data = await res.json();
+      setLiveMessages(data);
+    } catch (e) {
+      console.error('fetchLiveMessages error', e);
+    } finally {
+      setIsLoadingLive(false);
+    }
+  }, [viewMode]);
+
+  useEffect(() => {
+    fetchLiveMessages();
+    let id;
+    if (viewMode === 'stream') {
+      id = setInterval(fetchLiveMessages, 3000);
+    }
+    return () => id && clearInterval(id);
+  }, [fetchLiveMessages, viewMode]);
 
   // ─── POLLING MESSAGES (NOUVEAUX SEULEMENT) ───────────────────────────────────
   useEffect(() => {
@@ -1139,7 +1165,7 @@ function App() {
             >
               🏠
             </button>
-            <button
+            {/* <button
               className={`view-toggle ${viewMode === 'pending' ? 'active' : ''}`}
               onClick={() => { setViewMode('pending'); setSearchTerm(''); }}
               title="Annonces détectées (Attentes)"
@@ -1152,6 +1178,13 @@ function App() {
               title="Groupes rejetés"
             >
               ⚠️
+            </button> */}
+            <button
+              className={`view-toggle ${viewMode === 'stream' ? 'active' : ''}`}
+              onClick={() => { setViewMode('stream'); setSearchTerm(''); }}
+              title="Flux en direct (Tous les messages)"
+            >
+              📡
             </button>
           </div>
         </header>
@@ -1296,6 +1329,83 @@ function App() {
                     </div>
                   </div>
                 ))
+              )}
+            </div>
+          </div>
+        ) : viewMode === 'stream' ? (
+          <div className="properties-dashboard">
+            <header className="chat-header properties-header">
+              <div className="chat-header-info">
+                <div className="name">Flux en Direct (Live)</div>
+                <div className="subtitle">Tous les messages reçus en temps réel</div>
+              </div>
+              <button className="refresh-fab" onClick={fetchLiveMessages} title="Actualiser">
+                🔄
+              </button>
+            </header>
+
+            <div className="messages-container stream-list" style={{ padding: '0' }}>
+              {isLoadingLive && liveMessages.length === 0 ? (
+                <div className="loading-state">Initialisation du flux...</div>
+              ) : liveMessages.length === 0 ? (
+                <div className="empty-state">
+                  <h1>Flux vide</h1>
+                  <p>En attente de nouveaux messages...</p>
+                </div>
+              ) : (
+                <div className="stream-messages">
+                  {liveMessages.map(msg => (
+                    <div
+                      key={msg.id}
+                      className="search-result-item stream-item"
+                      onClick={() => handleSelectChat(msg.chat_id)}
+                      style={{
+                        margin: '8px 15px',
+                        borderRadius: '12px',
+                        borderLeft: msg.is_from_me ? '4px solid #00a884' : '4px solid #2563eb',
+                        backgroundColor: '#fff',
+                        boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
+                      }}
+                    >
+                      <div className="result-header">
+                        <span className="result-chat" style={{ fontWeight: 'bold', color: '#111b21' }}>
+                          {msg.chat_name || "Contact"} {msg.is_group ? '(Groupe)' : ''}
+                        </span>
+                        <span className="result-time" style={{ fontSize: '12px', color: '#667781' }}>
+                          {new Date(msg.timestamp * 1000).toLocaleString('fr-FR')}
+                        </span>
+                      </div>
+                      <div className="result-sender" style={{ fontSize: '11px', color: '#00a884', marginBottom: '4px' }}>
+                        {msg.is_from_me ? 'Moi' : (msg.sender_name || 'Inconnu')} • {msg.sender_id.split('@')[0]}
+                      </div>
+                      <div className="result-body" style={{ color: '#3b4a54', fontSize: '14px' }}>
+                        {msg.body || (msg.has_media ? '📷 Média' : '[Message vide]')}
+                      </div>
+                      <div className="stream-footer" style={{ marginTop: '8px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                        {msg.real_property_id && (
+                          <span className="result-tag" style={{ backgroundColor: '#dcf8c6', color: '#075e54', padding: '2px 8px', borderRadius: '4px', fontSize: '11px' }}>
+                            #BIEN {msg.real_property_id}
+                          </span>
+                        )}
+                        {msg.property_group_id && msg.property_group_id !== 'noise' && !msg.real_property_id && (
+                          <span className="result-tag" style={{ backgroundColor: '#e1f5fe', color: '#0288d1', padding: '2px 8px', borderRadius: '4px', fontSize: '11px' }}>
+                            #AGRÉGÉ
+                          </span>
+                        )}
+                        {msg.property_group_id === 'noise' && (
+                          <span className="result-tag" style={{ backgroundColor: '#f5f5f5', color: '#757575', padding: '2px 8px', borderRadius: '4px', fontSize: '11px' }}>
+                            #PARASITE
+                          </span>
+                        )}
+                        {msg.analysis_error && (
+                          <span className="result-tag" style={{ backgroundColor: '#ffebee', color: '#c62828', padding: '2px 8px', borderRadius: '4px', fontSize: '11px' }}>
+                            #ERREUR
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
           </div>
