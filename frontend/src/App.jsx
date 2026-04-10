@@ -859,20 +859,8 @@ function App() {
     const groupWrappers = new Map(); // Map<groupId, WrapperObject>
     const processedGroupIds = new Set();
 
-    // 1. Filtrer les messages (exclure moi et le bruit)
-    const filteredMessages = messages.filter(msg => {
-      const isFromMe = msg.is_from_me === true || msg.is_from_me === 1 || msg.is_from_me === "true";
-      const isNoise = msg.property_group_id === 'noise';
-      // Si on filtre, on regarde si le real_property_id est là ou pas
-      const isCreated = msg.real_property_id !== null && msg.real_property_id !== undefined;
-
-      if (showCreatedOnly) {
-        return !isFromMe && !isNoise && isCreated;
-      } else {
-        // Mode normal : cacher les déjà créés
-        return !isFromMe && !isNoise && !isCreated;
-      }
-    });
+    // 1. Filtrer les messages (On affiche désormais TOUT selon la demande utilisateur)
+    const filteredMessages = messages;
 
     // 2. Pré-calculer les groupes pour ceux qui ont un property_group_id
     filteredMessages.forEach(msg => {
