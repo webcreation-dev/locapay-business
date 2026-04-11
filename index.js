@@ -619,9 +619,9 @@ Texte à analyser : "${description}"
                         )
                         SELECT c.*, COALESCE(p.unread_count, 0) as unread_count
                         FROM chats c
-                        LEFT JOIN pending_counts p ON c.whatsapp_chat_id = p.chat_id
+                        INNER JOIN pending_counts p ON c.whatsapp_chat_id = p.chat_id
                         WHERE c.whatsapp_chat_id != 'status@broadcast'
-                        ORDER BY c.last_message_timestamp DESC
+                        ORDER BY c.updated_at DESC
                     `;
                     const { rows } = await db.query(query);
                     res.json(rows);
@@ -652,56 +652,66 @@ Texte à analyser : "${description}"
             app.get('/api/messages/:chatId', async (req, res) => {
                 try {
                     const { before, limit = 30 } = req.query;
-                    const safeLimit = Math.min(parseInt(limit) || 30, 200);
+                    const safeLimit = Math.min(parseInt(limit) || 30, 100);
 
                     let query, params;
+                    // Construction d'un CTE pour pré-filtrer et afficher les messages
+                    const cteBase = `
+                        WITH raw_msgs AS (
+                            SELECT id, message_id, body, timestamp, is_from_me, is_group, chat_id, sender_id, sender_name, has_media, media_path, media_mime_type, property_group_id, real_property_id, neighborhood, district, municipality, analysis_error, ia_property_id, message_type, is_analyzed, analyzed_at
+                            FROM messages 
+                            WHERE chat_id = $1
+                        ),
+                        banned_groups AS (
+                            SELECT DISTINCT property_group_id
+                            FROM raw_msgs
+                            WHERE body ~* 'vendre|vente|parcelle|terrain|titre foncier| tf|domaine'
+                            AND property_group_id IS NOT NULL
+                        ),
+                        filtered_msgs AS (
+                            SELECT r.* FROM raw_msgs r
+                            LEFT JOIN banned_groups bg ON r.property_group_id = bg.property_group_id
+                            WHERE bg.property_group_id IS NULL -- Exclure TOUS les membres d'un groupe contenant 'vendre'
+                            AND r.is_analyzed = FALSE
+                            AND r.real_property_id IS NULL
+                            AND (r.body IS NULL OR r.body !~* 'vendre|vente|parcelle|terrain|titre foncier| tf|domaine') -- Vérif individuelle au cas où (message non groupé)
+                            AND ( (r.body IS NOT NULL AND LENGTH(TRIM(r.body)) >= 20) OR r.has_media = TRUE )
+                            AND r.message_type NOT IN ('audio', 'ptt', 'sticker')
+                        )
+                    `;
+
                     if (before) {
                         query = `
-                            SELECT id, message_id, body, timestamp, is_from_me, is_group, chat_id, sender_id, sender_name, has_media, media_path, media_mime_type, property_group_id, real_property_id, neighborhood, district, municipality, analysis_error, ia_property_id
-                            FROM messages 
-                            WHERE chat_id = $1 AND timestamp < $2
-                            ORDER BY timestamp DESC 
-                            LIMIT $3
+                            ${cteBase}
+                            SELECT * FROM (
+                                SELECT id, message_id, body, timestamp, is_from_me, is_group, chat_id, sender_id, sender_name, has_media, media_path, media_mime_type, property_group_id, real_property_id, neighborhood, district, municipality, analysis_error, ia_property_id
+                                FROM filtered_msgs 
+                                WHERE timestamp < $2
+                                ORDER BY timestamp DESC 
+                                LIMIT $3
+                            ) AS sub 
+                            ORDER BY timestamp ASC
                         `;
                         params = [req.params.chatId, before, safeLimit];
                     } else {
                         query = `
-                            SELECT id, message_id, body, timestamp, is_from_me, is_group, chat_id, sender_id, sender_name, has_media, media_path, media_mime_type, property_group_id, real_property_id, neighborhood, district, municipality, analysis_error, ia_property_id
-                            FROM messages 
-                            WHERE chat_id = $1
-                            ORDER BY timestamp DESC 
-                            LIMIT $2
+                            ${cteBase}
+                            SELECT * FROM (
+                                SELECT id, message_id, body, timestamp, is_from_me, is_group, chat_id, sender_id, sender_name, has_media, media_path, media_mime_type, property_group_id, real_property_id, neighborhood, district, municipality, analysis_error, ia_property_id
+                                FROM filtered_msgs 
+                                ORDER BY timestamp DESC 
+                                LIMIT $2
+                            ) AS sub 
+                            ORDER BY timestamp ASC
                         `;
                         params = [req.params.chatId, safeLimit];
                     }
-                    const result = await db.query(query, params);
-                    // On renvoie dans l'ordre chronologique pour le frontend
-                    res.json(result.rows.reverse());
-                } catch (e) {
-                    res.status(500).json({ error: e.message });
-                }
-            });
-
-            // 📡 FLUX LIVE : Récupérer les derniers messages de TOUTES les conversations (sans filtre)
-            app.get('/api/messages-live-feed', async (req, res) => {
-                try {
-                    const { limit = 50 } = req.query;
-                    const safeLimit = Math.min(parseInt(limit) || 50, 200);
-
-                    const query = `
-                        SELECT id, message_id, body, timestamp, is_from_me, is_group, chat_id, chat_name, sender_id, sender_name, has_media, media_path, media_mime_type, property_group_id, real_property_id, analysis_error
-                        FROM messages 
-                        WHERE chat_id != 'status@broadcast'
-                        ORDER BY timestamp DESC 
-                        LIMIT $1
-                    `;
-                    const { rows } = await db.query(query, [safeLimit]);
+                    const { rows } = await db.query(query, params);
                     res.json(rows);
                 } catch (e) {
                     res.status(500).json({ error: e.message });
                 }
             });
-
 
             // 🔍 Endpoint de polling spécifique aux IDs (Robuste)
             app.get('/api/messages-status', async (req, res) => {
