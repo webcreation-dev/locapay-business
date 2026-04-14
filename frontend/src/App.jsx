@@ -147,7 +147,7 @@ function App() {
   const [isGroupSelection, setIsGroupSelection] = useState(false);
 
   // ─── NOUVEAUX ÉTATS (RECHERCHE & BIENS) ──────────────────────────────────────
-  const [viewMode, setViewMode] = useState('chats'); // 'chats', 'properties', 'rejected', 'pending', 'analysis' ou 'full_access'
+  const [viewMode, setViewMode] = useState('full_access'); // 'chats', 'properties', 'rejected', 'pending', 'analysis' ou 'full_access'
   const [rejectedGroups, setRejectedGroups] = useState({ total: 0, by_error: {}, groups: [] });
   const [pendingGroups, setPendingGroups] = useState({ total: 0, groups: [] });
   const [isLoadingRejected, setIsLoadingRejected] = useState(false);
