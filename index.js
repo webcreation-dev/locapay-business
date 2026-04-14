@@ -1055,8 +1055,8 @@ Texte à analyser : "${description}"
                 }
             }
 
-            // 🚀 BATCH SUBMIT GLOBAL : Traiter tous les groupements (avec SSE pour progress)
-            app.get('/api/chats/batch-submit-all', async (req, res) => {
+            // ⚡ FULL WORKFLOW : Purge + Groupement + Soumission (SSE)
+            app.get('/api/chats/full-workflow', async (req, res) => {
                 res.setHeader('Content-Type', 'text/event-stream');
                 res.setHeader('Cache-Control', 'no-cache');
                 res.setHeader('Connection', 'keep-alive');
@@ -1065,8 +1065,19 @@ Texte à analyser : "${description}"
                 const sendEvent = (data) => res.write(`data: ${JSON.stringify(data)}\n\n`);
 
                 try {
+                    sendEvent({ type: 'progress', message: '🧹 Étape 1/3 : Purge du bruit en cours...' });
+                    const purgeCount = await internalPurgeNoise();
+                    sendEvent({ type: 'progress', message: `✅ Purge terminée (${purgeCount} messages).` });
+
+                    sendEvent({ type: 'progress', message: '🤖 Étape 2/3 : Analyse et groupement automatique...' });
+                    const runAll = app.get('runAutoGroupHeuristicAllChats');
+                    if (runAll) await runAll();
+                    sendEvent({ type: 'progress', message: '✅ Groupement terminé.' });
+
+                    sendEvent({ type: 'progress', message: '🚀 Étape 3/3 : Soumission des biens à NestJS...' });
                     const result = await internalBatchSubmitAll(sendEvent);
-                    sendEvent({ type: 'complete', message: `Terminé : ${result.success} biens créés, ${result.errors} erreurs.`, ...result });
+                    
+                    sendEvent({ type: 'complete', message: `✨ Workflow terminé : ${result.success} nouveaux biens.`, ...result });
                     res.end();
                 } catch (e) {
                     sendEvent({ type: 'error', message: e.message });
