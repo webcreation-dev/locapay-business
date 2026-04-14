@@ -1084,60 +1084,21 @@ function App() {
           </div>
           <div className="sidebar-controls">
             <button
-              className="global-action-btn"
-              title="Regrouper toutes les conversations"
+              className="refresh-fab"
+              title="Lancer le traitement automatique (Purge + Groupage + Soumission)"
               onClick={async () => {
-                setToast({ message: "🔄 Regroupement de toutes les conversations en cours...", type: 'success', persistent: true });
-                try {
-                  const res = await fetch('/api/chats/analyze-all', { method: 'POST' });
-                  const data = await res.json();
-                  setToast({ message: `✅ ${data.message}`, type: 'success' });
-                  fetchChats();
-                } catch (e) {
-                  setToast({ message: "❌ Échec du regroupement global", type: 'error' });
-                }
-              }}
-            >
-              🔄
-            </button>
-            <button
-              className="global-action-btn"
-              style={{ backgroundColor: '#dc2626' }}
-              title="Grande Purge des Parasites (Ventes/Courts)"
-              onClick={async () => {
-                if (!window.confirm("Êtes-vous certain de vouloir archiver définitivement tous les messages trop courts et les annonces de vente ?")) return;
-                setToast({ message: "🧹 Grande Purge en cours...", type: 'success', persistent: true });
-                try {
-                  const res = await fetch('/api/chats/purge-noise', { method: 'POST' });
-                  const data = await res.json();
-                  setToast({ message: `✨ Nettoyage terminé : ${data.message}`, type: 'success' });
-                  fetchChats();
-                } catch (e) {
-                  setToast({ message: "❌ Échec de la purge", type: 'error' });
-                }
-              }}
-            >
-              🧹
-            </button>
-            <button
-              className="global-action-btn submit"
-              title="Soumettre tous les groupes"
-              onClick={() => {
-                setToast({ message: "🚀 Connexion au serveur...", type: 'success', persistent: true });
-                const eventSource = new EventSource('/api/chats/batch-submit-all');
-
+                if (!window.confirm("Lancer le workflow automatique complet ?\n\n1. Purge du bruit\n2. Groupement IA\n3. Soumission à NestJS")) return;
+                
+                setToast({ message: "⚡ Initialisation du workflow...", type: 'success', persistent: true });
+                
+                const eventSource = new EventSource('/api/chats/full-workflow');
+                
                 eventSource.onmessage = (event) => {
                   const data = JSON.parse(event.data);
-                  if (data.type === 'start') {
-                    setToast({ message: `🚀 Traitement de ${data.total} groupes...`, type: 'success', persistent: true });
-                  } else if (data.type === 'progress') {
-                    setToast({
-                      message: `🚀 ${data.current}/${data.total} — ✅ ${data.success} créés${data.errors > 0 ? ` | ❌ ${data.errors} erreurs` : ''}`,
-                      type: 'success',
-                      persistent: true
-                    });
+                  if (data.type === 'progress') {
+                    setToast({ message: data.message, type: 'success', persistent: true });
                   } else if (data.type === 'complete') {
-                    setToast({ message: `✅ ${data.message}`, type: 'success' });
+                    setToast({ message: data.message, type: 'success' });
                     fetchChats();
                     eventSource.close();
                   } else if (data.type === 'error') {
