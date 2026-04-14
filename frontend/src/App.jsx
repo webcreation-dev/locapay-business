@@ -373,7 +373,7 @@ function App() {
       try {
         const chatId = currentChatIdRef.current;
         if (!chatId) return;
-        
+
         const endpoint = viewMode === 'full_access' ? `/api/full/messages/${chatId}` : `/api/messages/${chatId}`;
         const data = await (await fetch(`${endpoint}?limit=${PAGE_SIZE}`)).json();
         setMessages(prev => {
@@ -1154,7 +1154,7 @@ function App() {
             >
               🚀
             </button>
-            <button
+            {/* <button
               className={`view-toggle ${viewMode === 'chats' ? 'active' : ''}`}
               onClick={() => { setViewMode('chats'); setSearchTerm(''); }}
             >
@@ -1172,7 +1172,7 @@ function App() {
               title="Annonces détectées (Attentes)"
             >
               📂
-            </button>
+            </button> 
             <button
               className={`view-toggle ${viewMode === 'analysis' ? 'active' : ''}`}
               onClick={() => { setViewMode('analysis'); setSearchTerm(''); }}
@@ -1190,7 +1190,7 @@ function App() {
               title="Groupes rejetés"
             >
               ⚠️
-            </button>
+            </button> */}
             <button
               className={`view-toggle ${viewMode === 'full_access' ? 'active' : ''}`}
               onClick={() => { setViewMode('full_access'); setSearchTerm(''); }}
