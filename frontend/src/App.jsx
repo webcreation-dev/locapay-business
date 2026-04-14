@@ -858,8 +858,8 @@ function App() {
 
     // 1. Filtrer les messages (exclure moi et le bruit)
     const filteredMessages = messages.filter(msg => {
-      // En mode analyse, on garde TOUT (sauf peut-être les nôtres si on veut un flow pur, mais ici on garde tout pour l'intégralité)
-      if (viewMode === 'analysis') return true;
+      // En mode analyse ou accès total, on garde TOUT
+      if (viewMode === 'analysis' || viewMode === 'full_access') return true;
 
       const isFromMe = msg.is_from_me === true || msg.is_from_me === 1 || msg.is_from_me === "true";
       const isNoise = msg.property_group_id === 'noise';
