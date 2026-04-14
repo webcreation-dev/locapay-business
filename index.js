@@ -1120,6 +1120,62 @@ Texte à analyser : "${description}"
                 }
             });
 
+            // 🔓 API FULL ACCESS : Récupérer toutes les conversations sans aucun filtre
+            app.get('/api/full/chats', async (req, res) => {
+                try {
+                    const query = `
+                        SELECT c.*, 
+                               (SELECT COUNT(*) FROM messages WHERE chat_id = c.whatsapp_chat_id) as unread_count
+                        FROM chats c
+                        WHERE c.whatsapp_chat_id != 'status@broadcast'
+                        ORDER BY c.updated_at DESC
+                    `;
+                    const { rows } = await db.query(query);
+                    res.json(rows);
+                } catch (e) {
+                    res.status(500).json({ error: e.message });
+                }
+            });
+
+            // 🔓 API FULL ACCESS : Récupérer tous les messages d'une conversation sans aucun filtre
+            app.get('/api/full/messages/:chatId', async (req, res) => {
+                try {
+                    const { before, limit = 50 } = req.query;
+                    const safeLimit = Math.min(parseInt(limit) || 50, 200);
+
+                    let query, params;
+                    if (before) {
+                        query = `
+                            SELECT * FROM (
+                                SELECT id, message_id, body, timestamp, is_from_me, is_group, chat_id, sender_id, sender_name, has_media, media_path, media_mime_type, property_group_id, real_property_id, neighborhood, district, municipality, analysis_error, ia_property_id
+                                FROM messages 
+                                WHERE chat_id = $1 AND timestamp < $2
+                                ORDER BY timestamp DESC 
+                                LIMIT $3
+                            ) AS sub 
+                            ORDER BY timestamp ASC
+                        `;
+                        params = [req.params.chatId, before, safeLimit];
+                    } else {
+                        query = `
+                            SELECT * FROM (
+                                SELECT id, message_id, body, timestamp, is_from_me, is_group, chat_id, sender_id, sender_name, has_media, media_path, media_mime_type, property_group_id, real_property_id, neighborhood, district, municipality, analysis_error, ia_property_id
+                                FROM messages 
+                                WHERE chat_id = $1
+                                ORDER BY timestamp DESC 
+                                LIMIT $2
+                            ) AS sub 
+                            ORDER BY timestamp ASC
+                        `;
+                        params = [req.params.chatId, safeLimit];
+                    }
+                    const { rows } = await db.query(query, params);
+                    res.json(rows);
+                } catch (e) {
+                    res.status(500).json({ error: e.message });
+                }
+            });
+
             // -- ROUTES STATUS BOT --
             app.get('/api/status', (req, res) => {
                 res.json({ status: botStatus });

@@ -147,7 +147,7 @@ function App() {
   const [isGroupSelection, setIsGroupSelection] = useState(false);
 
   // ─── NOUVEAUX ÉTATS (RECHERCHE & BIENS) ──────────────────────────────────────
-  const [viewMode, setViewMode] = useState('chats'); // 'chats', 'properties', 'rejected', 'pending' ou 'analysis'
+  const [viewMode, setViewMode] = useState('chats'); // 'chats', 'properties', 'rejected', 'pending', 'analysis' ou 'full_access'
   const [rejectedGroups, setRejectedGroups] = useState({ total: 0, by_error: {}, groups: [] });
   const [pendingGroups, setPendingGroups] = useState({ total: 0, groups: [] });
   const [isLoadingRejected, setIsLoadingRejected] = useState(false);
@@ -182,13 +182,14 @@ function App() {
   // ─── POLLING CHATS ──────────────────────────────────────────────────────────
   const fetchChats = useCallback(async () => {
     try {
-      const response = await fetch('/api/chats');
+      const endpoint = viewMode === 'full_access' ? '/api/full/chats' : '/api/chats';
+      const response = await fetch(endpoint);
       const data = await response.json();
       setChats(data);
     } catch (e) {
       console.error('fetchChats error', e);
     }
-  }, []);
+  }, [viewMode]);
 
   useEffect(() => {
     fetchChats();
@@ -341,7 +342,9 @@ function App() {
         // 🔒 Activer le verrou : empêche loadOlderMessages de se déclencher pendant le chargement
         isInitialLoadingRef.current = true;
 
-        const data = await (await fetch(`/api/messages/${currentChatId}?limit=${PAGE_SIZE}`)).json();
+        // Déterminer le endpoint selon le mode
+        const endpoint = viewMode === 'full_access' ? `/api/full/messages/${currentChatId}` : `/api/messages/${currentChatId}`;
+        const data = await (await fetch(`${endpoint}?limit=${PAGE_SIZE}`)).json();
         setMessages(data);
         setHasMore(data.length === PAGE_SIZE);
         lastNewMsgCount.current = data.length;
@@ -370,7 +373,9 @@ function App() {
       try {
         const chatId = currentChatIdRef.current;
         if (!chatId) return;
-        const data = await (await fetch(`/api/messages/${chatId}?limit=${PAGE_SIZE}`)).json();
+        
+        const endpoint = viewMode === 'full_access' ? `/api/full/messages/${chatId}` : `/api/messages/${chatId}`;
+        const data = await (await fetch(`${endpoint}?limit=${PAGE_SIZE}`)).json();
         setMessages(prev => {
           // 1. Détection d'erreurs NestJS pour le toast (une seule fois par message)
           const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
@@ -425,7 +430,7 @@ function App() {
     }, 2500);
 
     return () => { clearInterval(poll); currentChatIdRef.current = null; };
-  }, [currentChatId]);
+  }, [currentChatId, viewMode]);
 
   // ─── SCROLL AUTO UNIQUEMENT SI DÉJÀ EN BAS ET NOUVEAU MSG ───────────────────
   useEffect(() => {
@@ -463,7 +468,8 @@ function App() {
     const oldestTimestamp = messages[0].timestamp;
 
     try {
-      const older = await (await fetch(`/api/messages/${currentChatId}?limit=${PAGE_SIZE}&before=${oldestTimestamp}`)).json();
+      const endpoint = viewMode === 'full_access' ? `/api/full/messages/${currentChatId}` : `/api/messages/${currentChatId}`;
+      const older = await (await fetch(`${endpoint}?limit=${PAGE_SIZE}&before=${oldestTimestamp}`)).json();
       if (older.length === 0) { setHasMore(false); return; }
 
       setMessages(prev => [...older, ...prev]);
@@ -478,7 +484,7 @@ function App() {
       });
     } catch (e) { console.error('load older', e); }
     finally { setIsLoadingMore(false); }
-  }, [currentChatId, messages, isLoadingMore, hasMore]);
+  }, [currentChatId, messages, isLoadingMore, hasMore, viewMode]);
 
   // ─── GESTION DU SCROLL (MÉMOIRE + CHARGE + BOUTON) ─────────────────────────
   const handleScroll = useCallback(() => {
@@ -1185,6 +1191,13 @@ function App() {
             >
               ⚠️
             </button>
+            <button
+              className={`view-toggle ${viewMode === 'full_access' ? 'active' : ''}`}
+              onClick={() => { setViewMode('full_access'); setSearchTerm(''); }}
+              title="Accès Total (Tout voir)"
+            >
+              🔓
+            </button>
           </div>
         </header>
 
@@ -1203,7 +1216,7 @@ function App() {
         </div>
 
         <div className="chat-list">
-          {(viewMode === 'chats' || viewMode === 'analysis') ? (
+          {(viewMode === 'chats' || viewMode === 'analysis' || viewMode === 'full_access') ? (
             searchTerm.length >= 2 ? (
               /* Résultats de recherche */
               <div className="search-results">
@@ -1478,12 +1491,14 @@ function App() {
                 {getInitials(currentChatName)}
               </div>
               <div className="chat-header-info">
-                <div className="name">{currentChatName}</div>
+                <div className="name">
+                  {currentChatName} {viewMode === 'full_access' && '🔓'}
+                </div>
                 <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                    {isLoadingMore ? 'Chargement...' : 'En ligne'}
+                    {viewMode === 'full_access' ? 'Vue Sans Restriction' : (isLoadingMore ? 'Chargement...' : 'En ligne')}
                   </div>
-                  {(() => {
+                  {viewMode !== 'full_access' && (() => {
                     const pendingCount = groupedContent.filter(item => item.type === 'wrapper' && !item.isCreated).length;
                     return (
                       <div style={{
@@ -1499,49 +1514,6 @@ function App() {
                       </div>
                     );
                   })()}
-                  {/* <button
-                    className="auto-analyze-btn"
-                    title="Analyse automatique de l'historique"
-                    onClick={async () => {
-                      if (!currentChatId) return;
-                      setToast({ message: "📈 Analyse en cours...", type: 'success' });
-                      try {
-                        const res = await fetch(`/api/messages/analyze-chat/${encodeURIComponent(currentChatId)}`, { method: 'POST' });
-                        const data = await res.json();
-                        setToast({ message: `✅ ${data.message}`, type: 'success' });
-                        // Recharger les messages pour voir les nouveaux groupements
-                        const refreshRes = await fetch(`/api/messages/${currentChatId}?limit=100`);
-                        const refreshData = await refreshRes.json();
-                        setMessages(refreshData);
-                      } catch (e) { setToast({ message: "❌ Échec de l'analyse", type: 'error' }); }
-                    }}
-                  >
-                    🤖 Auto Analyse
-                  </button>
-                  <button
-                    className="auto-analyze-btn"
-                    title="Soumettre tous les groupes détectés à NestJS"
-                    style={{ backgroundColor: '#00a884' }}
-                    onClick={async () => {
-                      if (!currentChatId) return;
-                      setToast({ message: "🚀 Lancement du traitement par lot...", type: 'success' });
-                      try {
-                        const res = await fetch(`/api/messages/batch-submit/${encodeURIComponent(currentChatId)}`, { method: 'POST' });
-                        const data = await res.json();
-                        setToast({ message: `✅ ${data.message}`, type: 'success' });
-                      } catch (e) { setToast({ message: "❌ Échec du traitement", type: 'error' }); }
-                    }}
-                  >
-                    🚀 Batch Submit
-                  </button>
-                  <button
-                    className={`auto-analyze-btn ${showCreatedOnly ? 'active-filter' : ''}`}
-                    title={showCreatedOnly ? "Voir les messages à traiter" : "Voir uniquement les biens créés"}
-                    style={{ backgroundColor: showCreatedOnly ? '#3b82f6' : '#667781' }}
-                    onClick={() => setShowCreatedOnly(!showCreatedOnly)}
-                  >
-                    {showCreatedOnly ? '📂 Voir à traiter' : '✅ Voir créés'}
-                  </button> */}
                 </div>
               </div>
             </header>
@@ -1562,8 +1534,8 @@ function App() {
               {(() => {
                 const FORBIDDEN_PATTERN = /vendre|vente|parcelle|terrain|titre\sfoncier|\stf\s|\stf\n|domaine|\stf$|opportunite|recherche/i;
                 return groupedContent.filter(item => {
-                  // En mode 'analysis', on ne filtre RIEN !
-                  if (viewMode === 'analysis') return true;
+                  // En mode 'analysis' ou 'full_access', on ne filtre RIEN !
+                  if (viewMode === 'analysis' || viewMode === 'full_access') return true;
 
                   // 1. Cacher les détections déjà dans le Dashboard 📂
                   if (viewMode === 'chats' && item.type === 'wrapper' && !item.isCreated) {
