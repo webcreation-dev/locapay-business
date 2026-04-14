@@ -48,7 +48,7 @@ const getDateLabel = (timestamp) => {
   return date.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }).toUpperCase();
 };
 
-const PAGE_SIZE = 30; // Messages chargés par page
+const PAGE_SIZE = 100; // Messages chargés par page
 
 // ─── TRADUCTION DES CHAMPS MANQUANTS ─────────────────────────────────────────
 const translateFieldName = (field) => ({
