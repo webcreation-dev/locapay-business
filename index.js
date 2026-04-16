@@ -124,6 +124,25 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
                 );
             `);
             console.log('✅ Table "messages" prête dans PostgreSQL.');
+            
+            // --- UTILITAIRE DE NETTOYAGE AUTO ---
+            const deleteMediaFiles = async (messageIds) => {
+                if (!messageIds || messageIds.length === 0) return;
+                try {
+                    const { rows } = await db.query('SELECT media_path FROM messages WHERE id = ANY($1) AND media_path IS NOT NULL', [messageIds]);
+                    for (const row of rows) {
+                        const localPath = path.resolve(__dirname, row.media_path);
+                        if (fs.existsSync(localPath)) {
+                            fs.unlinkSync(localPath);
+                            // console.log(`🗑️ Média supprimé (auto-purge): ${row.media_path}`);
+                        }
+                    }
+                    // On vide media_path dans la DB pour acter la suppression
+                    await db.query('UPDATE messages SET media_path = NULL WHERE id = ANY($1)', [messageIds]);
+                } catch (err) {
+                    console.error("❌ Erreur lors de la suppression auto des médias:", err.message);
+                }
+            };
 
             // On s'assure d'ajouter de nouvelles colonnes si elles n'existent pas encore (pour les tables existantes)
             await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_path TEXT;');
@@ -335,7 +354,21 @@ Texte à analyser : "${description}"
                             )
                         )
                     `);
-                    return (res1.rowCount || 0) + (res2.rowCount || 0) + (res3.rowCount || 0) + (res4.rowCount || 0);
+                    const totalPurged = (res1.rowCount || 0) + (res2.rowCount || 0) + (res3.rowCount || 0) + (res4.rowCount || 0);
+
+                    // --- AUTO-PURGE : Suppression physique des fichiers marqués comme noise ---
+                    if (totalPurged > 0) {
+                        try {
+                            const { rows } = await db.query("SELECT id FROM messages WHERE property_group_id = 'noise' AND media_path IS NOT NULL");
+                            if (rows.length > 0) {
+                                await deleteMediaFiles(rows.map(r => r.id));
+                            }
+                        } catch (purgeErr) {
+                            console.error("⚠️ Erreur lors de la purge physique du bruit:", purgeErr.message);
+                        }
+                    }
+
+                    return totalPurged;
                 } catch (e) {
                     console.error("❌ Error internalPurgeNoise:", e);
                     throw e;
@@ -898,6 +931,8 @@ Texte à analyser : "${description}"
                     if (foundKeyword) {
                         // Marquer comme noise directement et effacer l'erreur pour qu'il disparaisse des rejets
                         await db.query(`UPDATE messages SET property_group_id = 'noise', submission_failed = TRUE, analysis_error = NULL WHERE id = ANY($1)`, [messageIds]);
+                        // Suppression auto du média car c'est du bruit (Vente/Terrain)
+                        await deleteMediaFiles(messageIds);
                         return { success: false, error: `Ignoré (Vente/Terrain): "${foundKeyword}"` };
                     }
 
@@ -950,10 +985,13 @@ Texte à analyser : "${description}"
                         if (nestData.success) {
                             const property_id = nestData.property_id || nestData.propertyId;
                             const { location } = nestData;
-                            await db.query(
                                 `UPDATE messages SET property_group_id = $1, real_property_id = $2, neighborhood = $3, district = $4, municipality = $5, is_analyzed = TRUE, analyzed_at = CURRENT_TIMESTAMP, analysis_error = NULL WHERE id = ANY($6)`,
                                 [`real_prop_${property_id}`, property_id, location?.neighborhood || '', location?.district || '', location?.municipality || '', messageIds]
                             );
+
+                            // --- AUTO-PURGE : Suppression des images locales après envoi réussi ---
+                            await deleteMediaFiles(messageIds);
+
                             return { success: true, propertyId: property_id };
                         } else {
                             let errMsg = nestData.error || nestData.message || "Erreur de traitement";
