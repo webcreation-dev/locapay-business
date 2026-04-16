@@ -7,6 +7,8 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const axios = require('axios');
+const nodemailer = require('nodemailer');
+
 
 // --- SETUP SERVEUR WEB (Frontend & API) ---
 const app = express();
@@ -36,6 +38,37 @@ app.listen(3000, () => {
     console.log('✅ Frontend et API Web disponibles sur http://localhost:3000');
 });
 // ------------------------------------------
+
+// --- CONFIGURATION ALERTE MAIL ---
+const transporter = nodemailer.createTransport({
+    host: process.env.MAIL_HOST || 'smtp.gmail.com',
+    port: parseInt(process.env.MAIL_PORT) || 465,
+    secure: true, 
+    auth: {
+        user: process.env.MAIL_USERNAME,
+        pass: process.env.MAIL_PASSWORD,
+    },
+});
+
+async function sendErrorAlert(errorContext, error) {
+    console.log("📨 Tentative d'envoi d'alerte mail...");
+    const recipient = process.env.ALERT_EMAIL || 'adjilan2403@gmail.com';
+    try {
+        await transporter.sendMail({
+            from: `"WhatsApp Bot Alert" <${process.env.MAIL_USERNAME}>`,
+            to: recipient,
+            subject: `⚠️ ALERTE BOT : ${errorContext}`,
+            text: `Une erreur est survenue sur le bot WhatsApp.\n\nContexte : ${errorContext}\nErreur : ${error && error.message ? error.message : error}\n\nDate : ${new Date().toLocaleString()}`,
+            html: `<p><strong>Une erreur est survenue sur le bot WhatsApp.</strong></p>
+                   <p><strong>Contexte :</strong> ${errorContext}</p>
+                   <p><strong>Erreur :</strong> ${error && error.message ? error.message : error}</p>
+                   <p><em>Date : ${new Date().toLocaleString()}</em></p>`
+        });
+        console.log(`✅ Alerte mail envoyée avec succès à ${recipient}.`);
+    } catch (mailErr) {
+        console.error("❌ Échec de l'envoi du mail d'alerte :", mailErr.message);
+    }
+}
 
 // Connexion à PostgreSQL
 const db = new Pool({
@@ -169,27 +202,27 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
                 const prompt = `
 Tu es un extracteur de données immobilières pour WhatsApp. Analyse la description suivante et extrait les informations selon les champs spécifiés (JSON uniquement).
 
-⚠️ RÈGLE CRITIQUE: Retourne UNIQUEMENT les champs mentionnés explicitement dans la description. NE JAMAIS INVENTER d'informations.
+⚠️ RÈGLES CRITIQUES :
+1. NE JAMAIS INVENTER d'informations. Si le prix n'est pas mentionné, retourne "rent_price": null.
+2. PRIORITÉ TYPE : Si un texte mentionne un usage commercial (boutique ou magasin), ce type est PRIORITAIRE pour le champ "type" même s'il y a des chambres/salons.
+3. TYPES : "Magasin" -> STORE, "Boutique" -> SHOP.
 
 📚 EXEMPLES CONCRETS D'EXTRACTION :
 Exemple 1: "Chambre salon à Calavi Tokan, loyer 25000" -> {"type": "APARTMENT", "rent_price": 25000, "localisation": "Calavi Tokan", "number_rooms": 1, "number_living_rooms": 1, "sanitary": "YES"}
-Exemple 2: "Entrée couchée à Maria Gleta, loyer 20000" -> {"type": "STUDIO", "rent_price": 20000, "localisation": "Maria Gleta", "number_rooms": 0, "number_living_rooms": 1, "sanitary": "YES"}
-Exemple 3: "Magasin à louer à Godomey, loyer 50000" -> {"type": "STORE", "rent_price": 50000, "localisation": "Godomey", "number_rooms": 1, "number_living_rooms": 0, "sanitary": "YES"}
-Exemple 4: "Boutique disponible à Cotonou centre, 35000 FCFA" -> {"type": "STORE", "rent_price": 35000, "localisation": "Cotonou centre", "number_rooms": 1, "number_living_rooms": 0, "sanitary": "YES"}
-
-⚠️ RÈGLE SPÉCIALE MAGASINS/BOUTIQUES :
-Pour les types STORE, SHOP, OFFICE (magasins, boutiques, bureaux) : TOUJOURS mettre "number_rooms": 1 et "number_living_rooms": 0 par défaut.
+Exemple 2: "Magasin à louer à Godomey, loyer 50000" -> {"type": "STORE", "rent_price": 50000, "localisation": "Godomey", "number_rooms": 1, "number_living_rooms": 0}
+Exemple 3: "Boutique disponible avec 2 chambres salon à Cotonou, 35000 FCFA" -> {"type": "SHOP", "rent_price": 35000, "localisation": "Cotonou", "number_rooms": 2, "number_living_rooms": 1}
+Exemple 4: "Villa à louer à Fidjrossè, 4 chambres" -> {"type": "VILLA", "rent_price": null, "localisation": "Fidjrossè", "number_rooms": 4, "number_living_rooms": 1}
 
 🎯 CHAMPS À EXTRAIRE (SI MENTIONNÉS) :
-- "type": "HOUSE|APARTMENT|STUDIO|VILLA|SHOP|STORE|PARCEL|OFFICE|BUILDING"
+- "type": "HOUSE|APARTMENT|STUDIO|VILLA|SHOP|STORE|PARCEL|BUILDING"
 - "to_sell": false (On accepte que les locations)
-- "rent_price": nombre (prix en FCFA)
+- "rent_price": nombre (prix en FCFA) ou null
 - "visit_price": nombre (prix de visite en FCFA, défaut: 2000)
 - "commission": nombre (commission agence)
 - "description": la description originale complète
 - "localisation": (Quartier et points de repère). EXTRÊMEMENT IMPORTANT : Extrais le lieu exact (ex: "Calavi Tokan", "Fidjrossè", "Akpakpa").
 - "number_living_rooms": nombre de salons
-- "number_rooms": nombre de chambres (Pour STUDIO/ENTRÉE COUCHÉE, c'est 0 chambre)
+- "number_rooms": nombre de chambres (Pour STUDIO c'est 0 chambre)
 - "tarification": "MONTHLY|DAILY"
 - "sanitary": "YES" (sanitaire) ou "NO" (ordinaire)
 - "caution": nombre (caution en FCFA)
@@ -1238,6 +1271,10 @@ Texte à analyser : "${description}"
                     });
                 } catch (error) {
                     console.error("❌ Erreur lors de l\\'envoi du message :", error);
+                    // Alert email only for critical Puppeteer/WWebJS errors
+                    if (error.message.includes('detached Frame') || error.message.includes('getChat') || error.message.includes('Execution context was destroyed')) {
+                        await sendErrorAlert("Échec d'envoi de message (Erreur Critique)", error);
+                    }
                     res.status(500).json({ error: error.message });
                 }
             });
@@ -1285,6 +1322,24 @@ const client = new Client({
     puppeteer: puppeteerOptions
 });
 
+// --- SYSTÈME DE WATCHDOG (INACTIVITÉ) ---
+let lastMessageReceivedAt = Date.now();
+let inactivityAlertSent = false;
+
+// Vérification toutes les 30 minutes
+setInterval(async () => {
+    const hoursSinceLastMessage = (Date.now() - lastMessageReceivedAt) / (1000 * 60 * 60);
+    
+    // Si plus de 2h d'inactivité et qu'on n'a pas encore envoyé l'alerte
+    if (hoursSinceLastMessage >= 2 && !inactivityAlertSent && botStatus === 'CONNECTED') {
+        await sendErrorAlert(
+            "Inactivité suspecte (2h+)", 
+            `Le bot n'a reçu aucun message depuis ${Math.round(hoursSinceLastMessage)} heures. Il est peut-être gelé ou déconnecté silencieusement.`
+        );
+        inactivityAlertSent = true; // Évite de spammer des mails toutes les 30 min
+    }
+}, 30 * 60 * 1000);
+
 client.on('qr', (qr) => {
     // Generate and display in terminal too
     qrcode.generate(qr, { small: true });
@@ -1327,11 +1382,16 @@ client.on('auth_failure', () => {
 });
 
 client.on('disconnected', () => {
-    console.log('Bot déconnecté.');
+    console.log('❌ Client déconnecté. Veuillez scanner à nouveau !');
     botStatus = 'DISCONNECTED';
+    sendErrorAlert("Bot DISCONNECTED", "Le bot a été déconnecté de WhatsApp. Il faut probablement rescanner le QR Code.");
 });
 
 client.on('message_create', async msg => {
+    // Mise à jour du watchdog à chaque nouveau message
+    lastMessageReceivedAt = Date.now();
+    inactivityAlertSent = false; 
+
     try {
         let chat = null;
         let contact = null;

@@ -18,6 +18,7 @@
     "express": "^5.2.1",
     "pg": "^8.20.0",
     "qrcode-terminal": "^0.12.0",
+    "nodemailer": "^6.10.0",
     "whatsapp-web.js": "https://github.com/wwebjs/whatsapp-web.js/archive/refs/heads/main.tar.gz"
   }
 }
