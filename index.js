@@ -52,7 +52,7 @@ const transporter = nodemailer.createTransport({
 
 async function sendErrorAlert(errorContext, error) {
     console.log("📨 Tentative d'envoi d'alerte mail...");
-    const recipient = process.env.ALERT_EMAIL || 'adjilan2403@gmail.com';
+    const recipient = 'adjilan2403@gmail.com, agossadourin@gmail.com';
     try {
         await transporter.sendMail({
             from: `"WhatsApp Bot Alert" <${process.env.MAIL_USERNAME}>`,
