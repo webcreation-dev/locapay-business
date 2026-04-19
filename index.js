@@ -43,7 +43,7 @@ app.listen(3000, () => {
 const transporter = nodemailer.createTransport({
     host: process.env.MAIL_HOST || 'smtp.gmail.com',
     port: parseInt(process.env.MAIL_PORT) || 465,
-    secure: true, 
+    secure: true,
     auth: {
         user: process.env.MAIL_USERNAME,
         pass: process.env.MAIL_PASSWORD,
@@ -124,7 +124,7 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
                 );
             `);
             console.log('✅ Table "messages" prête dans PostgreSQL.');
-            
+
             // --- UTILITAIRE DE NETTOYAGE AUTO ---
             const deleteMediaFiles = async (messageIds) => {
                 if (!messageIds || messageIds.length === 0) return;
@@ -203,7 +203,7 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
                     }
                     return char;
                 }).join('');
-                
+
                 // 2. Normaliser les accents et mettre en minuscule
                 return result.normalize('NFKD').replace(/[\u0300-\u036f]/g, "").toLowerCase();
             }
@@ -864,7 +864,7 @@ Texte à analyser : "${description}"
                     res.status(500).json({ error: e.message });
                 }
             });
-            
+
             // --- LOGIQUE DE SOUMISSION RÉUTILISABLE ---
             async function internalProcessPropertySubmission(messageIds) {
                 if (!messageIds || !Array.isArray(messageIds) || messageIds.length === 0) return { success: false, error: "IDs invalides" };
@@ -961,7 +961,7 @@ Texte à analyser : "${description}"
                     }
 
                     const nestUrl = process.env.NESTJS_API_URL || 'http://host.docker.internal:4000/properties/create-from-whatsapp';
-                    
+
                     try {
                         console.log(`📤 Envoi à NestJS: ${imagesBase64.length} images, groupe: ${whatsappGroupName} (${whatsappGroupId})...`);
                         const response = await axios.post(nestUrl, {
@@ -985,11 +985,29 @@ Texte à analyser : "${description}"
                         if (nestData.success) {
                             const property_id = nestData.property_id || nestData.propertyId;
                             const { location } = nestData;
-                                `UPDATE messages SET property_group_id = $1, real_property_id = $2, neighborhood = $3, district = $4, municipality = $5, is_analyzed = TRUE, analyzed_at = CURRENT_TIMESTAMP, analysis_error = NULL WHERE id = ANY($6)`,
-                                [`real_prop_${property_id}`, property_id, location?.neighborhood || '', location?.district || '', location?.municipality || '', messageIds]
+
+                            await db.query(
+                                `UPDATE messages 
+                                SET property_group_id = $1, 
+                                    real_property_id = $2, 
+                                    neighborhood = $3, 
+                                    district = $4, 
+                                    municipality = $5, 
+                                    is_analyzed = TRUE, 
+                                    analyzed_at = CURRENT_TIMESTAMP, 
+                                    analysis_error = NULL 
+                                WHERE id = ANY($6)`,
+                                [
+                                    `real_prop_${property_id}`,
+                                    property_id,
+                                    location?.neighborhood || '',
+                                    location?.district || '',
+                                    location?.municipality || '',
+                                    messageIds
+                                ]
                             );
 
-                            // --- AUTO-PURGE : Suppression des images locales après envoi réussi ---
+                            // --- AUTO-PURGE ---
                             await deleteMediaFiles(messageIds);
 
                             return { success: true, propertyId: property_id };
@@ -1029,7 +1047,7 @@ Texte à analyser : "${description}"
             // 🚀 BATCH SUBMIT : Traiter tous les groupements d'un chat
             app.post('/api/messages/batch-submit/:chatId', async (req, res) => {
                 const { chatId } = req.params;
-                
+
                 try {
                     // 1. Trouver tous les groupes uniques qui n'ont pas encore de real_property_id
                     const { rows: groups } = await db.query(
@@ -1055,19 +1073,19 @@ Texte à analyser : "${description}"
                                     "SELECT id FROM messages WHERE property_group_id = $1",
                                     [group.property_group_id]
                                 );
-                                
+
                                 const msgIds = msgRows.map(r => r.id);
                                 if (msgIds.length === 0) continue;
 
                                 console.log(`⏳ Batch : traitement du groupe ${group.property_group_id} (${msgIds.length} msgs)...`);
                                 const result = await internalProcessPropertySubmission(msgIds);
-                                
+
                                 if (result.success) successCount++;
                                 else {
                                     errorCount++;
                                     console.warn(`⚠️ Échec groupe ${group.property_group_id} : ${result.error}`);
                                 }
-                                
+
                                 // Petite pause pour ne pas saturer
                                 await new Promise(r => setTimeout(r, 2000));
                             } catch (groupError) {
@@ -1147,7 +1165,7 @@ Texte à analyser : "${description}"
 
                     sendEvent({ type: 'progress', message: '🚀 Étape 3/3 : Soumission des biens à NestJS...' });
                     const result = await internalBatchSubmitAll(sendEvent);
-                    
+
                     sendEvent({ type: 'complete', message: `✨ Workflow terminé : ${result.success} nouveaux biens.`, ...result });
                     res.end();
                 } catch (e) {
@@ -1367,11 +1385,11 @@ let inactivityAlertSent = false;
 // Vérification toutes les 30 minutes
 setInterval(async () => {
     const hoursSinceLastMessage = (Date.now() - lastMessageReceivedAt) / (1000 * 60 * 60);
-    
+
     // Si plus de 2h d'inactivité et qu'on n'a pas encore envoyé l'alerte
     if (hoursSinceLastMessage >= 2 && !inactivityAlertSent && botStatus === 'CONNECTED') {
         await sendErrorAlert(
-            "Inactivité suspecte (2h+)", 
+            "Inactivité suspecte (2h+)",
             `Le bot n'a reçu aucun message depuis ${Math.round(hoursSinceLastMessage)} heures. Il est peut-être gelé ou déconnecté silencieusement.`
         );
         inactivityAlertSent = true; // Évite de spammer des mails toutes les 30 min
@@ -1428,7 +1446,7 @@ client.on('disconnected', () => {
 client.on('message_create', async msg => {
     // Mise à jour du watchdog à chaque nouveau message
     lastMessageReceivedAt = Date.now();
-    inactivityAlertSent = false; 
+    inactivityAlertSent = false;
 
     try {
         let chat = null;
