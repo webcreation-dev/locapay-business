@@ -1303,10 +1303,14 @@ Texte à analyser : "${description}"
                         currentState = 'ERROR_GETTING_STATE';
                     }
 
-                    if (currentState !== 'CONNECTED' && botStatus !== 'CONNECTED') {
+                    if (currentState !== 'CONNECTED' || botStatus !== 'CONNECTED') {
+                        let details = `Statut variable: ${botStatus}, Statut client: ${currentState}`;
+                        if (botStatus === 'AUTHENTICATED' || currentState === 'AUTHENTICATED') {
+                            details = "Le bot est authentifié mais encore en phase de chargement (initialisation des scripts WhatsApp). Veuillez patienter quelques secondes.";
+                        }
                         return res.status(503).json({
-                            error: "Le bot WhatsApp n'est pas connecté.",
-                            details: `Statut variable: ${botStatus}, Statut client: ${currentState}`
+                            error: "Le bot WhatsApp n'est pas encore prêt pour l'envoi.",
+                            details: details
                         });
                     }
 
@@ -1428,8 +1432,8 @@ client.on('ready', () => {
 });
 
 client.on('authenticated', () => {
-    console.log('Authentification réussie, la connexion/session a été persistée automatiquement.');
-    botStatus = 'CONNECTED';
+    console.log('--- AUTHENTICATED: Chargement de la session en cours ---');
+    botStatus = 'AUTHENTICATED';
 });
 
 client.on('auth_failure', () => {
