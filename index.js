@@ -1388,15 +1388,15 @@ let inactivityAlertSent = false;
 
 // Vérification toutes les 30 minutes
 setInterval(async () => {
-    const hoursSinceLastMessage = (Date.now() - lastMessageReceivedAt) / (1000 * 60 * 60);
+    const minutesSinceLastMessage = (Date.now() - lastMessageReceivedAt) / (1000 * 60);
 
-    // Si plus de 2h d'inactivité et qu'on n'a pas encore envoyé l'alerte
-    if (hoursSinceLastMessage >= 2 && !inactivityAlertSent && botStatus === 'CONNECTED') {
+    // Si plus de 30 min d'inactivité
+    if (minutesSinceLastMessage >= 30 && !inactivityAlertSent && botStatus === 'CONNECTED') {
         await sendErrorAlert(
-            "Inactivité suspecte (2h+)",
-            `Le bot n'a reçu aucun message depuis ${Math.round(hoursSinceLastMessage)} heures. Il est peut-être gelé ou déconnecté silencieusement.`
+            "Inactivité suspecte (30min+)",
+            `Le bot n'a reçu aucun message depuis ${Math.round(minutesSinceLastMessage)} minutes. Il est peut-être gelé ou déconnecté silencieusement.`
         );
-        inactivityAlertSent = true; // Évite de spammer des mails toutes les 30 min
+        inactivityAlertSent = true;
     }
 }, 30 * 60 * 1000);
 
