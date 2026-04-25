@@ -144,6 +144,45 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
                 }
             };
 
+            // --- NETTOYAGE PÉRIODIQUE DES MÉDIAS ANALYSÉS ---
+            const cleanupAnalyzedMedia = async () => {
+                try {
+                    // Supprimer les médias des messages avec un bien créé (real_property_id) ou analysés
+                    const { rows } = await db.query(`
+                        SELECT id, media_path FROM messages
+                        WHERE media_path IS NOT NULL
+                        AND (real_property_id IS NOT NULL OR is_analyzed = TRUE)
+                    `);
+
+                    if (rows.length === 0) {
+                        console.log('🧹 Aucun média à nettoyer.');
+                        return 0;
+                    }
+
+                    let deletedCount = 0;
+                    for (const row of rows) {
+                        const localPath = path.resolve(__dirname, row.media_path);
+                        if (fs.existsSync(localPath)) {
+                            fs.unlinkSync(localPath);
+                            deletedCount++;
+                        }
+                    }
+
+                    // Mettre à jour la DB
+                    await db.query(`
+                        UPDATE messages SET media_path = NULL
+                        WHERE media_path IS NOT NULL
+                        AND (real_property_id IS NOT NULL OR is_analyzed = TRUE)
+                    `);
+
+                    console.log(`🧹 Nettoyage terminé : ${deletedCount} fichiers supprimés.`);
+                    return deletedCount;
+                } catch (err) {
+                    console.error("❌ Erreur nettoyage médias:", err.message);
+                    return 0;
+                }
+            };
+
             // On s'assure d'ajouter de nouvelles colonnes si elles n'existent pas encore (pour les tables existantes)
             await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_path TEXT;');
             await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_mime_type TEXT;');
@@ -380,6 +419,16 @@ Texte à analyser : "${description}"
                 try {
                     const total = await internalPurgeNoise();
                     res.json({ success: true, message: `${total} messages nettoyés au total.` });
+                } catch (e) {
+                    res.status(500).json({ error: e.message });
+                }
+            });
+
+            // 🧹 Nettoyage manuel des médias analysés
+            app.post('/api/cleanup-media', async (req, res) => {
+                try {
+                    const count = await cleanupAnalyzedMedia();
+                    res.json({ success: true, message: `${count} fichiers médias supprimés.` });
                 } catch (e) {
                     res.status(500).json({ error: e.message });
                 }
@@ -1179,20 +1228,25 @@ Texte à analyser : "${description}"
                 console.log('🕒 --- DÉBUT DU WORKFLOW AUTOMATISÉ (30 min) ---');
                 try {
                     // 1. Purge
-                    console.log('🕒 Étape 1/3 : Grande Purge...');
+                    console.log('🕒 Étape 1/4 : Grande Purge...');
                     const purgeCount = await internalPurgeNoise();
                     console.log(`🕒 Purge terminée : ${purgeCount} messages nettoyés.`);
 
                     // 2. Analyse / Groupement
-                    console.log('🕒 Étape 2/3 : Analyse et Groupement...');
+                    console.log('🕒 Étape 2/4 : Analyse et Groupement...');
                     const runAll = app.get('runAutoGroupHeuristicAllChats');
                     if (runAll) await runAll();
                     console.log('🕒 Analyse terminée.');
 
                     // 3. Soumission
-                    console.log('🕒 Étape 3/3 : Soumission en lot...');
+                    console.log('🕒 Étape 3/4 : Soumission en lot...');
                     const submitResult = await internalBatchSubmitAll();
                     console.log(`🕒 Soumission terminée : ${submitResult.success} succès, ${submitResult.errors} erreurs.`);
+
+                    // 4. Nettoyage des médias
+                    console.log('🕒 Étape 4/4 : Nettoyage des médias...');
+                    const cleanedCount = await cleanupAnalyzedMedia();
+                    console.log(`🕒 Nettoyage terminé : ${cleanedCount} fichiers supprimés.`);
 
                     console.log('🕒 --- WORKFLOW AUTOMATISÉ TERMINÉ AVEC SUCCÈS ---');
                 } catch (e) {
