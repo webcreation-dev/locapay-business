@@ -1440,11 +1440,12 @@ const client = new Client({
 let lastMessageReceivedAt = Date.now();
 let inactivityAlertSent = false;
 
-// Vérification toutes les 30 minutes
+// Vérification toutes les 15 minutes
 setInterval(async () => {
     const minutesSinceLastMessage = (Date.now() - lastMessageReceivedAt) / (1000 * 60);
+    console.log(`⏱️ Watchdog : ${Math.round(minutesSinceLastMessage)} min depuis le dernier message.`);
 
-    // Si plus de 30 min d'inactivité
+    // Si plus de 30 min d'inactivité : Alerte Mail
     if (minutesSinceLastMessage >= 30 && !inactivityAlertSent && botStatus === 'CONNECTED') {
         await sendErrorAlert(
             "Inactivité suspecte (30min+)",
@@ -1452,7 +1453,20 @@ setInterval(async () => {
         );
         inactivityAlertSent = true;
     }
-}, 30 * 60 * 1000);
+
+    // Si plus de 60 min d'inactivité : Auto-Réparation (Redémarrage)
+    if (minutesSinceLastMessage >= 60 && botStatus === 'CONNECTED') {
+        console.error("🚨 CRITICAL: Inactivité prolongée (>60min). Tentative de redémarrage automatique...");
+        await sendErrorAlert(
+            "Auto-Réparation : Redémarrage",
+            `Inactivité persistante depuis ${Math.round(minutesSinceLastMessage)} minutes. Le bot va tenter de se redémarrer pour rétablir la connexion.`
+        );
+        // On attend un peu pour que le mail parte
+        setTimeout(() => {
+            process.exit(1); // Docker redémarrera le container
+        }, 5000);
+    }
+}, 15 * 60 * 1000);
 
 client.on('qr', (qr) => {
     // Generate and display in terminal too
