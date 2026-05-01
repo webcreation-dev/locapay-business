@@ -912,7 +912,7 @@ function App() {
     let lastGroupId = null;
 
     filteredMessages.forEach((msg, index) => {
-      const isPureMedia = msg.has_media && (!msg.body || msg.body.trim() === '');
+      const isPureMedia = msg.has_media && msg.media_path && (!msg.body || msg.body.trim() === '');
       const currentGroupId = msg.property_group_id;
 
       // On groupe si c'est pur media ET que c'est le même "parent" (groupe ou null)
@@ -983,7 +983,7 @@ function App() {
             <div className="media-batch-grid">
               {item.messages.slice(0, 4).map((m, idx) => (
                 <div key={m.id} className="media-batch-item">
-                  {m.media_mime_type?.startsWith('image/') && <img src={'/' + m.media_path.replace('./', '')} alt="" />}
+                  {m.media_mime_type?.startsWith('image/') && m.media_path && <img src={'/' + m.media_path.replace('./', '')} alt="" />}
                   {idx === 3 && item.messages.length > 4 && (
                     <div className="media-batch-more">+{item.messages.length - 4}</div>
                   )}
