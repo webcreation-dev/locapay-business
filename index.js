@@ -1436,37 +1436,45 @@ const client = new Client({
     puppeteer: puppeteerOptions
 });
 
-// --- SYSTÈME DE WATCHDOG (INACTIVITÉ) ---
+// --- SYSTÈME DE WATCHDOG AGRESSIF (ANTI-GEL) ---
 let lastMessageReceivedAt = Date.now();
 let inactivityAlertSent = false;
 
-// Vérification toutes les 15 minutes
+// Vérification toutes les 5 minutes pour une réactivité maximale
 setInterval(async () => {
     const minutesSinceLastMessage = (Date.now() - lastMessageReceivedAt) / (1000 * 60);
     console.log(`⏱️ Watchdog : ${Math.round(minutesSinceLastMessage)} min depuis le dernier message.`);
 
-    // Si plus de 30 min d'inactivité : Alerte Mail
-    if (minutesSinceLastMessage >= 30 && !inactivityAlertSent && botStatus === 'CONNECTED') {
-        await sendErrorAlert(
-            "Inactivité suspecte (30min+)",
-            `Le bot n'a reçu aucun message depuis ${Math.round(minutesSinceLastMessage)} minutes. Il est peut-être gelé ou déconnecté silencieusement.`
-        );
-        inactivityAlertSent = true;
+    if (botStatus !== 'CONNECTED') return;
+
+    // 1. TEST DE SANTÉ PROACTIF
+    // On demande son état au client. Si ça timeout ou crash, c'est que Puppeteer est gelé.
+    let isFrozen = false;
+    try {
+        const statePromise = client.getState();
+        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 15000));
+        await Promise.race([statePromise, timeoutPromise]);
+    } catch (e) {
+        console.error(`🚨 Le bot est gelé (Test de santé échoué) : ${e.message}`);
+        isFrozen = true;
     }
 
-    // Si plus de 60 min d'inactivité : Auto-Réparation (Redémarrage)
-    if (minutesSinceLastMessage >= 60 && botStatus === 'CONNECTED') {
-        console.error("🚨 CRITICAL: Inactivité prolongée (>60min). Tentative de redémarrage automatique...");
+    // 2. REDÉMARRAGE AUTOMATIQUE (15 MIN OU GEL)
+    if (isFrozen || minutesSinceLastMessage >= 15) {
+        const reason = isFrozen ? "Bot Gelé (Protocol Error)" : `Inactivité détectée (15min+)`;
+        console.error(`🚨 CRITICAL: ${reason}. Tentative de redémarrage automatique...`);
+        
         await sendErrorAlert(
-            "Auto-Réparation : Redémarrage",
-            `Inactivité persistante depuis ${Math.round(minutesSinceLastMessage)} minutes. Le bot va tenter de se redémarrer pour rétablir la connexion.`
+            `Auto-Réparation : ${reason}`,
+            `Le bot ne recevait plus de messages ou était bloqué. Redémarrage lancé pour rétablir la connexion. (Dernière activité : ${Math.round(minutesSinceLastMessage)} min)`
         );
-        // On attend un peu pour que le mail parte
+
+        // On attend 5s pour que le mail parte, puis on crash pour que Docker relance
         setTimeout(() => {
-            process.exit(1); // Docker redémarrera le container
+            process.exit(1); 
         }, 5000);
     }
-}, 15 * 60 * 1000);
+}, 5 * 60 * 1000);
 
 client.on('qr', (qr) => {
     // Generate and display in terminal too
