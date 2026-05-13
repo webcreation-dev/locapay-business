@@ -147,11 +147,11 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
             // --- NETTOYAGE PÉRIODIQUE DES MÉDIAS ANALYSÉS ---
             const cleanupAnalyzedMedia = async () => {
                 try {
-                    // Supprimer les médias des messages avec un bien créé (real_property_id) ou analysés
+                    // Supprimer les médias des messages avec un bien créé, analysés, ou marqués comme noise
                     const { rows } = await db.query(`
                         SELECT id, media_path FROM messages
                         WHERE media_path IS NOT NULL
-                        AND (real_property_id IS NOT NULL OR is_analyzed = TRUE)
+                        AND (real_property_id IS NOT NULL OR is_analyzed = TRUE OR property_group_id = 'noise')
                     `);
 
                     if (rows.length === 0) {
@@ -172,7 +172,7 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
                     await db.query(`
                         UPDATE messages SET media_path = NULL
                         WHERE media_path IS NOT NULL
-                        AND (real_property_id IS NOT NULL OR is_analyzed = TRUE)
+                        AND (real_property_id IS NOT NULL OR is_analyzed = TRUE OR property_group_id = 'noise')
                     `);
 
                     console.log(`🧹 Nettoyage terminé : ${deletedCount} fichiers supprimés.`);
@@ -1463,7 +1463,7 @@ setInterval(async () => {
     if (isFrozen || minutesSinceLastMessage >= 15) {
         const reason = isFrozen ? "Bot Gelé (Protocol Error)" : `Inactivité détectée (15min+)`;
         console.error(`🚨 CRITICAL: ${reason}. Tentative de redémarrage automatique...`);
-        
+
         await sendErrorAlert(
             `Auto-Réparation : ${reason}`,
             `Le bot ne recevait plus de messages ou était bloqué. Redémarrage lancé pour rétablir la connexion. (Dernière activité : ${Math.round(minutesSinceLastMessage)} min)`
@@ -1471,7 +1471,7 @@ setInterval(async () => {
 
         // On attend 5s pour que le mail parte, puis on crash pour que Docker relance
         setTimeout(() => {
-            process.exit(1); 
+            process.exit(1);
         }, 5000);
     }
 }, 5 * 60 * 1000);
