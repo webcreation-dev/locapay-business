@@ -13,7 +13,7 @@ const path = require('path');
 // ─── MOTS INTERDITS (même liste que WhatsApp) ───────────────────────────────
 const FORBIDDEN_KEYWORDS = [
   'vendre', 'vente', 'parcelle', 'terrain', 'titre foncier',
-  ' tf ', '\ntf\n', 'domaine', 'opportunite', 'opportunité',
+  ' tf ', '\ntf\n', 'domaine',
   'recherche', 'je cherche', "j'ai besoin", 'cherche logement',
 ];
 
