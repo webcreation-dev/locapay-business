@@ -1404,7 +1404,6 @@ Texte à analyser : "${description}"
                     if (!req.file) {
                         return res.status(400).json({ error: 'Aucun fichier fourni (champ "file" requis)' });
                     }
-                    const groupName = req.body.group_name || 'Groupe Facebook Inconnu';
 
                     let posts;
                     try {
@@ -1417,7 +1416,8 @@ Texte à analyser : "${description}"
                         return res.status(400).json({ error: 'Le JSON doit être un tableau de posts' });
                     }
 
-                    const result = await importFacebookPosts(posts, groupName, db);
+                    // groupName est extrait automatiquement du postId dans importFacebookPosts
+                    const result = await importFacebookPosts(posts, db);
 
                     res.json({
                         success: true,

@@ -410,11 +410,11 @@ async function processFacebookBatch(db, onProgress = null) {
  * Importe un tableau de posts Apify JSON dans la table facebook_posts
  * Retourne le nombre de posts insérés / ignorés (doublons)
  *
- * @param {Array}  posts      - Tableau de posts du JSON Apify
- * @param {string} groupName  - Nom du groupe Facebook (saisi par l'utilisateur)
- * @param {object} db         - Pool PostgreSQL
+ * @param {Array}  posts - Tableau de posts du JSON Apify
+ * @param {object} db    - Pool PostgreSQL
+ * Le nom du groupe est auto-généré depuis le group_id du postId.
  */
-async function importFacebookPosts(posts, groupName, db) {
+async function importFacebookPosts(posts, db) {
   if (!Array.isArray(posts) || posts.length === 0) {
     throw new Error('Le fichier JSON ne contient aucun post valide');
   }
@@ -427,14 +427,16 @@ async function importFacebookPosts(posts, groupName, db) {
 
     const groupId = extractGroupId(post);
     const groupUrl = groupId ? `https://www.facebook.com/groups/${groupId}/` : null;
+    // Nom auto-généré depuis l'ID — si le groupe existe déjà, on ne modifie pas son nom
+    const autoGroupName = groupId ? `Groupe Facebook ${groupId}` : 'Groupe Facebook Inconnu';
 
-    // Créer/mettre à jour le groupe Facebook
+    // Créer le groupe si inexistant. Si déjà présent, on ne touche pas au nom existant.
     if (groupId) {
       await db.query(`
         INSERT INTO facebook_groups (group_id, group_url, group_name, last_scraped_at)
         VALUES ($1, $2, $3, NOW())
-        ON CONFLICT (group_id) DO UPDATE SET group_name = EXCLUDED.group_name, last_scraped_at = NOW()
-      `, [groupId, groupUrl, groupName]);
+        ON CONFLICT (group_id) DO UPDATE SET last_scraped_at = NOW()
+      `, [groupId, groupUrl, autoGroupName]);
     }
 
     const imageUrls = Array.isArray(post.imageUrls) ? post.imageUrls : [];
