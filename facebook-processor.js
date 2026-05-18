@@ -145,13 +145,13 @@ Tu es un extracteur de données immobilières pour des posts Facebook. Analyse l
 
 ⚠️ RÈGLES CRITIQUES :
 1. NE JAMAIS INVENTER d'informations. Si une info n'est pas mentionnée, retourne null.
-2. PRIORITÉ TYPE : Si un texte mentionne un usage commercial (boutique ou magasin), ce type est PRIORITAIRE.
-3. TYPES : "Magasin" -> STORE, "Boutique" -> SHOP.
+2. PRIORITÉ TYPE : Si un texte mentionne un usage commercial (boutique, magasin, ou bureau), ce type est PRIORITAIRE.
+3. TYPES : "Magasin" -> STORE, "Boutique" -> SHOP, "Bureau" -> OFFICE.
 4. TÉLÉPHONE : Extrait le numéro de téléphone du propriétaire/agent du texte dans "manager_phone". Format: chiffres uniquement.
 5. to_sell : true uniquement si c'est une VENTE (parcelle, terrain, titre foncier). Sinon false.
 
 🎯 CHAMPS À EXTRAIRE :
-- "type": "HOUSE|APARTMENT|STUDIO|VILLA|SHOP|STORE|BUILDING"
+- "type": "HOUSE|APARTMENT|STUDIO|VILLA|SHOP|STORE|BUILDING|OFFICE"
 - "to_sell": false (location uniquement)
 - "rent_price": nombre (prix en FCFA) ou null
 - "localisation": quartier et points de repère exacts
@@ -336,7 +336,12 @@ async function processFacebookPost(post, db, groupInfo) {
       console.log(`✅ [Facebook] Post ${postId} → Bien #${propertyId} créé avec succès`);
       return { success: true, propertyId };
     } else {
-      const errMsg = nestData.error || nestData.message || 'Erreur NestJS inconnue';
+      let errMsg = nestData.error || nestData.message || 'Erreur NestJS inconnue';
+      if (nestData.missingFields && Array.isArray(nestData.missingFields)) {
+        const missingFieldsStr = nestData.missingFields.map(f => f.field).join(', ');
+        errMsg += ` (${missingFieldsStr})`;
+      }
+
       await db.query(
         `UPDATE facebook_posts SET analysis_error = $1, updated_at = NOW() WHERE post_id = $2`,
         [errMsg, postId]
