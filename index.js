@@ -278,10 +278,10 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
 
 
             // --- PRÉ-TRAITEMENT DES ABRÉVIATIONS DE PRIX ---
-            // Normalise les abréviations locales (mil, k) avant envoi à Mistral
-            // Ex: "28mil" → "28000", "1.5mil" → "1500", "50k" → "50000"
+            // Normalise les abréviations locales (mille, milles, mil, k) avant envoi à Mistral
+            // Ex: "28mil" → "28000", "1.5mil" → "1500", "50k" → "50000", "27MILLES" → "27000"
             function normalizePriceAbbreviations(text) {
-                return text.replace(/(\d+)[.,]?(\d*)\s*(mil|k)\b/gi, (match, int, dec, unit) => {
+                return text.replace(/(\d+)[.,]?(\d*)\s*(milles?|mil|k)\b/gi, (match, int, dec, unit) => {
                     let number = parseFloat(int + (dec ? '.' + dec : ''));
                     return String(Math.round(number * 1000));
                 });

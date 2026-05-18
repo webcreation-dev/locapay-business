@@ -135,8 +135,8 @@ async function extractPropertyDataWithAI(description) {
     return null;
   }
 
-  // Normalisation des prix avant envoi
-  const normalized = description.replace(/(\d+)[.,]?(\d*)\s*(mil|k)\b/gi, (_, int, dec, unit) => {
+  // Normalisation des prix avant envoi (gestion de "mille", "milles", "mil", "k")
+  const normalized = description.replace(/(\d+)[.,]?(\d*)\s*(milles?|mil|k)\b/gi, (_, int, dec, unit) => {
     return String(Math.round(parseFloat(int + (dec ? '.' + dec : '')) * 1000));
   });
 
