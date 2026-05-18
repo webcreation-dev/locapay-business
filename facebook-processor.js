@@ -1,0 +1,492 @@
+/**
+ * facebook-processor.js
+ * Pipeline de traitement des posts Facebook (Apify JSON)
+ * Logique similaire au bot WhatsApp, adaptée pour les posts Facebook.
+ */
+
+'use strict';
+
+const axios = require('axios');
+const fs = require('fs');
+const path = require('path');
+
+// ─── MOTS INTERDITS (même liste que WhatsApp) ───────────────────────────────
+const FORBIDDEN_KEYWORDS = [
+  'vendre', 'vente', 'parcelle', 'terrain', 'titre foncier',
+  ' tf ', '\ntf\n', 'domaine', 'opportunite', 'opportunité',
+  'recherche', 'je cherche', "j'ai besoin", 'cherche logement',
+];
+
+// ─── REGEX TÉLÉPHONE BÉNINOIS ────────────────────────────────────────────────
+// Formats : 01 66 84 36 45 / 0190780657 / 96428419 / +229 01 96 23 95 85
+const PHONE_REGEX = /(?:\+?229[\s]?)?(?:0[0-9][\s.]?[0-9]{2}[\s.]?[0-9]{2}[\s.]?[0-9]{2}[\s.]?[0-9]{2}|[0-9]{8})/g;
+
+/**
+ * Normalise le texte (unicode stylisé → ASCII, accents → base, minuscules)
+ */
+function normalizeText(text) {
+  if (!text) return '';
+  const result = Array.from(text).map(char => {
+    const cp = char.codePointAt(0);
+    if (cp >= 0x1D400 && cp <= 0x1D7FF) {
+      if (cp >= 0x1D400 && cp <= 0x1D419) return String.fromCodePoint(cp - 0x1D400 + 0x41);
+      if (cp >= 0x1D41A && cp <= 0x1D433) return String.fromCodePoint(cp - 0x1D41A + 0x61);
+      if (cp >= 0x1D434 && cp <= 0x1D44D) return String.fromCodePoint(cp - 0x1D434 + 0x41);
+      if (cp >= 0x1D44E && cp <= 0x1D467) return String.fromCodePoint(cp - 0x1D44E + 0x61);
+      if (cp >= 0x1D7CE && cp <= 0x1D7D7) return String.fromCodePoint(cp - 0x1D7CE + 0x30);
+    }
+    return char;
+  }).join('');
+  return result.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+}
+
+/**
+ * Vérifie si le texte contient un mot interdit
+ */
+function containsForbiddenKeyword(text) {
+  const normalized = normalizeText(text);
+  return FORBIDDEN_KEYWORDS.find(kw => normalized.includes(kw)) || null;
+}
+
+/**
+ * Extrait le premier numéro de téléphone béninois du texte
+ * Retourne le numéro nettoyé (chiffres uniquement, avec +229 si présent) ou null
+ */
+function extractPhone(text) {
+  if (!text) return null;
+  const matches = text.match(PHONE_REGEX);
+  if (!matches || matches.length === 0) return null;
+
+  // Prendre le premier match, nettoyer les espaces/points
+  const raw = matches[0].replace(/[\s.]/g, '');
+
+  // Valider la longueur (8 chiffres béninois ou 10 avec préfixe 01/02/...)
+  const digits = raw.replace(/\D/g, '');
+  if (digits.length < 8 || digits.length > 13) return null;
+
+  // Normaliser avec +229 si pas déjà là
+  if (raw.startsWith('+229')) return raw;
+  if (raw.startsWith('229')) return '+' + raw;
+  return raw;
+}
+
+/**
+ * Parse le timestamp relatif Facebook ("1m", "13m", "1h", "2h", "1d")
+ * et retourne une date absolue à partir de scrapedAt
+ */
+function parseRelativeTimestamp(scrapedAt, relative) {
+  const base = new Date(scrapedAt);
+  if (!relative || typeof relative !== 'string') return base;
+
+  const match = relative.trim().match(/^(\d+)\s*(m|h|d|s)$/i);
+  if (!match) return base;
+
+  const val = parseInt(match[1]);
+  const unit = match[2].toLowerCase();
+  const msMap = { s: 1000, m: 60000, h: 3600000, d: 86400000 };
+  return new Date(base.getTime() - val * (msMap[unit] || 0));
+}
+
+/**
+ * Extrait l'ID du groupe Facebook depuis postUrl ou postId
+ * ex: /groups/450499635714727/posts/... → "450499635714727"
+ */
+function extractGroupId(post) {
+  const url = post.postUrl || post.postId || '';
+  const match = url.match(/\/groups\/(\d+)/);
+  return match ? match[1] : null;
+}
+
+/**
+ * Télécharge une image depuis une URL et retourne le buffer base64
+ * Retourne null si échec (URL expirée, erreur réseau, etc.)
+ */
+async function downloadImageAsBase64(url, timeoutMs = 15000) {
+  try {
+    const response = await axios.get(url, {
+      responseType: 'arraybuffer',
+      timeout: timeoutMs,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; Locapay-Bot/1.0)',
+      },
+    });
+
+    const mimeType = response.headers['content-type'] || 'image/jpeg';
+    const extension = mimeType.split('/')[1]?.split(';')[0] || 'jpg';
+    const data = Buffer.from(response.data).toString('base64');
+
+    return { data, mimeType, extension };
+  } catch (err) {
+    console.warn(`⚠️ [Facebook] Échec téléchargement image: ${url.substring(0, 80)}... — ${err.message}`);
+    return null;
+  }
+}
+
+/**
+ * Appel Mistral pour extraction des données du post
+ * (même prompt que le bot WhatsApp, adapté Facebook)
+ */
+async function extractPropertyDataWithAI(description) {
+  const MISTRAL_API_KEY = process.env.MISTRAL_API_KEY;
+  const MISTRAL_MODEL = process.env.AI_MODEL || 'mistral-medium-latest';
+
+  if (!MISTRAL_API_KEY) {
+    console.error('❌ [Facebook] MISTRAL_API_KEY manquante');
+    return null;
+  }
+
+  // Normalisation des prix avant envoi
+  const normalized = description.replace(/(\d+)[.,]?(\d*)\s*(mil|k)\b/gi, (_, int, dec, unit) => {
+    return String(Math.round(parseFloat(int + (dec ? '.' + dec : '')) * 1000));
+  });
+
+  const prompt = `
+Tu es un extracteur de données immobilières pour des posts Facebook. Analyse la description suivante et extrait les informations selon les champs spécifiés (JSON uniquement).
+
+⚠️ RÈGLES CRITIQUES :
+1. NE JAMAIS INVENTER d'informations. Si une info n'est pas mentionnée, retourne null.
+2. PRIORITÉ TYPE : Si un texte mentionne un usage commercial (boutique ou magasin), ce type est PRIORITAIRE.
+3. TYPES : "Magasin" -> STORE, "Boutique" -> SHOP.
+4. TÉLÉPHONE : Extrait le numéro de téléphone du propriétaire/agent du texte dans "manager_phone". Format: chiffres uniquement.
+5. to_sell : true uniquement si c'est une VENTE (parcelle, terrain, titre foncier). Sinon false.
+
+🎯 CHAMPS À EXTRAIRE :
+- "type": "HOUSE|APARTMENT|STUDIO|VILLA|SHOP|STORE|BUILDING"
+- "to_sell": false (location uniquement)
+- "rent_price": nombre (prix en FCFA) ou null
+- "localisation": quartier et points de repère exacts
+- "number_living_rooms": nombre de salons
+- "number_rooms": nombre de chambres
+- "tarification": "MONTHLY|DAILY"
+- "sanitary": "YES" ou "NO"
+- "manager_phone": numéro extrait du texte ou null
+- "description": la description originale
+
+Texte à analyser : "${normalized}"
+`;
+
+  try {
+    const response = await axios.post('https://api.mistral.ai/v1/chat/completions', {
+      model: MISTRAL_MODEL,
+      messages: [
+        { role: 'system', content: 'Tu es un expert en analyse immobilière. Réponds uniquement en JSON valide sans bloc markdown.' },
+        { role: 'user', content: prompt },
+      ],
+      response_format: { type: 'json_object' },
+    }, {
+      headers: {
+        'Authorization': `Bearer ${MISTRAL_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      timeout: 45000,
+    });
+
+    const content = response.data.choices[0].message.content.trim();
+    return JSON.parse(content);
+  } catch (err) {
+    console.error('❌ [Facebook] Erreur Mistral AI:', err.message);
+    return null;
+  }
+}
+
+/**
+ * Traite un post Facebook unique :
+ * 1. Filtre (mots interdits, pas de média)
+ * 2. Télécharge les images
+ * 3. Extrait le téléphone (regex → IA)
+ * 4. Appelle NestJS /create-from-facebook
+ * 5. Met à jour la DB
+ *
+ * @param {object} post       - Ligne de la table facebook_posts
+ * @param {object} db         - Pool PostgreSQL
+ * @param {object} groupInfo  - { group_url, group_name }
+ * @returns {{ success: boolean, propertyId?: number, error?: string }}
+ */
+async function processFacebookPost(post, db, groupInfo) {
+  const postId = post.post_id;
+
+  try {
+    // ── 1. Filtre mots interdits ────────────────────────────────────────────
+    const forbiddenKw = containsForbiddenKeyword(post.text);
+    if (forbiddenKw) {
+      await db.query(
+        `UPDATE facebook_posts SET is_noise = TRUE, analysis_error = $1, updated_at = NOW() WHERE post_id = $2`,
+        [`Mot interdit: "${forbiddenKw}"`, postId]
+      );
+      console.log(`🚫 [Facebook] Post ${postId} → noise (mot interdit: "${forbiddenKw}")`);
+      return { success: false, error: `Mot interdit: "${forbiddenKw}"` };
+    }
+
+    // ── 2. Filtre absence de média ──────────────────────────────────────────
+    const imageUrls = Array.isArray(post.image_urls) ? post.image_urls : JSON.parse(post.image_urls || '[]');
+    const hasVideo = post.video_url && post.video_url.trim() !== '';
+
+    if (imageUrls.length === 0 && !hasVideo) {
+      await db.query(
+        `UPDATE facebook_posts SET is_noise = TRUE, analysis_error = 'Aucun média attaché', updated_at = NOW() WHERE post_id = $1`,
+        [postId]
+      );
+      console.log(`🚫 [Facebook] Post ${postId} → noise (aucun média)`);
+      return { success: false, error: 'Aucun média attaché' };
+    }
+
+    // ── 3. Extraction du téléphone (regex d'abord) ─────────────────────────
+    let managerPhone = extractPhone(post.text);
+    console.log(`📞 [Facebook] Post ${postId} — téléphone regex: ${managerPhone || 'non trouvé'}`);
+
+    // ── 4. Téléchargement des images ───────────────────────────────────────
+    console.log(`📸 [Facebook] Téléchargement de ${imageUrls.length} image(s) pour post ${postId}...`);
+    const imagesBase64 = [];
+    for (const url of imageUrls.slice(0, 5)) { // Max 5 images par post
+      const img = await downloadImageAsBase64(url);
+      if (img) imagesBase64.push(img);
+    }
+
+    if (imagesBase64.length === 0) {
+      await db.query(
+        `UPDATE facebook_posts SET is_noise = TRUE, analysis_error = 'Images expirées ou inaccessibles', updated_at = NOW() WHERE post_id = $1`,
+        [postId]
+      );
+      console.warn(`⚠️ [Facebook] Post ${postId} → noise (aucune image téléchargeable)`);
+      return { success: false, error: 'Images expirées ou inaccessibles' };
+    }
+
+    console.log(`✅ [Facebook] ${imagesBase64.length}/${imageUrls.length} images téléchargées pour post ${postId}`);
+
+    // ── 5. Analyse IA Mistral ──────────────────────────────────────────────
+    console.log(`🤖 [Facebook] Analyse Mistral pour post ${postId}...`);
+    const extractedData = await extractPropertyDataWithAI(post.text);
+
+    if (!extractedData) {
+      await db.query(
+        `UPDATE facebook_posts SET analysis_error = 'Échec analyse IA', updated_at = NOW() WHERE post_id = $1`,
+        [postId]
+      );
+      return { success: false, error: 'Échec analyse IA' };
+    }
+
+    // Si l'IA a détecté une vente
+    if (extractedData.to_sell === true) {
+      await db.query(
+        `UPDATE facebook_posts SET is_noise = TRUE, analysis_error = 'Bien à vendre détecté', updated_at = NOW() WHERE post_id = $1`,
+        [postId]
+      );
+      return { success: false, error: 'Bien à vendre détecté' };
+    }
+
+    // Si le regex n'a pas trouvé le téléphone, tenter avec l'IA
+    if (!managerPhone && extractedData.manager_phone) {
+      const aiPhone = extractPhone(String(extractedData.manager_phone));
+      if (aiPhone) {
+        managerPhone = aiPhone;
+        console.log(`📞 [Facebook] Post ${postId} — téléphone IA: ${managerPhone}`);
+      }
+    }
+
+    // Pas de téléphone du tout → invalide
+    if (!managerPhone) {
+      await db.query(
+        `UPDATE facebook_posts SET analysis_error = 'Numéro de téléphone introuvable', updated_at = NOW() WHERE post_id = $1`,
+        [postId]
+      );
+      console.warn(`⚠️ [Facebook] Post ${postId} → invalide (pas de téléphone)`);
+      return { success: false, error: 'Numéro de téléphone introuvable' };
+    }
+
+    // Sauvegarder le téléphone extrait
+    await db.query(
+      `UPDATE facebook_posts SET phone_extracted = $1, updated_at = NOW() WHERE post_id = $2`,
+      [managerPhone, postId]
+    );
+
+    // ── 6. Envoi à NestJS /create-from-facebook ────────────────────────────
+    const nestUrl = process.env.NESTJS_FACEBOOK_URL
+      || process.env.NESTJS_API_URL?.replace('create-from-whatsapp', 'create-from-facebook')
+      || 'http://nestjs_app:8000/properties/create-from-facebook';
+
+    console.log(`📤 [Facebook] Envoi à NestJS: ${imagesBase64.length} images, post ${postId}...`);
+
+    const nestResponse = await axios.post(nestUrl, {
+      description: post.text,
+      manager_phone: managerPhone,
+      images_base64: imagesBase64,
+      user_id: process.env.LOCAPAY_BOT_USER_ID || 1,
+      extracted_data: extractedData,
+      // Traçabilité Facebook
+      facebook_group_url: groupInfo.group_url,
+      facebook_group_name: groupInfo.group_name,
+      facebook_post_at: post.estimated_post_at || post.scraped_at,
+      description_original: post.text,
+    }, {
+      timeout: 90000, // 90s (images + IA NestJS)
+      maxContentLength: 100 * 1024 * 1024,
+      maxBodyLength: 100 * 1024 * 1024,
+    });
+
+    const nestData = nestResponse.data?.data || nestResponse.data;
+
+    if (nestData.success) {
+      const propertyId = nestData.property_id || nestData.propertyId;
+      await db.query(
+        `UPDATE facebook_posts 
+         SET is_processed = TRUE, real_property_id = $1, analysis_error = NULL, updated_at = NOW()
+         WHERE post_id = $2`,
+        [propertyId, postId]
+      );
+      console.log(`✅ [Facebook] Post ${postId} → Bien #${propertyId} créé avec succès`);
+      return { success: true, propertyId };
+    } else {
+      const errMsg = nestData.error || nestData.message || 'Erreur NestJS inconnue';
+      await db.query(
+        `UPDATE facebook_posts SET analysis_error = $1, updated_at = NOW() WHERE post_id = $2`,
+        [errMsg, postId]
+      );
+      return { success: false, error: errMsg };
+    }
+
+  } catch (err) {
+    const errMsg = err.response
+      ? (err.response.data?.error || err.response.data?.message || `HTTP ${err.response.status}`)
+      : err.message;
+
+    await db.query(
+      `UPDATE facebook_posts SET analysis_error = $1, updated_at = NOW() WHERE post_id = $2`,
+      [errMsg, postId]
+    );
+    console.error(`❌ [Facebook] Erreur traitement post ${postId}:`, errMsg);
+    return { success: false, error: errMsg };
+  }
+}
+
+/**
+ * Traite tous les posts Facebook non traités (batch)
+ * Avec pause de 2s entre chaque pour ne pas saturer NestJS/Mistral
+ *
+ * @param {object} db          - Pool PostgreSQL
+ * @param {function} onProgress - Callback de progression optionnel
+ * @returns {{ success: number, errors: number, noise: number, total: number }}
+ */
+async function processFacebookBatch(db, onProgress = null) {
+  const { rows: posts } = await db.query(`
+    SELECT fp.*, fg.group_url, fg.group_name
+    FROM facebook_posts fp
+    LEFT JOIN facebook_groups fg ON fp.group_id = fg.group_id
+    WHERE fp.is_processed = FALSE
+      AND fp.is_noise = FALSE
+      AND fp.analysis_error IS NULL
+    ORDER BY fp.scraped_at ASC
+  `);
+
+  if (posts.length === 0) {
+    return { success: 0, errors: 0, noise: 0, total: 0 };
+  }
+
+  console.log(`🚀 [Facebook] Début du batch : ${posts.length} posts à traiter`);
+  let success = 0, errors = 0, noise = 0;
+
+  for (let i = 0; i < posts.length; i++) {
+    const post = posts[i];
+    const groupInfo = { group_url: post.group_url, group_name: post.group_name };
+
+    const result = await processFacebookPost(post, db, groupInfo);
+
+    if (result.success) success++;
+    else if (post.is_noise) noise++;
+    else errors++;
+
+    if (onProgress) {
+      onProgress({ type: 'progress', current: i + 1, total: posts.length, success, errors, noise });
+    }
+
+    // Pause pour ne pas saturer les APIs
+    await new Promise(r => setTimeout(r, 2000));
+  }
+
+  console.log(`🏁 [Facebook] Batch terminé — Succès: ${success}, Erreurs: ${errors}, Bruit: ${noise}`);
+  return { success, errors, noise, total: posts.length };
+}
+
+/**
+ * Importe un tableau de posts Apify JSON dans la table facebook_posts
+ * Retourne le nombre de posts insérés / ignorés (doublons)
+ *
+ * @param {Array}  posts      - Tableau de posts du JSON Apify
+ * @param {string} groupName  - Nom du groupe Facebook (saisi par l'utilisateur)
+ * @param {object} db         - Pool PostgreSQL
+ */
+async function importFacebookPosts(posts, groupName, db) {
+  if (!Array.isArray(posts) || posts.length === 0) {
+    throw new Error('Le fichier JSON ne contient aucun post valide');
+  }
+
+  let inserted = 0, duplicates = 0, noMediaNoise = 0;
+
+  for (const post of posts) {
+    // Validation minimale
+    if (!post.postId) continue;
+
+    const groupId = extractGroupId(post);
+    const groupUrl = groupId ? `https://www.facebook.com/groups/${groupId}/` : null;
+
+    // Créer/mettre à jour le groupe Facebook
+    if (groupId) {
+      await db.query(`
+        INSERT INTO facebook_groups (group_id, group_url, group_name, last_scraped_at)
+        VALUES ($1, $2, $3, NOW())
+        ON CONFLICT (group_id) DO UPDATE SET group_name = EXCLUDED.group_name, last_scraped_at = NOW()
+      `, [groupId, groupUrl, groupName]);
+    }
+
+    const imageUrls = Array.isArray(post.imageUrls) ? post.imageUrls : [];
+    const videoUrl = post.videoUrl || '';
+    const estimatedPostAt = parseRelativeTimestamp(post.scrapedAt, post.timestamp);
+
+    // Pré-filtre immédiat : pas de média → noise dès l'import
+    const isNoiseOnImport = imageUrls.length === 0 && !videoUrl;
+    const noiseError = isNoiseOnImport ? 'Aucun média attaché' : null;
+
+    try {
+      const result = await db.query(`
+        INSERT INTO facebook_posts (
+          post_id, group_id, author, text, image_urls, video_url,
+          post_url, scraped_at, estimated_post_at,
+          is_noise, analysis_error
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        ON CONFLICT (post_id) DO NOTHING
+        RETURNING post_id
+      `, [
+        post.postId,
+        groupId,
+        post.author || null,
+        post.text || null,
+        JSON.stringify(imageUrls),
+        videoUrl || null,
+        post.postUrl || null,
+        post.scrapedAt ? new Date(post.scrapedAt) : new Date(),
+        estimatedPostAt,
+        isNoiseOnImport,
+        noiseError,
+      ]);
+
+      if (result.rowCount > 0) {
+        inserted++;
+        if (isNoiseOnImport) noMediaNoise++;
+      } else {
+        duplicates++;
+      }
+    } catch (err) {
+      console.error(`⚠️ [Facebook] Erreur insertion post ${post.postId}:`, err.message);
+    }
+  }
+
+  return { inserted, duplicates, noMediaNoise };
+}
+
+module.exports = {
+  importFacebookPosts,
+  processFacebookPost,
+  processFacebookBatch,
+  extractPhone,
+  containsForbiddenKeyword,
+  normalizeText,
+};

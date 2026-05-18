@@ -16,9 +16,10 @@
     "cors": "^2.8.6",
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
+    "multer": "^2.1.1",
+    "nodemailer": "^6.10.0",
     "pg": "^8.20.0",
     "qrcode-terminal": "^0.12.0",
-    "nodemailer": "^6.10.0",
     "whatsapp-web.js": "https://github.com/wwebjs/whatsapp-web.js/archive/refs/heads/main.tar.gz"
   }
 }

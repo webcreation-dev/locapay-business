@@ -8,6 +8,25 @@ const cors = require('cors');
 const path = require('path');
 const axios = require('axios');
 const nodemailer = require('nodemailer');
+const multer = require('multer');
+const {
+    importFacebookPosts,
+    processFacebookBatch,
+    processFacebookPost,
+} = require('./facebook-processor');
+
+// Multer : stockage en mémoire pour les uploads JSON Facebook (légers < 10MB)
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 20 * 1024 * 1024 }, // 20MB max
+    fileFilter: (req, file, cb) => {
+        if (file.mimetype === 'application/json' || file.originalname.endsWith('.json')) {
+            cb(null, true);
+        } else {
+            cb(new Error('Seuls les fichiers JSON Apify sont acceptés'));
+        }
+    },
+});
 
 
 // --- SETUP SERVEUR WEB (Frontend & API) ---
@@ -210,6 +229,46 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
             await db.query('CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);');
 
             // -- ROUTES API EXPRESS (Déclarées ici car on a besoin de db prêt) --
+
+            // ── TABLES FACEBOOK ─────────────────────────────────────────────
+            await db.query(`
+                CREATE TABLE IF NOT EXISTS facebook_groups (
+                    id SERIAL PRIMARY KEY,
+                    group_id TEXT UNIQUE NOT NULL,
+                    group_url TEXT,
+                    group_name TEXT,
+                    last_scraped_at TIMESTAMPTZ DEFAULT NOW(),
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                );
+            `);
+            await db.query(`
+                CREATE TABLE IF NOT EXISTS facebook_posts (
+                    id SERIAL PRIMARY KEY,
+                    post_id TEXT UNIQUE NOT NULL,
+                    group_id TEXT REFERENCES facebook_groups(group_id),
+                    author TEXT,
+                    text TEXT,
+                    image_urls JSONB DEFAULT '[]',
+                    video_url TEXT,
+                    post_url TEXT,
+                    scraped_at TIMESTAMPTZ,
+                    estimated_post_at TIMESTAMPTZ,
+                    phone_extracted TEXT,
+                    is_processed BOOLEAN DEFAULT FALSE,
+                    is_noise BOOLEAN DEFAULT FALSE,
+                    real_property_id INTEGER,
+                    analysis_error TEXT,
+                    updated_at TIMESTAMPTZ DEFAULT NOW(),
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                );
+            `);
+            await db.query('CREATE INDEX IF NOT EXISTS idx_fb_posts_group ON facebook_posts(group_id);');
+            await db.query('CREATE INDEX IF NOT EXISTS idx_fb_posts_processed ON facebook_posts(is_processed, is_noise);');
+            await db.query('CREATE INDEX IF NOT EXISTS idx_fb_posts_scraped ON facebook_posts(scraped_at DESC);');
+            console.log('✅ Tables Facebook (facebook_groups, facebook_posts) prêtes.');
+            // ────────────────────────────────────────────────────────────────
+
+
 
             // --- PRÉ-TRAITEMENT DES ABRÉVIATIONS DE PRIX ---
             // Normalise les abréviations locales (mil, k) avant envoi à Mistral
@@ -1329,6 +1388,240 @@ Texte à analyser : "${description}"
                     res.status(500).json({ error: e.message });
                 }
             });
+
+            // ═══════════════════════════════════════════════════════════════
+            // ──────────────── ROUTES FACEBOOK SCRAPER ───────────────────────
+            // ═══════════════════════════════════════════════════════════════
+
+            /**
+             * POST /api/facebook/upload
+             * Upload d'un fichier JSON Apify + nom du groupe Facebook.
+             * Insère les posts dans facebook_posts, pré-filtre sans média.
+             * Body: multipart/form-data — champ "file" (JSON) + "group_name" (text)
+             */
+            app.post('/api/facebook/upload', upload.single('file'), async (req, res) => {
+                try {
+                    if (!req.file) {
+                        return res.status(400).json({ error: 'Aucun fichier fourni (champ "file" requis)' });
+                    }
+                    const groupName = req.body.group_name || 'Groupe Facebook Inconnu';
+
+                    let posts;
+                    try {
+                        posts = JSON.parse(req.file.buffer.toString('utf-8'));
+                    } catch (parseErr) {
+                        return res.status(400).json({ error: 'Fichier JSON invalide : ' + parseErr.message });
+                    }
+
+                    if (!Array.isArray(posts)) {
+                        return res.status(400).json({ error: 'Le JSON doit être un tableau de posts' });
+                    }
+
+                    const result = await importFacebookPosts(posts, groupName, db);
+
+                    res.json({
+                        success: true,
+                        message: `Import terminé`,
+                        inserted: result.inserted,
+                        duplicates: result.duplicates,
+                        noMediaNoise: result.noMediaNoise,
+                        readyToProcess: result.inserted - result.noMediaNoise,
+                    });
+                } catch (err) {
+                    console.error('❌ [Facebook] Erreur upload:', err.message);
+                    res.status(500).json({ error: err.message });
+                }
+            });
+
+            /**
+             * GET /api/facebook/groups
+             * Liste tous les groupes Facebook importés
+             */
+            app.get('/api/facebook/groups', async (req, res) => {
+                try {
+                    const { rows } = await db.query(`
+                        SELECT fg.*,
+                            COUNT(fp.id) AS total_posts,
+                            COUNT(fp.id) FILTER (WHERE fp.is_processed = TRUE) AS processed,
+                            COUNT(fp.id) FILTER (WHERE fp.is_noise = TRUE) AS noise,
+                            COUNT(fp.id) FILTER (WHERE fp.is_processed = FALSE AND fp.is_noise = FALSE AND fp.analysis_error IS NULL) AS pending,
+                            COUNT(fp.id) FILTER (WHERE fp.analysis_error IS NOT NULL AND fp.is_noise = FALSE AND fp.is_processed = FALSE) AS errors
+                        FROM facebook_groups fg
+                        LEFT JOIN facebook_posts fp ON fp.group_id = fg.group_id
+                        GROUP BY fg.id
+                        ORDER BY fg.last_scraped_at DESC
+                    `);
+                    res.json(rows);
+                } catch (err) {
+                    res.status(500).json({ error: err.message });
+                }
+            });
+
+            /**
+             * GET /api/facebook/posts
+             * Liste les posts Facebook avec filtres optionnels
+             * Query params: group_id, status (pending|processed|noise|error), page, limit
+             */
+            app.get('/api/facebook/posts', async (req, res) => {
+                try {
+                    const { group_id, status, page = 1, limit = 50 } = req.query;
+                    const offset = (parseInt(page) - 1) * parseInt(limit);
+
+                    let whereClause = 'WHERE 1=1';
+                    const params = [];
+
+                    if (group_id) {
+                        params.push(group_id);
+                        whereClause += ` AND fp.group_id = $${params.length}`;
+                    }
+                    if (status === 'pending') {
+                        whereClause += ' AND fp.is_processed = FALSE AND fp.is_noise = FALSE AND fp.analysis_error IS NULL';
+                    } else if (status === 'processed') {
+                        whereClause += ' AND fp.is_processed = TRUE';
+                    } else if (status === 'noise') {
+                        whereClause += ' AND fp.is_noise = TRUE';
+                    } else if (status === 'error') {
+                        whereClause += ' AND fp.analysis_error IS NOT NULL AND fp.is_noise = FALSE AND fp.is_processed = FALSE';
+                    }
+
+                    params.push(parseInt(limit), offset);
+
+                    const { rows } = await db.query(`
+                        SELECT fp.*, fg.group_name, fg.group_url
+                        FROM facebook_posts fp
+                        LEFT JOIN facebook_groups fg ON fp.group_id = fg.group_id
+                        ${whereClause}
+                        ORDER BY fp.scraped_at DESC
+                        LIMIT $${params.length - 1} OFFSET $${params.length}
+                    `, params);
+
+                    // Comptage total
+                    const countParams = params.slice(0, -2);
+                    const { rows: countRows } = await db.query(`
+                        SELECT COUNT(*) AS total FROM facebook_posts fp ${whereClause}
+                    `, countParams);
+
+                    res.json({
+                        posts: rows,
+                        total: parseInt(countRows[0].total),
+                        page: parseInt(page),
+                        limit: parseInt(limit),
+                    });
+                } catch (err) {
+                    res.status(500).json({ error: err.message });
+                }
+            });
+
+            /**
+             * POST /api/facebook/process-all
+             * Lance le batch processing de TOUS les posts Facebook en attente (SSE)
+             * Répond en Server-Sent Events pour le suivi en temps réel
+             */
+            app.get('/api/facebook/process-all', async (req, res) => {
+                res.setHeader('Content-Type', 'text/event-stream');
+                res.setHeader('Cache-Control', 'no-cache');
+                res.setHeader('Connection', 'keep-alive');
+                res.flushHeaders();
+
+                const send = (data) => res.write(`data: ${JSON.stringify(data)}\n\n`);
+
+                try {
+                    send({ type: 'start', message: '🚀 Début du traitement des posts Facebook...' });
+
+                    const result = await processFacebookBatch(db, (progress) => send(progress));
+
+                    send({
+                        type: 'complete',
+                        message: `✅ Terminé : ${result.success} biens créés, ${result.errors} erreurs, ${result.noise} bruits`,
+                        ...result,
+                    });
+                    res.end();
+                } catch (err) {
+                    send({ type: 'error', message: err.message });
+                    res.end();
+                }
+            });
+
+            /**
+             * POST /api/facebook/posts/:postId/retry
+             * Relance le traitement d'un post spécifique (en erreur)
+             */
+            app.post('/api/facebook/posts/:postId/retry', async (req, res) => {
+                try {
+                    const { postId } = req.params;
+                    const { rows } = await db.query(`
+                        SELECT fp.*, fg.group_url, fg.group_name
+                        FROM facebook_posts fp
+                        LEFT JOIN facebook_groups fg ON fp.group_id = fg.group_id
+                        WHERE fp.post_id = $1
+                    `, [postId]);
+
+                    if (rows.length === 0) {
+                        return res.status(404).json({ error: 'Post introuvable' });
+                    }
+
+                    const post = rows[0];
+
+                    // Réinitialiser l'erreur pour permettre le retry
+                    await db.query(`
+                        UPDATE facebook_posts
+                        SET analysis_error = NULL, is_noise = FALSE, is_processed = FALSE, updated_at = NOW()
+                        WHERE post_id = $1
+                    `, [postId]);
+
+                    // Réponse immédiate, traitement en arrière-plan
+                    res.json({ success: true, message: 'Retry lancé en arrière-plan' });
+
+                    processFacebookPost(post, db, { group_url: post.group_url, group_name: post.group_name })
+                        .then(result => console.log(`🔄 [Facebook] Retry post ${postId}:`, result))
+                        .catch(err => console.error(`❌ [Facebook] Retry post ${postId}:`, err.message));
+
+                } catch (err) {
+                    res.status(500).json({ error: err.message });
+                }
+            });
+
+            /**
+             * POST /api/facebook/posts/:postId/noise
+             * Marque manuellement un post comme bruit (ignorer définitivement)
+             */
+            app.post('/api/facebook/posts/:postId/noise', async (req, res) => {
+                try {
+                    const { postId } = req.params;
+                    await db.query(`
+                        UPDATE facebook_posts
+                        SET is_noise = TRUE, analysis_error = NULL, is_processed = FALSE, updated_at = NOW()
+                        WHERE post_id = $1
+                    `, [postId]);
+                    res.json({ success: true, message: 'Post marqué comme bruit' });
+                } catch (err) {
+                    res.status(500).json({ error: err.message });
+                }
+            });
+
+            /**
+             * GET /api/facebook/stats
+             * Statistiques globales du pipeline Facebook
+             */
+            app.get('/api/facebook/stats', async (req, res) => {
+                try {
+                    const { rows } = await db.query(`
+                        SELECT
+                            COUNT(*) AS total,
+                            COUNT(*) FILTER (WHERE is_processed = TRUE) AS processed,
+                            COUNT(*) FILTER (WHERE is_noise = TRUE) AS noise,
+                            COUNT(*) FILTER (WHERE is_processed = FALSE AND is_noise = FALSE AND analysis_error IS NULL) AS pending,
+                            COUNT(*) FILTER (WHERE analysis_error IS NOT NULL AND is_noise = FALSE AND is_processed = FALSE) AS errors
+                        FROM facebook_posts
+                    `);
+                    const gRows = (await db.query('SELECT COUNT(*) AS total FROM facebook_groups')).rows;
+                    res.json({ ...rows[0], groups: parseInt(gRows[0].total) });
+                } catch (err) {
+                    res.status(500).json({ error: err.message });
+                }
+            });
+
+            // ═══════════════════════════════════════════════════════════════
 
             // -- ROUTES STATUS BOT --
             app.get('/api/status', (req, res) => {
