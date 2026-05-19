@@ -265,7 +265,7 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
             await db.query('CREATE INDEX IF NOT EXISTS idx_fb_posts_group ON facebook_posts(group_id);');
             await db.query('CREATE INDEX IF NOT EXISTS idx_fb_posts_processed ON facebook_posts(is_processed, is_noise);');
             await db.query('CREATE INDEX IF NOT EXISTS idx_fb_posts_scraped ON facebook_posts(scraped_at DESC);');
-            
+
             // Garantir que les nouvelles colonnes soient ajoutées si la table a été créée précédemment sans elles
             await db.query('ALTER TABLE facebook_posts ADD COLUMN IF NOT EXISTS video_url TEXT;');
             await db.query('ALTER TABLE facebook_posts ADD COLUMN IF NOT EXISTS is_noise BOOLEAN DEFAULT FALSE;');
@@ -1680,7 +1680,7 @@ Texte à analyser : "${description}"
 
             // ═══════════════════════════════════════════════════════════════
 
-            // -- ROUTES STATUS BOT --
+            // -- ROUTES STATUS BOT -test-
             app.get('/api/status', (req, res) => {
                 res.json({ status: botStatus });
             });
