@@ -830,6 +830,31 @@ Texte à analyser : "${description}"
                 }
             });
 
+            /**
+             * GET /api/chats/:chatId/daily-stats
+             * Statistiques journalières pour une conversation/groupe WhatsApp spécifique
+             */
+            app.get('/api/chats/:chatId/daily-stats', async (req, res) => {
+                try {
+                    const { chatId } = req.params;
+                    const { rows } = await db.query(`
+                        SELECT 
+                            DATE(TO_TIMESTAMP(timestamp)) as day,
+                            COUNT(*) as message_count,
+                            COUNT(*) FILTER (WHERE is_from_me = TRUE) as sent_count,
+                            COUNT(*) FILTER (WHERE is_from_me = FALSE) as received_count,
+                            COUNT(*) FILTER (WHERE has_media = TRUE) as media_count
+                        FROM messages
+                        WHERE chat_id = $1
+                        GROUP BY DATE(TO_TIMESTAMP(timestamp))
+                        ORDER BY day DESC;
+                    `, [chatId]);
+                    res.json(rows);
+                } catch (e) {
+                    res.status(500).json({ error: e.message });
+                }
+            });
+
             app.get('/api/messages/:chatId', async (req, res) => {
                 try {
                     const { before, limit = 30 } = req.query;
@@ -1623,6 +1648,31 @@ Texte à analyser : "${description}"
                     `);
                     const gRows = (await db.query('SELECT COUNT(*) AS total FROM facebook_groups')).rows;
                     res.json({ ...rows[0], groups: parseInt(gRows[0].total) });
+                } catch (err) {
+                    res.status(500).json({ error: err.message });
+                }
+            });
+
+            /**
+             * GET /api/facebook/groups/:groupId/daily-stats
+             * Statistiques journalières pour un groupe Facebook spécifique
+             */
+            app.get('/api/facebook/groups/:groupId/daily-stats', async (req, res) => {
+                try {
+                    const { groupId } = req.params;
+                    const { rows } = await db.query(`
+                        SELECT 
+                            DATE(COALESCE(estimated_post_at, scraped_at, created_at)) as day,
+                            COUNT(*) as post_count,
+                            COUNT(*) FILTER (WHERE is_processed = TRUE) AS processed_count,
+                            COUNT(*) FILTER (WHERE is_noise = TRUE) AS noise_count,
+                            COUNT(*) FILTER (WHERE analysis_error IS NOT NULL AND is_noise = FALSE AND is_processed = FALSE) AS error_count
+                        FROM facebook_posts
+                        WHERE group_id = $1
+                        GROUP BY DATE(COALESCE(estimated_post_at, scraped_at, created_at))
+                        ORDER BY day DESC;
+                    `, [groupId]);
+                    res.json(rows);
                 } catch (err) {
                     res.status(500).json({ error: err.message });
                 }
