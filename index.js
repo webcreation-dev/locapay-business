@@ -2085,6 +2085,15 @@ client.on('message_create', async msg => {
 
 
 (async () => {
+    // ──────────────────────────────────────────────────────────
+    // Si WHATSAPP_ENABLED=false → on n'initialise pas WhatsApp
+    // Le serveur HTTP et le cron Facebook continuent de tourner
+    // ──────────────────────────────────────────────────────────
+    if (process.env.WHATSAPP_ENABLED === 'false') {
+        console.log('⏸️  [WhatsApp] Désactivé via WHATSAPP_ENABLED=false. Seul le pipeline Facebook est actif.');
+        return;
+    }
+
     const maxRetries = 10;
 
     // 🧹 Nettoyer les fichiers de verrou Chrome au démarrage
@@ -2132,3 +2141,4 @@ client.on('message_create', async msg => {
         }
     }
 })();
+
