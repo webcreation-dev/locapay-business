@@ -1743,6 +1743,61 @@ Texte à analyser : "${description}"
                 }
             });
 
+            // ═══════════════════════════════════════════════════════════════
+            // 🤖 CRON AUTO FACEBOOK : Vérification toutes les 2 minutes
+            // Lance processFacebookBatch si des posts sont en "pending"
+            // ═══════════════════════════════════════════════════════════════
+            let isFacebookProcessing = false;
+
+            async function autoProcessFacebookPending() {
+                if (isFacebookProcessing) {
+                    console.log('⏭️ [Facebook Cron] Traitement déjà en cours, skip.');
+                    return;
+                }
+
+                try {
+                    // Vérifier s'il y a des posts pending
+                    const { rows } = await db.query(`
+                        SELECT COUNT(*) AS pending_count
+                        FROM facebook_posts
+                        WHERE is_processed = FALSE
+                          AND is_noise = FALSE
+                          AND analysis_error IS NULL
+                    `);
+
+                    const pendingCount = parseInt(rows[0].pending_count);
+
+                    if (pendingCount === 0) {
+                        console.log('✅ [Facebook Cron] Aucun post en attente. Rien à faire.');
+                        return;
+                    }
+
+                    console.log(`🚀 [Facebook Cron] ${pendingCount} post(s) en attente détecté(s). Lancement du traitement...`);
+                    isFacebookProcessing = true;
+
+                    const result = await processFacebookBatch(db);
+                    console.log(`✅ [Facebook Cron] Traitement terminé : ${result.success} succès, ${result.errors} erreurs, ${result.noise} bruits.`);
+
+                } catch (err) {
+                    console.error('❌ [Facebook Cron] Erreur lors du traitement automatique:', err.message);
+                } finally {
+                    isFacebookProcessing = false;
+                }
+            }
+
+            // Lancement initial après 30 secondes (laisser le serveur se stabiliser)
+            setTimeout(() => {
+                autoProcessFacebookPending().catch(e => console.error('❌ [Facebook Cron] Init error:', e.message));
+            }, 30 * 1000);
+
+            // Puis toutes les 2 minutes
+            setInterval(() => {
+                autoProcessFacebookPending().catch(e => console.error('❌ [Facebook Cron] Interval error:', e.message));
+            }, 2 * 60 * 1000);
+
+            console.log('🤖 [Facebook Cron] Activé — vérification automatique toutes les 2 minutes.');
+            // ═══════════════════════════════════════════════════════════════
+
             return;
         } catch (err) {
             console.log(`⚠️ En attente de PostgreSQL... Postgres est peut-être en train de démarrer (tentative ${i + 1}/${retries}).`);
