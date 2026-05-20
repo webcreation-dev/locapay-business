@@ -2086,13 +2086,42 @@ client.on('message_create', async msg => {
 
 (async () => {
     const maxRetries = 10;
+
+    // 🧹 Nettoyer les fichiers de verrou Chrome au démarrage
+    // Ces fichiers sont laissés par un ancien processus Chrome après un crash/redémarrage
+    function cleanChromeLocks() {
+        const sessionDir = './.wwebjs_auth/session';
+        const lockFiles = ['SingletonLock', 'SingletonCookie', 'SingletonSocket'];
+        for (const lockFile of lockFiles) {
+            const lockPath = `${sessionDir}/${lockFile}`;
+            try {
+                if (fs.existsSync(lockPath)) {
+                    fs.unlinkSync(lockPath);
+                    console.log(`🧹 [WhatsApp] Fichier verrou supprimé : ${lockFile}`);
+                }
+            } catch (e) {
+                console.warn(`⚠️ [WhatsApp] Impossible de supprimer ${lockFile} : ${e.message}`);
+            }
+        }
+    }
+
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
+            // Nettoyage du verrou avant chaque tentative
+            cleanChromeLocks();
+
             console.log(`🔄 Tentative d'initialisation WhatsApp (${attempt}/${maxRetries})...`);
             await client.initialize();
             break; // succès → on sort de la boucle
         } catch (err) {
             console.error(`❌ Echec tentative ${attempt}: ${err.message}`);
+
+            // Si c'est une erreur de lock, on nettoie immédiatement avant la prochaine tentative
+            if (err.message.includes('already running') || err.message.includes('SingletonLock')) {
+                console.log('🧹 [WhatsApp] Détection de verrou Chrome — nettoyage forcé...');
+                cleanChromeLocks();
+            }
+
             if (attempt < maxRetries) {
                 console.log(`⏳ Nouvelle tentative dans 5 secondes...`);
                 await new Promise(r => setTimeout(r, 5000));
