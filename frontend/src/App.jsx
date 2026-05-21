@@ -162,6 +162,19 @@ function App() {
   const [isLoadingProperties, setIsLoadingProperties] = useState(false);
   const [showCreatedOnly, setShowCreatedOnly] = useState(false);
 
+  // --- STATS ET GROUPES FACEBOOK ---
+  const [fbGroups, setFbGroups] = useState([]);
+  const [currentFbGroupId, setCurrentFbGroupId] = useState(null);
+  const [fbPosts, setFbPosts] = useState([]);
+  const [fbStats, setFbStats] = useState(null);
+  const [fbPostsStatus, setFbPostsStatus] = useState('all'); // all, pending, processed, error, noise
+  const [fbNewGroupUrl, setFbNewGroupUrl] = useState('');
+  const [fbNewGroupName, setFbNewGroupName] = useState('');
+  const [fbIsLoadingGroups, setFbIsLoadingGroups] = useState(false);
+  const [fbIsLoadingPosts, setFbIsLoadingPosts] = useState(false);
+  const [fbIsSubmittingGroup, setFbIsSubmittingGroup] = useState(false);
+  const [fbProgress, setFbProgress] = useState(null); // SSE progress info
+
   const containerRef = useRef(null);       // ref vers la div messages-container
   const scrollPositionBeforeSubmit = useRef(null); // Position scroll avant soumission
   const isManualActionRef = useRef(false);       // verrou : bloque le scroll auto après action manuelle
@@ -292,6 +305,178 @@ function App() {
     const id = setInterval(fetchPendingGroups, 10000);
     return () => clearInterval(id);
   }, [fetchPendingGroups]);
+
+  // ─── GESTION FACEBOOK SCRAPER DATA ──────────────────────────────────────────
+  const fetchFbGroups = useCallback(async () => {
+    setFbIsLoadingGroups(true);
+    try {
+      const res = await fetch('/api/facebook/groups');
+      const data = await res.json();
+      setFbGroups(data);
+    } catch (e) {
+      console.error('fetchFbGroups error', e);
+    } finally {
+      setFbIsLoadingGroups(false);
+    }
+  }, []);
+
+  const fetchFbStats = useCallback(async () => {
+    try {
+      const res = await fetch('/api/facebook/stats');
+      const data = await res.json();
+      setFbStats(data);
+    } catch (e) {
+      console.error('fetchFbStats error', e);
+    }
+  }, []);
+
+  const fetchFbPosts = useCallback(async (groupId, status) => {
+    setFbIsLoadingPosts(true);
+    try {
+      let url = `/api/facebook/posts?limit=100`;
+      if (groupId) url += `&group_id=${encodeURIComponent(groupId)}`;
+      if (status && status !== 'all') url += `&status=${status}`;
+      
+      const res = await fetch(url);
+      const data = await res.json();
+      setFbPosts(data.posts || []);
+    } catch (e) {
+      console.error('fetchFbPosts error', e);
+    } finally {
+      setFbIsLoadingPosts(false);
+    }
+  }, []);
+
+  // Poll stats and groups if viewMode is facebook
+  useEffect(() => {
+    if (viewMode === 'facebook') {
+      fetchFbGroups();
+      fetchFbStats();
+      const interval = setInterval(() => {
+        fetchFbGroups();
+        fetchFbStats();
+      }, 10000);
+      return () => clearInterval(interval);
+    }
+  }, [viewMode, fetchFbGroups, fetchFbStats]);
+
+  // Load posts whenever group or status tab changes
+  useEffect(() => {
+    if (viewMode === 'facebook') {
+      fetchFbPosts(currentFbGroupId, fbPostsStatus);
+    }
+  }, [viewMode, currentFbGroupId, fbPostsStatus, fetchFbPosts]);
+
+  // Add a new Facebook group
+  const handleAddFbGroup = async (e) => {
+    e.preventDefault();
+    if (!fbNewGroupUrl.trim()) {
+      setToast({ message: '⚠️ L\'URL du groupe est requise.', type: 'error' });
+      return;
+    }
+
+    setFbIsSubmittingGroup(true);
+    try {
+      const res = await fetch('/api/facebook/groups', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          group_url: fbNewGroupUrl.trim(),
+          group_name: fbNewGroupName.trim() || undefined
+        })
+      });
+
+      const data = await res.json();
+      if (data.success && data.inserted > 0) {
+        setToast({ message: `✅ Groupe Facebook ajouté avec succès !`, type: 'success' });
+        setFbNewGroupUrl('');
+        setFbNewGroupName('');
+        fetchFbGroups();
+        fetchFbStats();
+      } else {
+        const errorMsg = data.errors?.[0]?.error || data.error || 'Erreur inconnue';
+        setToast({ message: `❌ Échec: ${errorMsg}`, type: 'error' });
+      }
+    } catch (err) {
+      console.error('handleAddFbGroup error', err);
+      setToast({ message: `❌ Erreur lors de l'ajout du groupe`, type: 'error' });
+    } finally {
+      setFbIsSubmittingGroup(false);
+    }
+  };
+
+  // Run the batch processing via SSE
+  const handleFbProcessAll = () => {
+    if (fbProgress) return; // already running
+    setFbProgress({ status: 'starting', message: 'Initialisation...' });
+
+    const eventSource = new EventSource('/api/facebook/process-all');
+
+    eventSource.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      if (data.type === 'progress') {
+        setFbProgress({ status: 'processing', message: data.message });
+      } else if (data.type === 'complete') {
+        setToast({ message: data.message, type: 'success' });
+        setFbProgress(null);
+        fetchFbGroups();
+        fetchFbStats();
+        if (viewMode === 'facebook') {
+          fetchFbPosts(currentFbGroupId, fbPostsStatus);
+        }
+        eventSource.close();
+      } else if (data.type === 'error') {
+        setToast({ message: `❌ ${data.message}`, type: 'error' });
+        setFbProgress(null);
+        eventSource.close();
+      }
+    };
+
+    eventSource.onerror = () => {
+      setToast({ message: "❌ Connexion perdue lors du traitement Facebook.", type: 'error' });
+      setFbProgress(null);
+      eventSource.close();
+    };
+  };
+
+  // Retry processing a Facebook post
+  const handleFbPostRetry = async (postId) => {
+    try {
+      setToast({ message: "⏳ Relance du traitement...", type: 'success' });
+      const res = await fetch(`/api/facebook/posts/${encodeURIComponent(postId)}/retry`, { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        setToast({ message: "🔄 Retry lancé en arrière-plan", type: 'success' });
+        // actualiser après 1s
+        setTimeout(() => {
+          fetchFbGroups();
+          fetchFbPosts(currentFbGroupId, fbPostsStatus);
+        }, 1200);
+      } else {
+        throw new Error(data.error);
+      }
+    } catch (e) {
+      setToast({ message: `❌ Échec du retry: ${e.message}`, type: 'error' });
+    }
+  };
+
+  // Mark Facebook post as noise
+  const handleFbPostNoise = async (postId) => {
+    try {
+      const res = await fetch(`/api/facebook/posts/${encodeURIComponent(postId)}/noise`, { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        setToast({ message: "🗑️ Post marqué comme bruit", type: 'success' });
+        fetchFbGroups();
+        fetchFbStats();
+        fetchFbPosts(currentFbGroupId, fbPostsStatus);
+      } else {
+        throw new Error(data.error);
+      }
+    } catch (e) {
+      setToast({ message: `❌ Échec: ${e.message}`, type: 'error' });
+    }
+  };
 
   const handleRetryGroup = async (propertyGroupId) => {
     try {
@@ -1153,6 +1338,13 @@ function App() {
               ⚠️
             </button> */}
             <button
+              className={`view-toggle ${viewMode === 'facebook' ? 'active' : ''}`}
+              onClick={() => { setViewMode('facebook'); setSearchTerm(''); }}
+              title="Pipeline Facebook"
+            >
+              📘
+            </button>
+            <button
               className={`view-toggle ${viewMode === 'full_access' ? 'active' : ''}`}
               onClick={() => { setViewMode('full_access'); setSearchTerm(''); }}
               title="Accès Total (Tout voir)"
@@ -1223,6 +1415,51 @@ function App() {
                 </div>
               ))
             )
+          ) : viewMode === 'facebook' ? (
+            /* Liste des groupes Facebook dans la sidebar */
+            <div className="sidebar-properties-list" style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+              <div style={{ padding: '12px 15px', fontSize: '12px', fontWeight: '700', color: 'var(--text-muted)', borderBottom: '1px solid var(--border-lighter)', background: '#f8fafc', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
+                <span>GROUPES FACEBOOK</span>
+                <span className="fb-badge-mini total">{fbGroups.length}</span>
+              </div>
+              <div style={{ flex: 1, overflowY: 'auto' }}>
+                <div
+                  className={`chat-item ${currentFbGroupId === null ? 'active' : ''}`}
+                  onClick={() => setCurrentFbGroupId(null)}
+                  style={{ height: '60px' }}
+                >
+                  <div className="avatar" style={{ background: '#475569', fontSize: '14px', width: '36px', height: '36px', marginRight: '12px' }}>
+                    🌐
+                  </div>
+                  <div className="chat-info">
+                    <div className="chat-title" style={{ fontSize: '13px', fontWeight: '600' }}>Tous les Groupes</div>
+                    <div className="chat-preview" style={{ fontSize: '11px' }}>Vue globale & statistiques</div>
+                  </div>
+                </div>
+                {fbGroups.filter(g => !searchTerm || g.group_name.toLowerCase().includes(searchTerm.toLowerCase()) || g.group_id.includes(searchTerm)).map(group => (
+                  <div
+                    key={group.group_id}
+                    className={`chat-item ${currentFbGroupId === group.group_id ? 'active' : ''}`}
+                    onClick={() => setCurrentFbGroupId(group.group_id)}
+                    style={{ height: '65px', padding: '0 12px' }}
+                  >
+                    <div className="avatar" style={{ background: '#1877f2', fontSize: '14px', width: '36px', height: '36px', marginRight: '12px' }}>
+                      👥
+                    </div>
+                    <div className="chat-info" style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                      <div className="chat-title" style={{ fontSize: '12.5px', fontWeight: '600' }} title={group.group_name}>
+                        {group.group_name}
+                      </div>
+                      <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                        {parseInt(group.pending) > 0 && <span className="fb-badge-mini pending" style={{ padding: '0px 4px', fontSize: '9px' }}>{group.pending}</span>}
+                        {parseInt(group.errors) > 0 && <span className="fb-badge-mini error" style={{ padding: '0px 4px', fontSize: '9px' }}>{group.errors}</span>}
+                        {parseInt(group.processed) > 0 && <span className="fb-badge-mini processed" style={{ padding: '0px 4px', fontSize: '9px' }}>{group.processed}</span>}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           ) : (
             /* Liste simplifiée des biens dans la sidebar (optionnel si on utilise la zone principale) */
             <div className="sidebar-properties-list">
@@ -1236,7 +1473,229 @@ function App() {
 
       {/* Zone principale */}
       <main className="chat-view">
-        {viewMode === 'properties' ? (
+        {viewMode === 'facebook' ? (
+          <div className="fb-dashboard">
+            <header className="chat-header fb-header" style={{ justifyContent: 'space-between' }}>
+              <div className="chat-header-info">
+                <div className="name" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span>📘 Pipeline Facebook Scraper</span>
+                  {fbProgress && <span className="pending-icon">⚙️</span>}
+                </div>
+                <div className="subtitle">
+                  {currentFbGroupId ? `Groupe ID: ${currentFbGroupId}` : "Tableau de bord global des imports"}
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button
+                  className="btn-fb-primary"
+                  onClick={handleFbProcessAll}
+                  disabled={!!fbProgress}
+                  style={{ opacity: fbProgress ? 0.7 : 1 }}
+                >
+                  🚀 {fbProgress ? "Traitement..." : "Traiter tous les posts"}
+                </button>
+              </div>
+            </header>
+
+            <div className="messages-container" style={{ flex: 1, padding: '20px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              {/* SSE Progress Notification */}
+              {fbProgress && (
+                <div className="fb-sse-progress-container">
+                  <div className="fb-sse-status">⚡ {fbProgress.message}</div>
+                  <div className="fb-sse-progress-wrapper">
+                    <div className="fb-sse-progress-bar" style={{ width: fbProgress.status === 'starting' ? '10%' : '60%', animation: 'pulse 1s infinite alternate' }}></div>
+                  </div>
+                </div>
+              )}
+
+              {/* Global Stats or Add form */}
+              {currentFbGroupId === null && (
+                <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '20px' }}>
+                  {/* Left: Stats grid */}
+                  <div>
+                    <h3 style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-muted)', marginBottom: '12px', textTransform: 'uppercase' }}>Statistiques Globales</h3>
+                    <div className="fb-stats-grid" style={{ padding: 0 }}>
+                      <div className="fb-stat-card blue">
+                        <span className="fb-stat-title">Total Posts</span>
+                        <span className="fb-stat-value">{fbStats?.total || 0}</span>
+                      </div>
+                      <div className="fb-stat-card orange">
+                        <span className="fb-stat-title">En Attente</span>
+                        <span className="fb-stat-value">{fbStats?.pending || 0}</span>
+                      </div>
+                      <div className="fb-stat-card green">
+                        <span className="fb-stat-title">Traités (Biens)</span>
+                        <span className="fb-stat-value">{fbStats?.processed || 0}</span>
+                      </div>
+                      <div className="fb-stat-card red">
+                        <span className="fb-stat-title">Erreurs</span>
+                        <span className="fb-stat-value">{fbStats?.errors || 0}</span>
+                      </div>
+                      <div className="fb-stat-card gray">
+                        <span className="fb-stat-title">Bruits</span>
+                        <span className="fb-stat-value">{fbStats?.noise || 0}</span>
+                      </div>
+                    </div>
+
+                    <div style={{ marginTop: '25px', background: '#ffffff', padding: '20px', borderRadius: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.03)' }}>
+                      <h4 style={{ fontSize: '13.5px', fontWeight: '700', marginBottom: '10px', color: '#1e293b' }}>ℹ️ Comment importer de nouveaux posts ?</h4>
+                      <p style={{ fontSize: '12.5px', color: '#64748b', lineHeight: '1.6' }}>
+                        1. Récupérez le fichier d'export JSON depuis votre scraper de groupe Facebook Apify.<br />
+                        2. Utilisez directement l'API HTTP `POST /api/facebook/upload` (avec le fichier dans le champ `file`).<br />
+                        3. Les posts seront automatiquement pré-filtrés : s'ils datent de plus de 24h ou s'ils n'ont aucun média attaché, ils seront directement classés en <strong>Bruit</strong> d'office pour préserver vos requêtes OpenAI.<br />
+                        4. Utilisez ce tableau de bord pour superviser les posts restants, voir les erreurs d'analyse de l'IA, ou forcer des re-traitements.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Right: Quick add group form */}
+                  <div className="fb-add-card">
+                    <div className="fb-add-title">
+                      <span>👥 Ajouter un Groupe</span>
+                    </div>
+                    <form onSubmit={handleAddFbGroup} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                      <div className="fb-form-group">
+                        <label>URL du groupe Facebook (ou ID)</label>
+                        <input
+                          type="text"
+                          className="fb-input"
+                          placeholder="https://www.facebook.com/groups/..."
+                          value={fbNewGroupUrl}
+                          onChange={(e) => setFbNewGroupUrl(e.target.value)}
+                          required
+                        />
+                      </div>
+                      <div className="fb-form-group">
+                        <label>Nom du Groupe (Facultatif)</label>
+                        <input
+                          type="text"
+                          className="fb-input"
+                          placeholder="Ex: Mon Groupe Immo"
+                          value={fbNewGroupName}
+                          onChange={(e) => setFbNewGroupName(e.target.value)}
+                        />
+                      </div>
+                      <button
+                        type="submit"
+                        className="btn-fb-primary"
+                        style={{ marginTop: '5px' }}
+                        disabled={fbIsSubmittingGroup}
+                      >
+                        {fbIsSubmittingGroup ? "Ajout..." : "Enregistrer"}
+                      </button>
+                    </form>
+                  </div>
+                </div>
+              )}
+
+              {/* Group Posts viewer section */}
+              {(currentFbGroupId !== null || (fbStats && parseInt(fbStats.total) > 0)) && (
+                <div className="fb-posts-section">
+                  <div className="fb-posts-header">
+                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                      <span style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-main)' }}>
+                        {currentFbGroupId ? `Posts du groupe: ${fbGroups.find(g => g.group_id === currentFbGroupId)?.group_name || currentFbGroupId}` : "Tous les Posts"}
+                      </span>
+                      <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                        Affichage des 100 derniers posts triés par date d'extraction
+                      </span>
+                    </div>
+
+                    <div className="fb-posts-filter-tabs">
+                      {['all', 'pending', 'processed', 'error', 'noise'].map(tab => (
+                        <button
+                          key={tab}
+                          className={`fb-filter-tab ${fbPostsStatus === tab ? 'active' : ''}`}
+                          onClick={() => setFbPostsStatus(tab)}
+                        >
+                          {tab === 'all' && 'Tout'}
+                          {tab === 'pending' && 'En Attente'}
+                          {tab === 'processed' && 'Traités'}
+                          {tab === 'error' && 'Erreurs'}
+                          {tab === 'noise' && 'Bruits'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="fb-posts-grid">
+                    {fbIsLoadingPosts ? (
+                      <div className="loading-state">Chargement des posts...</div>
+                    ) : fbPosts.length === 0 ? (
+                      <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)', fontSize: '13px' }}>
+                        Aucun post trouvé pour ce filtre.
+                      </div>
+                    ) : (
+                      fbPosts.map(post => (
+                        <div key={post.post_id} className="fb-post-card">
+                          <div className="fb-post-card-header">
+                            <div>
+                              <span className="fb-post-author">{post.author || "Auteur inconnu"}</span>
+                              {post.group_name && <span style={{ fontSize: '11px', color: '#64748b', marginLeft: '8px' }}>({post.group_name})</span>}
+                            </div>
+                            <span className="fb-post-date">{post.estimated_post_at ? new Date(post.estimated_post_at).toLocaleString('fr-FR') : "Date inconnue"}</span>
+                          </div>
+
+                          <div className="fb-post-body">{post.text}</div>
+
+                          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+                            {post.image_urls && JSON.parse(post.image_urls).length > 0 && (
+                              <div className="fb-post-media-indicator">
+                                🖼️ {JSON.parse(post.image_urls).length} image(s)
+                              </div>
+                            )}
+                            {post.video_url && (
+                              <div className="fb-post-media-indicator">
+                                🎥 Vidéo
+                              </div>
+                            )}
+                            {post.phone_extracted && (
+                              <span className="fb-phone-badge">
+                                📞 Extrait: {post.phone_extracted}
+                              </span>
+                            )}
+                            {post.is_processed && (
+                              <span className="fb-badge-mini processed">✅ BIEN CRÉÉ #{post.real_property_id}</span>
+                            )}
+                            {post.is_noise && (
+                              <span className="fb-badge-mini noise" style={{ textDecoration: 'none' }}>🗑️ Bruit</span>
+                            )}
+                            {post.analysis_error && (
+                              <span className="fb-badge-mini error" title={post.analysis_error}>⚠️ Erreur: {post.analysis_error}</span>
+                            )}
+                            {!post.is_processed && !post.is_noise && !post.analysis_error && (
+                              <span className="fb-badge-mini pending">⏳ En attente de traitement</span>
+                            )}
+                          </div>
+
+                          {/* Quick Actions */}
+                          {(!post.is_processed) && (
+                            <div className="fb-post-actions">
+                              <button
+                                  className="fb-btn-action-mini retry"
+                                  onClick={() => handleFbPostRetry(post.post_id)}
+                              >
+                                🔄 Retraiter
+                              </button>
+                              {!post.is_noise && (
+                                <button
+                                  className="fb-btn-action-mini noise"
+                                  onClick={() => handleFbPostNoise(post.post_id)}
+                                >
+                                  🗑️ Ignorer
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        ) : viewMode === 'properties' ? (
           <div className="properties-dashboard">
             <header className="chat-header properties-header">
               <div className="chat-header-info">
