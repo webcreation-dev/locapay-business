@@ -206,6 +206,18 @@ async function processFacebookPost(post, db, groupInfo) {
   const postId = post.post_id;
 
   try {
+    // ── 0. Filtre plus de 24h (première contrainte d'ancienneté) ────────────
+    const postTime = post.estimated_post_at ? new Date(post.estimated_post_at) : null;
+    const now = new Date();
+    if (postTime && (now.getTime() - postTime.getTime() > 24 * 60 * 60 * 1000)) {
+      await db.query(
+        `UPDATE facebook_posts SET is_noise = TRUE, analysis_error = 'Bien de plus de 24h', updated_at = NOW() WHERE post_id = $1`,
+        [postId]
+      );
+      console.log(`🚫 [Facebook] Post ${postId} → noise (plus de 24h d'ancienneté: ${postTime.toISOString()})`);
+      return { success: false, error: 'Bien de plus de 24h' };
+    }
+
     // ── 1. Filtre mots interdits ────────────────────────────────────────────
     const forbiddenKw = containsForbiddenKeyword(post.text);
     if (forbiddenKw) {
@@ -448,9 +460,18 @@ async function importFacebookPosts(posts, db) {
     const videoUrl = post.videoUrl || '';
     const estimatedPostAt = parseRelativeTimestamp(post.scrapedAt, post.timestamp);
 
-    // Pré-filtre immédiat : pas de média → noise dès l'import
-    const isNoiseOnImport = imageUrls.length === 0 && !videoUrl;
-    const noiseError = isNoiseOnImport ? 'Aucun média attaché' : null;
+    // Première contrainte : plus de 24h par rapport à NOW
+    const now = new Date();
+    const isOlderThan24h = estimatedPostAt ? (now.getTime() - estimatedPostAt.getTime() > 24 * 60 * 60 * 1000) : false;
+
+    // Pré-filtre immédiat : pas de média ou plus de 24h → noise dès l'import
+    const isNoiseOnImport = (imageUrls.length === 0 && !videoUrl) || isOlderThan24h;
+    let noiseError = null;
+    if (imageUrls.length === 0 && !videoUrl) {
+      noiseError = 'Aucun média attaché';
+    } else if (isOlderThan24h) {
+      noiseError = 'Bien de plus de 24h';
+    }
 
     try {
       const result = await db.query(`
