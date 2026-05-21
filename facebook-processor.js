@@ -480,8 +480,11 @@ async function importFacebookPosts(posts, db) {
           post_url, scraped_at, estimated_post_at,
           is_noise, analysis_error
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-        ON CONFLICT (post_id) DO NOTHING
-        RETURNING post_id
+        ON CONFLICT (post_id) DO UPDATE SET
+          scraped_at = EXCLUDED.scraped_at,
+          estimated_post_at = EXCLUDED.estimated_post_at,
+          updated_at = NOW()
+        RETURNING post_id, is_processed, real_property_id, created_at
       `, [
         post.postId,
         groupId,
@@ -497,10 +500,20 @@ async function importFacebookPosts(posts, db) {
       ]);
 
       if (result.rowCount > 0) {
-        inserted++;
-        if (isNoiseOnImport) noMediaNoise++;
-      } else {
-        duplicates++;
+        const row = result.rows[0];
+        const isUpdate = (new Date() - new Date(row.created_at)) > 2000;
+
+        if (isUpdate) {
+          duplicates++;
+          if (row.is_processed && row.real_property_id) {
+            triggerNestPropertyBump(row.real_property_id).catch(err => {
+              console.error(`⚠️ [Facebook Bump] Échec du bump pour le bien #${row.real_property_id}:`, err.message);
+            });
+          }
+        } else {
+          inserted++;
+          if (isNoiseOnImport) noMediaNoise++;
+        }
       }
     } catch (err) {
       console.error(`⚠️ [Facebook] Erreur insertion post ${post.postId}:`, err.message);
@@ -510,6 +523,30 @@ async function importFacebookPosts(posts, db) {
   return { inserted, duplicates, noMediaNoise };
 }
 
+/**
+ * Notifie NestJS d'un Bump pour un bien existant (Option B)
+ */
+async function triggerNestPropertyBump(realPropertyId) {
+  const nestUrl = process.env.NESTJS_FACEBOOK_URL
+    || process.env.NESTJS_API_URL?.replace('create-from-whatsapp', 'create-from-facebook')
+    || 'http://nestjs_app:8000/properties/create-from-facebook';
+
+  // Déduire l'URL de Bump à partir de l'URL NestJS Facebook
+  const bumpUrl = nestUrl.replace('/create-from-facebook', `/${realPropertyId}/bump`);
+
+  console.log(`📤 [Facebook Bump] Notification NestJS de Bump pour le bien #${realPropertyId} vers ${bumpUrl}`);
+
+  try {
+    const response = await axios.patch(bumpUrl, {}, {
+      timeout: 10000,
+    });
+    console.log(`✅ [Facebook Bump] Bien #${realPropertyId} bumpé avec succès sur NestJS:`, response.data?.message || 'OK');
+  } catch (err) {
+    const errMsg = err.response ? (err.response.data?.message || `HTTP ${err.response.status}`) : err.message;
+    throw new Error(errMsg);
+  }
+}
+
 module.exports = {
   importFacebookPosts,
   processFacebookPost,
@@ -517,4 +554,5 @@ module.exports = {
   extractPhone,
   containsForbiddenKeyword,
   normalizeText,
+  triggerNestPropertyBump,
 };
