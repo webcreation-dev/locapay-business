@@ -1542,15 +1542,24 @@ Texte à analyser : "${description}"
                         }
 
                         try {
+                            // Vérifier si le groupe existe déjà
+                            const existing = await db.query(
+                                `SELECT group_id FROM facebook_groups WHERE group_id = $1`,
+                                [groupId.trim()]
+                            );
+
+                            if (existing.rows.length > 0) {
+                                errors.push({
+                                    group,
+                                    alreadyExists: true,
+                                    error: `Le groupe "${groupId.trim()}" existe déjà dans la base de données.`
+                                });
+                                continue;
+                            }
+
                             const { rows } = await db.query(`
                                 INSERT INTO facebook_groups (group_id, group_url, group_name, last_scraped_at)
                                 VALUES ($1, $2, $3, NOW())
-                                ON CONFLICT (group_id) DO UPDATE SET
-                                    group_url = EXCLUDED.group_url,
-                                    group_name = CASE 
-                                        WHEN facebook_groups.group_name LIKE 'Groupe Facebook %' THEN EXCLUDED.group_name 
-                                        ELSE facebook_groups.group_name 
-                                    END
                                 RETURNING *
                             `, [groupId.trim(), groupUrl.trim(), groupName.trim()]);
 
@@ -1558,6 +1567,18 @@ Texte à analyser : "${description}"
                         } catch (dbErr) {
                             errors.push({ group, error: dbErr.message });
                         }
+                    }
+
+                    // Si tous les groupes existent déjà et aucun n'a été inséré
+                    const allAlreadyExist = errors.length > 0 && insertedGroups.length === 0 && errors.every(e => e.alreadyExists);
+                    if (allAlreadyExist) {
+                        return res.status(409).json({
+                            success: false,
+                            error: errors.length === 1
+                                ? errors[0].error
+                                : `${errors.length} groupe(s) existent déjà dans la base de données.`,
+                            groups: errors.map(e => ({ groupId: e.group.groupId || e.group.group_id, message: e.error }))
+                        });
                     }
 
                     res.json({
