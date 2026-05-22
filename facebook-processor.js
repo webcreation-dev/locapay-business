@@ -431,7 +431,7 @@ async function processFacebookBatch(db, onProgress = null) {
  * @param {object} db    - Pool PostgreSQL
  * Le nom du groupe est auto-généré depuis le group_id du postId.
  */
-async function importFacebookPosts(posts, db) {
+async function importFacebookPosts(posts, db, explicitGroupId = null) {
   if (!Array.isArray(posts) || posts.length === 0) {
     throw new Error('Le fichier JSON ne contient aucun post valide');
   }
@@ -442,7 +442,7 @@ async function importFacebookPosts(posts, db) {
     // Validation minimale
     if (!post.postId) continue;
 
-    const groupId = extractGroupId(post);
+    const groupId = explicitGroupId || extractGroupId(post);
     const groupUrl = groupId ? `https://www.facebook.com/groups/${groupId}/` : null;
     // Nom auto-généré depuis l'ID — si le groupe existe déjà, on ne modifie pas son nom
     const autoGroupName = groupId ? `Groupe Facebook ${groupId}` : 'Groupe Facebook Inconnu';

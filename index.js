@@ -1449,7 +1449,8 @@ Texte à analyser : "${description}"
                     }
 
                     // groupName est extrait automatiquement du postId dans importFacebookPosts
-                    const result = await importFacebookPosts(posts, db);
+                    const explicitGroupId = req.body.group_id;
+                    const result = await importFacebookPosts(posts, db, explicitGroupId);
 
                     res.json({
                         success: true,
