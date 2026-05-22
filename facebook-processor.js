@@ -249,7 +249,7 @@ async function processFacebookPost(post, db, groupInfo) {
     // ── 4. Téléchargement des images ───────────────────────────────────────
     console.log(`📸 [Facebook] Téléchargement de ${imageUrls.length} image(s) pour post ${postId}...`);
     const imagesBase64 = [];
-    for (const url of imageUrls.slice(0, 5)) { // Max 5 images par post
+    for (const url of imageUrls) { // Toutes les images par post
       const img = await downloadImageAsBase64(url);
       if (img) imagesBase64.push(img);
     }
