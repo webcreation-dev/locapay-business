@@ -29,14 +29,14 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password123
+      POSTGRES_PASSWORD: LocapaySecureDB2026PasswordX89
       POSTGRES_DB: whatsapp_logs
     volumes:
       - db-data:/var/lib/postgresql/data
     ports:
       - "15432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres && psql -U postgres -c \"ALTER USER postgres WITH PASSWORD 'password123';\" > /dev/null 2>&1 || true"]
+      test: ["CMD-SHELL", "pg_isready -U postgres && psql -U postgres -c \"ALTER USER postgres WITH PASSWORD 'LocapaySecureDB2026PasswordX89';\" > /dev/null 2>&1 || true"]
       interval: 30s
       timeout: 10s
       retries: 3
