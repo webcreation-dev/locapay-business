@@ -1494,104 +1494,104 @@ Texte à analyser : "${description}"
             //  * POST /api/facebook/groups
             //  * Ajoute un ou plusieurs nouveaux groupes Facebook
             //  */
-            // app.post('/api/facebook/groups', async (req, res) => {
-            //     try {
-            //         let groupsInput = [];
-            //         if (Array.isArray(req.body)) {
-            //             groupsInput = req.body;
-            //         } else if (req.body.groups && Array.isArray(req.body.groups)) {
-            //             groupsInput = req.body.groups;
-            //         } else if (req.body) {
-            //             groupsInput = [req.body];
-            //         }
-            // 
-            //         if (groupsInput.length === 0) {
-            //             return res.status(400).json({ error: "Aucun groupe fourni dans la requête" });
-            //         }
-            // 
-            //         const insertedGroups = [];
-            //         const errors = [];
-            // 
-            //         for (const group of groupsInput) {
-            //             let groupId = group.groupId || group.group_id;
-            //             let groupUrl = group.groupUrl || group.group_url;
-            //             let groupName = group.groupName || group.group_name;
-            // 
-            //             // Tenter d'extraire depuis l'URL si l'ID est absent
-            //             if (!groupId && groupUrl) {
-            //                 const urlStr = groupUrl.trim();
-            //                 const match = urlStr.match(/\/groups\/([^\/]+)/);
-            //                 if (match) {
-            //                     groupId = match[1];
-            //                 } else if (/^\d+$/.test(urlStr)) {
-            //                     groupId = urlStr;
-            //                 }
-            //             }
-            // 
-            //             // Si on a un ID mais pas d'URL, on peut la reconstruire
-            //             if (groupId && !groupUrl) {
-            //                 groupUrl = `https://www.facebook.com/groups/${groupId}/`;
-            //             }
-            // 
-            //             if (!groupId) {
-            //                 errors.push({ group, error: "Impossible de déterminer l'ID du groupe (group_id manquant et non-extractible de group_url)" });
-            //                 continue;
-            //             }
-            // 
-            //             if (!groupName) {
-            //                 groupName = `Groupe Facebook ${groupId}`;
-            //             }
-            // 
-            //             try {
-            //                 // Vérifier si le groupe existe déjà
-            //                 const existing = await db.query(
-            //                     `SELECT group_id FROM facebook_groups WHERE group_id = $1`,
-            //                     [groupId.trim()]
-            //                 );
-            // 
-            //                 if (existing.rows.length > 0) {
-            //                     errors.push({
-            //                         group,
-            //                         alreadyExists: true,
-            //                         error: `Le groupe "${groupId.trim()}" existe déjà dans la base de données.`
-            //                     });
-            //                     continue;
-            //                 }
-            // 
-            //                 const { rows } = await db.query(`
-            //                     INSERT INTO facebook_groups (group_id, group_url, group_name, last_scraped_at)
-            //                     VALUES ($1, $2, $3, NOW())
-            //                     RETURNING *
-            //                 `, [groupId.trim(), groupUrl.trim(), groupName.trim()]);
-            // 
-            //                 insertedGroups.push(rows[0]);
-            //             } catch (dbErr) {
-            //                 errors.push({ group, error: dbErr.message });
-            //             }
-            //         }
-            // 
-            //         // Si tous les groupes existent déjà et aucun n'a été inséré
-            //         const allAlreadyExist = errors.length > 0 && insertedGroups.length === 0 && errors.every(e => e.alreadyExists);
-            //         if (allAlreadyExist) {
-            //             return res.status(409).json({
-            //                 success: false,
-            //                 error: errors.length === 1
-            //                     ? errors[0].error
-            //                     : `${errors.length} groupe(s) existent déjà dans la base de données.`,
-            //                 groups: errors.map(e => ({ groupId: e.group.groupId || e.group.group_id, message: e.error }))
-            //             });
-            //         }
-            // 
-            //         res.json({
-            //             success: true,
-            //             inserted: insertedGroups.length,
-            //             groups: insertedGroups,
-            //             errors: errors.length > 0 ? errors : undefined
-            //         });
-            //     } catch (err) {
-            //         res.status(500).json({ error: err.message });
-            //     }
-            // });
+            app.post('/api/facebook/groups', async (req, res) => {
+                try {
+                    let groupsInput = [];
+                    if (Array.isArray(req.body)) {
+                        groupsInput = req.body;
+                    } else if (req.body.groups && Array.isArray(req.body.groups)) {
+                        groupsInput = req.body.groups;
+                    } else if (req.body) {
+                        groupsInput = [req.body];
+                    }
+            
+                    if (groupsInput.length === 0) {
+                        return res.status(400).json({ error: "Aucun groupe fourni dans la requête" });
+                    }
+            
+                    const insertedGroups = [];
+                    const errors = [];
+            
+                    for (const group of groupsInput) {
+                        let groupId = group.groupId || group.group_id;
+                        let groupUrl = group.groupUrl || group.group_url;
+                        let groupName = group.groupName || group.group_name;
+            
+                        // Tenter d'extraire depuis l'URL si l'ID est absent
+                        if (!groupId && groupUrl) {
+                            const urlStr = groupUrl.trim();
+                            const match = urlStr.match(/\/groups\/([^\/]+)/);
+                            if (match) {
+                                groupId = match[1];
+                            } else if (/^\d+$/.test(urlStr)) {
+                                groupId = urlStr;
+                            }
+                        }
+            
+                        // Si on a un ID mais pas d'URL, on peut la reconstruire
+                        if (groupId && !groupUrl) {
+                            groupUrl = `https://www.facebook.com/groups/${groupId}/`;
+                        }
+            
+                        if (!groupId) {
+                            errors.push({ group, error: "Impossible de déterminer l'ID du groupe (group_id manquant et non-extractible de group_url)" });
+                            continue;
+                        }
+            
+                        if (!groupName) {
+                            groupName = `Groupe Facebook ${groupId}`;
+                        }
+            
+                        try {
+                            // Vérifier si le groupe existe déjà
+                            const existing = await db.query(
+                                `SELECT group_id FROM facebook_groups WHERE group_id = $1`,
+                                [groupId.trim()]
+                            );
+            
+                            if (existing.rows.length > 0) {
+                                errors.push({
+                                    group,
+                                    alreadyExists: true,
+                                    error: `Le groupe "${groupId.trim()}" existe déjà dans la base de données.`
+                                });
+                                continue;
+                            }
+            
+                            const { rows } = await db.query(`
+                                INSERT INTO facebook_groups (group_id, group_url, group_name, last_scraped_at)
+                                VALUES ($1, $2, $3, NOW())
+                                RETURNING *
+                            `, [groupId.trim(), groupUrl.trim(), groupName.trim()]);
+            
+                            insertedGroups.push(rows[0]);
+                        } catch (dbErr) {
+                            errors.push({ group, error: dbErr.message });
+                        }
+                    }
+            
+                    // Si tous les groupes existent déjà et aucun n'a été inséré
+                    const allAlreadyExist = errors.length > 0 && insertedGroups.length === 0 && errors.every(e => e.alreadyExists);
+                    if (allAlreadyExist) {
+                        return res.status(409).json({
+                            success: false,
+                            error: errors.length === 1
+                                ? errors[0].error
+                                : `${errors.length} groupe(s) existent déjà dans la base de données.`,
+                            groups: errors.map(e => ({ groupId: e.group.groupId || e.group.group_id, message: e.error }))
+                        });
+                    }
+            
+                    res.json({
+                        success: true,
+                        inserted: insertedGroups.length,
+                        groups: insertedGroups,
+                        errors: errors.length > 0 ? errors : undefined
+                    });
+                } catch (err) {
+                    res.status(500).json({ error: err.message });
+                }
+            });
 
             /**
              * GET /api/facebook/posts
