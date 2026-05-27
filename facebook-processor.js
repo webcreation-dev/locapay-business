@@ -211,7 +211,7 @@ async function processFacebookPost(post, db, groupInfo) {
 
   try {
     // ── 0.5 Détection demande client (client_demand) ──────────────────────
-    const managerPhone = extractPhone(post.text);
+    let managerPhone = extractPhone(post.text);
     const hasSearchKeywords = CLIENT_SEARCH_KEYWORDS.some(kw => normalizeText(post.text).includes(kw));
     const isClientDemand = hasSearchKeywords && !!managerPhone;
 
@@ -281,7 +281,7 @@ async function processFacebookPost(post, db, groupInfo) {
     }
 
     // ── 3. Extraction du téléphone (regex d'abord) ─────────────────────────
-    let managerPhone = extractPhone(post.text);
+    managerPhone = extractPhone(post.text);
     console.log(`📞 [Facebook] Post ${postId} — téléphone regex: ${managerPhone || 'non trouvé'}`);
 
     // ── 4. Téléchargement des images ───────────────────────────────────────
