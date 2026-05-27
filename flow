@@ -1,0 +1,52 @@
+Voici le déroulement complet du flux, depuis l'arrivée des données brutes de Facebook (via le JSON d'Apify) jusqu'à leur enregistrement et classification finale.
+
+---
+
+### Étape 1 : L'Importation des données (`importFacebookPosts`)
+Lorsque le fichier JSON d'Apify est importé dans le système :
+
+1. **Création/Mise à jour des groupes** : Le script extrait l'ID du groupe Facebook pour chaque post et s'assure que le groupe existe dans la table `facebook_groups`.
+2. **Pré-filtrage immédiat (pour éviter de surcharger le traitement)** :
+   * **Mots interdits** (ex: *vendre, tf, parcelle*) $\rightarrow$ Le post est marqué directement comme `is_noise = true` avec l'erreur correspondante.
+   * **Plus de 24h** $\rightarrow$ Marqué directement comme `is_noise = true` (erreur *'Bien de plus de 24h'*).
+   * **Recherche suspectée sans téléphone** (mots-clés comme *cherche* mais sans aucun numéro béninois trouvé) $\rightarrow$ Marqué directement comme `is_noise = true` (erreur *'Recherche sans numéro de téléphone'*).
+   * **Absence totale de média (sauf si recherche suspectée)** : Si le post n'a aucune photo/vidéo ET ne contient aucun mot-clé de recherche (ex: *cherche, besoin*), il est marqué comme `is_noise = true` (erreur *'Aucun média attaché'*).
+3. **Insertion en base de données** : Le post est inséré dans `facebook_posts` avec `is_processed = false` et `is_noise = false` s'il a passé les filtres ci-dessus.
+
+---
+
+### Étape 2 : Le Traitement en tâche de fond (`processFacebookBatch`)
+Le script de traitement récupère tous les posts de la table `facebook_posts` où `is_processed = false AND is_noise = false AND analysis_error IS NULL`.
+
+Pour chaque post, la fonction `processFacebookPost` exécute la logique suivante :
+
+#### 1. Nouveaux filtres de sécurité temporelle et lexicale
+* Le script vérifie à nouveau l'ancienneté (si le post a vieilli depuis l'importation) et les mots interdits.
+
+#### 2. Gestion des médias
+* Si le post contient des images, le bot tente de les télécharger et de les convertir en Base64.
+* Si le téléchargement échoue (images expirées de Facebook) $\rightarrow$ Le post est marqué en `is_noise = true` (erreur *'Images expirées ou inaccessibles'*).
+
+#### 3. Appel à l'IA Mistral
+C'est à cette étape que l'IA intervient pour analyser le texte et retourner un JSON structuré contenant le champ crucial `"intent"` (`CLIENT_DEMAND`, `OFFER` ou `NOISE`), ainsi que les caractéristiques du bien (type, loyer, localisation, etc.).
+
+---
+
+### Étape 3 : Branchement selon la décision de l'IA
+
+#### **Cas A : L'IA répond `"intent": "CLIENT_DEMAND"` (Le client recherche un bien)**
+1. **Extraction du téléphone** : On récupère le numéro de téléphone (soit via notre Regex locale, soit celui extrait par l'IA dans `manager_phone`).
+2. **Vérification** :
+   * **Si un téléphone est trouvé** : Le post est validé. On le marque en base de données comme `is_processed = true`, `is_client_demand = true`, et on enregistre le téléphone. *(Aucun envoi à NestJS n'est requis pour les demandes clients).*
+   * **Si aucun téléphone n'est trouvé** : Le post est marqué comme `is_noise = true` (erreur *'Numéro de téléphone introuvable'*).
+
+#### **Cas B : L'IA répond `"intent": "OFFER"` (Une offre de location/colocation/etc.)**
+1. **Vérification obligatoire des médias** : Une offre valide doit avoir du média. Si aucune image n'a pu être téléchargée et qu'il n'y a pas de vidéo, le post est rejeté $\rightarrow$ `is_noise = true` (erreur *'Aucun média attaché pour une offre'*).
+2. **Vérification du téléphone** : Si aucun téléphone n'est trouvé (ni regex, ni IA), le post est rejeté $\rightarrow$ `analysis_error = 'Numéro de téléphone introuvable'`.
+3. **Envoi à NestJS** : Si le téléphone et les images sont OK, les données (Base64 des images, caractéristiques extraites par l'IA, métadonnées du groupe Facebook) sont envoyées à l'API NestJS `/create-from-facebook`.
+4. **Finalisation** :
+   * Si NestJS crée le bien avec succès $\rightarrow$ Le post est marqué `is_processed = true` et on associe le `real_property_id`.
+   * Si NestJS refuse (champs obligatoires manquants, etc.) $\rightarrow$ L'erreur retournée par NestJS est enregistrée dans `analysis_error`.
+
+#### **Cas C : L'IA répond `"intent": "NOISE"` (Bruit ou hors-sujet)**
+1. Le post est immédiatement classé comme bruit $\rightarrow$ `is_noise = true` (erreur *'Classé comme bruit par l'IA'*).

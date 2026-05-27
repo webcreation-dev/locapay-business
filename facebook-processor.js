@@ -18,7 +18,7 @@ const FORBIDDEN_KEYWORDS = [
 
 // Mots-clés indiquant qu'un client recherche un bien
 const CLIENT_SEARCH_KEYWORDS = [
-  'recherche', 'je cherche', "j'ai besoin", 'cherche logement', 'cherche appartement', 'besoin de', 'cherche de'
+  'recherche', 'cherche', 'besoin'
 ];
 
 // ─── REGEX TÉLÉPHONE BÉNINOIS ────────────────────────────────────────────────
@@ -145,7 +145,7 @@ async function extractPropertyDataWithAI(description) {
   });
 
   const prompt = `
-Tu es un extracteur de données immobilières pour des posts Facebook. Analyse la description suivante et extrait les informations selon les champs spécifiés (JSON uniquement).
+Tu es un expert en analyse immobilière. Analyse la description suivante et extrait les informations selon les champs spécifiés (JSON uniquement).
 
 ⚠️ RÈGLES CRITIQUES :
 1. NE JAMAIS INVENTER d'informations. Si une info n'est pas mentionnée, retourne null.
@@ -153,8 +153,13 @@ Tu es un extracteur de données immobilières pour des posts Facebook. Analyse l
 3. TYPES : "Magasin" -> STORE, "Boutique" -> SHOP, "Bureau" -> OFFICE.
 4. TÉLÉPHONE : Extrait le numéro de téléphone du propriétaire/agent du texte dans "manager_phone". Format: chiffres uniquement.
 5. to_sell : true uniquement si c'est une VENTE (parcelle, terrain, titre foncier). Sinon false.
+6. CLASSIFICATION DE L'INTENTION ("intent") :
+   - "CLIENT_DEMAND" : L'auteur du message recherche activement un bien immobilier (ex: "Je cherche une chambre salon...", "Besoin d'un appartement...").
+   - "OFFER" : Le message propose/offre un bien immobilier (ex: "Chambre disponible...", "Si vous cherchez une chambre à louer écrivez-moi...").
+   - "NOISE" : Le message est du bruit, hors-sujet, ou n'a aucun rapport avec l'immobilier.
 
 🎯 CHAMPS À EXTRAIRE :
+- "intent": "CLIENT_DEMAND|OFFER|NOISE"
 - "type": "HOUSE|APARTMENT|STUDIO|VILLA|SHOP|STORE|BUILDING|OFFICE"
 - "to_sell": false (location uniquement)
 - "rent_price": nombre (prix en FCFA) ou null
@@ -210,40 +215,6 @@ async function processFacebookPost(post, db, groupInfo) {
   const postId = post.post_id;
 
   try {
-    // ── 0.5 Détection demande client (client_demand) ──────────────────────
-    let managerPhone = extractPhone(post.text);
-    const hasSearchKeywords = CLIENT_SEARCH_KEYWORDS.some(kw => normalizeText(post.text).includes(kw));
-    const isClientDemand = hasSearchKeywords && !!managerPhone;
-
-    if (isClientDemand) {
-      await db.query(
-        `UPDATE facebook_posts 
-         SET is_processed = TRUE, 
-             is_noise = FALSE, 
-             is_client_demand = TRUE, 
-             phone_extracted = $1, 
-             analysis_error = NULL, 
-             updated_at = NOW() 
-         WHERE post_id = $2`,
-        [managerPhone, postId]
-      );
-      console.log(`🎯 [Facebook] Post ${postId} → classé comme Demande Client (sans IA)`);
-      return { success: true };
-    }
-
-    if (hasSearchKeywords && !managerPhone) {
-      await db.query(
-        `UPDATE facebook_posts 
-         SET is_noise = TRUE, 
-             analysis_error = 'Recherche sans numéro de téléphone', 
-             updated_at = NOW() 
-         WHERE post_id = $1`,
-        [postId]
-      );
-      console.log(`🚫 [Facebook] Post ${postId} → noise (recherche sans téléphone)`);
-      return { success: false, error: 'Recherche sans numéro de téléphone' };
-    }
-
     // ── 0. Filtre plus de 24h (première contrainte d'ancienneté) ────────────
     const postTime = post.estimated_post_at ? new Date(post.estimated_post_at) : null;
     const now = new Date();
@@ -270,8 +241,9 @@ async function processFacebookPost(post, db, groupInfo) {
     // ── 2. Filtre absence de média ──────────────────────────────────────────
     const imageUrls = Array.isArray(post.image_urls) ? post.image_urls : JSON.parse(post.image_urls || '[]');
     const hasVideo = post.video_url && post.video_url.trim() !== '';
+    const hasSearchKeywords = CLIENT_SEARCH_KEYWORDS.some(kw => normalizeText(post.text).includes(kw));
 
-    if (imageUrls.length === 0 && !hasVideo) {
+    if (!hasSearchKeywords && imageUrls.length === 0 && !hasVideo) {
       await db.query(
         `UPDATE facebook_posts SET is_noise = TRUE, analysis_error = 'Aucun média attaché', updated_at = NOW() WHERE post_id = $1`,
         [postId]
@@ -281,27 +253,29 @@ async function processFacebookPost(post, db, groupInfo) {
     }
 
     // ── 3. Extraction du téléphone (regex d'abord) ─────────────────────────
-    managerPhone = extractPhone(post.text);
+    let managerPhone = extractPhone(post.text);
     console.log(`📞 [Facebook] Post ${postId} — téléphone regex: ${managerPhone || 'non trouvé'}`);
 
     // ── 4. Téléchargement des images ───────────────────────────────────────
-    console.log(`📸 [Facebook] Téléchargement de ${imageUrls.length} image(s) pour post ${postId}...`);
     const imagesBase64 = [];
-    for (const url of imageUrls) { // Toutes les images par post
-      const img = await downloadImageAsBase64(url);
-      if (img) imagesBase64.push(img);
-    }
+    if (imageUrls.length > 0) {
+      console.log(`📸 [Facebook] Téléchargement de ${imageUrls.length} image(s) pour post ${postId}...`);
+      for (const url of imageUrls) { // Toutes les images par post
+        const img = await downloadImageAsBase64(url);
+        if (img) imagesBase64.push(img);
+      }
 
-    if (imagesBase64.length === 0) {
-      await db.query(
-        `UPDATE facebook_posts SET is_noise = TRUE, analysis_error = 'Images expirées ou inaccessibles', updated_at = NOW() WHERE post_id = $1`,
-        [postId]
-      );
-      console.warn(`⚠️ [Facebook] Post ${postId} → noise (aucune image téléchargeable)`);
-      return { success: false, error: 'Images expirées ou inaccessibles' };
-    }
+      if (imagesBase64.length === 0) {
+        await db.query(
+          `UPDATE facebook_posts SET is_noise = TRUE, analysis_error = 'Images expirées ou inaccessibles', updated_at = NOW() WHERE post_id = $1`,
+          [postId]
+        );
+        console.warn(`⚠️ [Facebook] Post ${postId} → noise (aucune image téléchargeable)`);
+        return { success: false, error: 'Images expirées ou inaccessibles' };
+      }
 
-    console.log(`✅ [Facebook] ${imagesBase64.length}/${imageUrls.length} images téléchargées pour post ${postId}`);
+      console.log(`✅ [Facebook] ${imagesBase64.length}/${imageUrls.length} images téléchargées pour post ${postId}`);
+    }
 
     // ── 5. Analyse IA Mistral ──────────────────────────────────────────────
     console.log(`🤖 [Facebook] Analyse Mistral pour post ${postId}...`);
@@ -313,6 +287,17 @@ async function processFacebookPost(post, db, groupInfo) {
         [postId]
       );
       return { success: false, error: 'Échec analyse IA' };
+    }
+
+    const intent = extractedData.intent || 'OFFER';
+    console.log(`🤖 [Facebook] Post ${postId} — intention IA: ${intent}`);
+
+    if (intent === 'NOISE') {
+      await db.query(
+        `UPDATE facebook_posts SET is_noise = TRUE, analysis_error = 'Classé comme bruit par l\\'IA', updated_at = NOW() WHERE post_id = $1`,
+        [postId]
+      );
+      return { success: false, error: 'Classé comme bruit par l\'IA' };
     }
 
     // Si l'IA a détecté une vente
@@ -341,6 +326,33 @@ async function processFacebookPost(post, db, groupInfo) {
       );
       console.warn(`⚠️ [Facebook] Post ${postId} → invalide (pas de téléphone)`);
       return { success: false, error: 'Numéro de téléphone introuvable' };
+    }
+
+    // Si l'IA confirme que c'est une demande client
+    if (intent === 'CLIENT_DEMAND') {
+      await db.query(
+        `UPDATE facebook_posts 
+         SET is_processed = TRUE, 
+             is_noise = FALSE, 
+             is_client_demand = TRUE, 
+             phone_extracted = $1, 
+             analysis_error = NULL, 
+             updated_at = NOW() 
+         WHERE post_id = $2`,
+        [managerPhone, postId]
+      );
+      console.log(`🎯 [Facebook] Post ${postId} → classé comme Demande Client par l'IA`);
+      return { success: true };
+    }
+
+    // C'est une offre (OFFER) : On vérifie la présence de média obligatoirement
+    if (imagesBase64.length === 0 && !hasVideo) {
+      await db.query(
+        `UPDATE facebook_posts SET is_noise = TRUE, analysis_error = 'Aucun média attaché pour une offre', updated_at = NOW() WHERE post_id = $1`,
+        [postId]
+      );
+      console.log(`🚫 [Facebook] Post ${postId} → noise (offre sans média)`);
+      return { success: false, error: 'Aucun média attaché pour une offre' };
     }
 
     // Sauvegarder le téléphone extrait
@@ -498,16 +510,15 @@ async function importFacebookPosts(posts, db, explicitGroupId = null) {
     const videoUrl = post.videoUrl || '';
     const estimatedPostAt = parseRelativeTimestamp(post.scrapedAt, post.timestamp);
 
-    // Détection Demande Client dès l'import
+    // Détection de mots-clés de recherche
     const managerPhone = extractPhone(post.text);
     const hasSearchKeywords = CLIENT_SEARCH_KEYWORDS.some(kw => normalizeText(post.text).includes(kw));
-    const isClientDemand = hasSearchKeywords && !!managerPhone;
 
     // Première contrainte : plus de 24h par rapport à NOW
     const now = new Date();
     const isOlderThan24h = estimatedPostAt ? (now.getTime() - estimatedPostAt.getTime() > 24 * 60 * 60 * 1000) : false;
 
-    // Pré-filtre immédiat : pas de média (sauf si c'est une demande client) ou plus de 24h → noise dès l'import
+    // Pré-filtre immédiat : pas de média (sauf si c'est une recherche) ou plus de 24h → noise dès l'import
     const forbiddenKw = containsForbiddenKeyword(post.text);
     let isNoiseOnImport = false;
     let noiseError = null;
@@ -518,7 +529,7 @@ async function importFacebookPosts(posts, db, explicitGroupId = null) {
     } else if (hasSearchKeywords && !managerPhone) {
       isNoiseOnImport = true;
       noiseError = 'Recherche sans numéro de téléphone';
-    } else if (!isClientDemand && imageUrls.length === 0 && !videoUrl) {
+    } else if (!hasSearchKeywords && imageUrls.length === 0 && !videoUrl) {
       isNoiseOnImport = true;
       noiseError = 'Aucun média attaché';
     } else if (isOlderThan24h) {
@@ -550,9 +561,9 @@ async function importFacebookPosts(posts, db, explicitGroupId = null) {
         estimatedPostAt,
         isNoiseOnImport,
         noiseError,
-        isClientDemand,
-        isClientDemand,
-        isClientDemand ? managerPhone : null,
+        false,
+        false,
+        null,
       ]);
 
       if (result.rowCount > 0) {
