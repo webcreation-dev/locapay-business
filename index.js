@@ -271,6 +271,7 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
             await db.query('ALTER TABLE facebook_posts ADD COLUMN IF NOT EXISTS is_noise BOOLEAN DEFAULT FALSE;');
             await db.query('ALTER TABLE facebook_posts ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();');
             await db.query('ALTER TABLE facebook_posts ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();');
+            await db.query('ALTER TABLE facebook_posts ADD COLUMN IF NOT EXISTS is_client_demand BOOLEAN DEFAULT FALSE;');
 
             console.log('✅ Tables Facebook (facebook_groups, facebook_posts) prêtes.');
             // ────────────────────────────────────────────────────────────────

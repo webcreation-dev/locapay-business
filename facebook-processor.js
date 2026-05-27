@@ -14,7 +14,11 @@ const path = require('path');
 const FORBIDDEN_KEYWORDS = [
   'vendre', 'vente', 'parcelle', 'terrain', 'titre foncier',
   ' tf ', '\ntf\n', 'domaine',
-  'recherche', 'je cherche', "j'ai besoin", 'cherche logement',
+];
+
+// Mots-clés indiquant qu'un client recherche un bien
+const CLIENT_SEARCH_KEYWORDS = [
+  'recherche', 'je cherche', "j'ai besoin", 'cherche logement', 'cherche appartement', 'besoin de', 'cherche de'
 ];
 
 // ─── REGEX TÉLÉPHONE BÉNINOIS ────────────────────────────────────────────────
@@ -206,6 +210,40 @@ async function processFacebookPost(post, db, groupInfo) {
   const postId = post.post_id;
 
   try {
+    // ── 0.5 Détection demande client (client_demand) ──────────────────────
+    const managerPhone = extractPhone(post.text);
+    const hasSearchKeywords = CLIENT_SEARCH_KEYWORDS.some(kw => normalizeText(post.text).includes(kw));
+    const isClientDemand = hasSearchKeywords && !!managerPhone;
+
+    if (isClientDemand) {
+      await db.query(
+        `UPDATE facebook_posts 
+         SET is_processed = TRUE, 
+             is_noise = FALSE, 
+             is_client_demand = TRUE, 
+             phone_extracted = $1, 
+             analysis_error = NULL, 
+             updated_at = NOW() 
+         WHERE post_id = $2`,
+        [managerPhone, postId]
+      );
+      console.log(`🎯 [Facebook] Post ${postId} → classé comme Demande Client (sans IA)`);
+      return { success: true };
+    }
+
+    if (hasSearchKeywords && !managerPhone) {
+      await db.query(
+        `UPDATE facebook_posts 
+         SET is_noise = TRUE, 
+             analysis_error = 'Recherche sans numéro de téléphone', 
+             updated_at = NOW() 
+         WHERE post_id = $1`,
+        [postId]
+      );
+      console.log(`🚫 [Facebook] Post ${postId} → noise (recherche sans téléphone)`);
+      return { success: false, error: 'Recherche sans numéro de téléphone' };
+    }
+
     // ── 0. Filtre plus de 24h (première contrainte d'ancienneté) ────────────
     const postTime = post.estimated_post_at ? new Date(post.estimated_post_at) : null;
     const now = new Date();
@@ -460,16 +498,31 @@ async function importFacebookPosts(posts, db, explicitGroupId = null) {
     const videoUrl = post.videoUrl || '';
     const estimatedPostAt = parseRelativeTimestamp(post.scrapedAt, post.timestamp);
 
+    // Détection Demande Client dès l'import
+    const managerPhone = extractPhone(post.text);
+    const hasSearchKeywords = CLIENT_SEARCH_KEYWORDS.some(kw => normalizeText(post.text).includes(kw));
+    const isClientDemand = hasSearchKeywords && !!managerPhone;
+
     // Première contrainte : plus de 24h par rapport à NOW
     const now = new Date();
     const isOlderThan24h = estimatedPostAt ? (now.getTime() - estimatedPostAt.getTime() > 24 * 60 * 60 * 1000) : false;
 
-    // Pré-filtre immédiat : pas de média ou plus de 24h → noise dès l'import
-    const isNoiseOnImport = (imageUrls.length === 0 && !videoUrl) || isOlderThan24h;
+    // Pré-filtre immédiat : pas de média (sauf si c'est une demande client) ou plus de 24h → noise dès l'import
+    const forbiddenKw = containsForbiddenKeyword(post.text);
+    let isNoiseOnImport = false;
     let noiseError = null;
-    if (imageUrls.length === 0 && !videoUrl) {
+
+    if (forbiddenKw) {
+      isNoiseOnImport = true;
+      noiseError = `Mot interdit: "${forbiddenKw}"`;
+    } else if (hasSearchKeywords && !managerPhone) {
+      isNoiseOnImport = true;
+      noiseError = 'Recherche sans numéro de téléphone';
+    } else if (!isClientDemand && imageUrls.length === 0 && !videoUrl) {
+      isNoiseOnImport = true;
       noiseError = 'Aucun média attaché';
     } else if (isOlderThan24h) {
+      isNoiseOnImport = true;
       noiseError = 'Bien de plus de 24h';
     }
 
@@ -478,8 +531,8 @@ async function importFacebookPosts(posts, db, explicitGroupId = null) {
         INSERT INTO facebook_posts (
           post_id, group_id, author, text, image_urls, video_url,
           post_url, scraped_at, estimated_post_at,
-          is_noise, analysis_error
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+          is_noise, analysis_error, is_client_demand, is_processed, phone_extracted
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         ON CONFLICT (post_id) DO UPDATE SET
           scraped_at = EXCLUDED.scraped_at,
           estimated_post_at = EXCLUDED.estimated_post_at,
@@ -497,6 +550,9 @@ async function importFacebookPosts(posts, db, explicitGroupId = null) {
         estimatedPostAt,
         isNoiseOnImport,
         noiseError,
+        isClientDemand,
+        isClientDemand,
+        isClientDemand ? managerPhone : null,
       ]);
 
       if (result.rowCount > 0) {
