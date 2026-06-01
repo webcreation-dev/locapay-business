@@ -140,7 +140,7 @@ async function extractPropertyDataWithAI(description) {
   }
 
   // Normalisation des prix avant envoi (gestion de "mille", "milles", "mil", "k")
-  const normalized = description.replace(/(\d+)[.,]?(\d*)\s*(milles?|mil|k)\b/gi, (_, int, dec, unit) => {
+  const normalized = (description || '').replace(/(\d+)[.,]?(\d*)\s*(milles?|mil|k)\b/gi, (_, int, dec, unit) => {
     return String(Math.round(parseFloat(int + (dec ? '.' + dec : '')) * 1000));
   });
 
@@ -294,7 +294,7 @@ async function processFacebookPost(post, db, groupInfo) {
 
     if (intent === 'NOISE') {
       await db.query(
-        `UPDATE facebook_posts SET is_noise = TRUE, analysis_error = 'Classé comme bruit par l\\'IA', updated_at = NOW() WHERE post_id = $1`,
+        `UPDATE facebook_posts SET is_noise = TRUE, analysis_error = 'Classé comme bruit par l''IA', updated_at = NOW() WHERE post_id = $1`,
         [postId]
       );
       return { success: false, error: 'Classé comme bruit par l\'IA' };
