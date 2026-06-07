@@ -157,6 +157,10 @@ Tu es un expert en analyse immobilière. Analyse la description suivante et extr
    - "CLIENT_DEMAND" : L'auteur du message recherche activement un bien immobilier (ex: "Je cherche une chambre salon...", "Besoin d'un appartement...").
    - "OFFER" : Le message propose/offre un bien immobilier (ex: "Chambre disponible...", "Si vous cherchez une chambre à louer écrivez-moi...").
    - "NOISE" : Le message est du bruit, hors-sujet, ou n'a aucun rapport avec l'immobilier.
+7. TARIFICATION JOURNALIÈRE (PRIORITÉ ABSOLUE) : Si l'annonce mentionne une location à la nuitée, par nuit, par jour, "court séjour", "meublé courte durée", "location journalière", ou tout prix exprimé par nuit/jour (ex: "25000/nuit", "15000 la nuit", "35000/j"), alors :
+   - Retourne "tarification": "DAILY"
+   - Retourne "intent": "NOISE"
+   Ces biens sont STRICTEMENT REFUSÉS sur la plateforme. Ne les traite pas comme des offres valides.
 
 🎯 CHAMPS À EXTRAIRE :
 - "intent": "CLIENT_DEMAND|OFFER|NOISE"
@@ -326,6 +330,20 @@ async function processFacebookPost(post, db, groupInfo) {
       );
       console.warn(`⚠️ [Facebook] Post ${postId} → invalide (pas de téléphone)`);
       return { success: false, error: 'Numéro de téléphone introuvable' };
+    }
+
+    // Filtrer les locations journalières (à la nuitée / par jour)
+    if (extractedData.tarification === 'DAILY') {
+      await db.query(
+        `UPDATE facebook_posts
+         SET is_noise = TRUE,
+             analysis_error = 'Location journalière (DAILY) non acceptée',
+             updated_at = NOW()
+         WHERE post_id = $1`,
+        [postId]
+      );
+      console.log(`🚫 [Facebook] Post ${postId} → noise (location journalière DAILY détectée)`);
+      return { success: false, error: 'Location journalière (DAILY) non acceptée' };
     }
 
     // Si l'IA confirme que c'est une demande client

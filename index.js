@@ -331,6 +331,8 @@ Tu es un extracteur de données immobilières pour WhatsApp. Analyse la descript
 1. NE JAMAIS INVENTER d'informations. Si le prix n'est pas mentionné, retourne "rent_price": null.
 2. PRIORITÉ TYPE : Si un texte mentionne un usage commercial (boutique ou magasin), ce type est PRIORITAIRE pour le champ "type" même s'il y a des chambres/salons.
 3. TYPES : "Magasin" -> STORE, "Boutique" -> SHOP.
+4. TARIFICATION JOURNALIÈRE (PRIORITÉ ABSOLUE) : Si l'annonce mentionne une location à la nuitée, par nuit, par jour, "court séjour", "meublé courte durée", "location journalière", ou tout prix exprimé par nuit/jour (ex: "25000/nuit", "15000 la nuit", "35000/j"), alors retourne "tarification": "DAILY".
+   Ces biens ne sont PAS acceptés sur la plateforme. Seule la tarification mensuelle (MONTHLY) est valide.
 
 📚 EXEMPLES CONCRETS D'EXTRACTION :
 Exemple 1: "Chambre salon à Calavi Tokan, loyer 25000" -> {"type": "APARTMENT", "rent_price": 25000, "localisation": "Calavi Tokan", "number_rooms": 1, "number_living_rooms": 1, "sanitary": "YES"}
@@ -1098,6 +1100,17 @@ Texte à analyser : "${description}"
                     if (!extractedData.rent_price || extractedData.rent_price <= 0) {
                         const errMsg = "Prix du loyer manquant ou invalide dans l'annonce.";
                         await db.query(`UPDATE messages SET submission_failed = TRUE, analysis_error = $1 WHERE id = ANY($2)`, [errMsg, messageIds]);
+                        return { success: false, error: errMsg };
+                    }
+
+                    // Filtrer les locations journalières (à la nuitée / par jour)
+                    if (extractedData.tarification === 'DAILY') {
+                        const errMsg = 'Location journalière (DAILY) non acceptée';
+                        await db.query(
+                            `UPDATE messages SET submission_failed = TRUE, property_group_id = 'noise', analysis_error = $1 WHERE id = ANY($2)`,
+                            [errMsg, messageIds]
+                        );
+                        console.log(`🚫 [WhatsApp] Groupe ${messageIds} → noise (location journalière DAILY détectée)`);
                         return { success: false, error: errMsg };
                     }
 
