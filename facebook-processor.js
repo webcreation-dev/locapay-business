@@ -9,6 +9,20 @@
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
+const nodemailer = require('nodemailer');
+
+// --- CONFIGURATION ALERTE MAIL FACEBOOK ---
+const transporter = nodemailer.createTransport({
+    host: process.env.MAIL_HOST || 'smtp.gmail.com',
+    port: parseInt(process.env.MAIL_PORT) || 465,
+    secure: true,
+    auth: {
+        user: process.env.MAIL_USERNAME,
+        pass: process.env.MAIL_PASSWORD,
+    },
+});
+
+let lastMistralAlertTime = 0; // Anti-spam 1h
 
 // ─── MOTS INTERDITS (même liste que WhatsApp) ───────────────────────────────
 const FORBIDDEN_KEYWORDS = [
@@ -197,6 +211,25 @@ Texte à analyser : "${normalized}"
     const content = response.data.choices[0].message.content.trim();
     return JSON.parse(content);
   } catch (err) {
+    const status = err.response?.status;
+    if (status === 401 || status === 429) {
+      console.error(`❌ [Facebook] Erreur Mistral AI FATALE (${status}):`, err.message);
+      
+      const now = Date.now();
+      if (now - lastMistralAlertTime > 3600000) { // 1h
+        try {
+          transporter.sendMail({
+            from: `"WhatsApp Bot Alert" <${process.env.MAIL_USERNAME}>`,
+            to: 'adjilan2403@gmail.com, agossadourin@gmail.com',
+            subject: `⚠️ ALERTE BOT : Mistral AI hors service (Facebook)`,
+            text: `Une erreur est survenue sur le traitement Facebook.\n\nErreur HTTP ${status} - L'API Mistral est bloquée (Quota ou Paiement). Le traitement a été suspendu.\n\nDate : ${new Date().toLocaleString()}`,
+          }).catch(e => console.error("Échec mail:", e.message));
+          console.log(`✅ [Facebook] Alerte mail envoyée avec succès.`);
+          lastMistralAlertTime = now;
+        } catch (e) {}
+      }
+      throw new Error('MISTRAL_QUOTA_EXCEEDED');
+    }
     console.error('❌ [Facebook] Erreur Mistral AI:', err.message);
     return null;
   }
@@ -430,6 +463,11 @@ async function processFacebookPost(post, db, groupInfo) {
     }
 
   } catch (err) {
+    if (err.message === 'MISTRAL_QUOTA_EXCEEDED') {
+      console.log(`⚠️ [Facebook] Post ${postId} laissé en attente suite à erreur Mistral.`);
+      return { success: false, fatal: true, error: 'MISTRAL_QUOTA_EXCEEDED' };
+    }
+
     const errMsg = err.response
       ? (err.response.data?.error || err.response.data?.message || `HTTP ${err.response.status}`)
       : err.message;
@@ -474,6 +512,11 @@ async function processFacebookBatch(db, onProgress = null) {
     const groupInfo = { group_url: post.group_url, group_name: post.group_name };
 
     const result = await processFacebookPost(post, db, groupInfo);
+
+    if (result.fatal) {
+      console.log('🛑 [Facebook] Arrêt immédiat du batch suite à une erreur fatale Mistral.');
+      break;
+    }
 
     if (result.success) success++;
     else if (post.is_noise) noise++;

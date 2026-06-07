@@ -69,6 +69,9 @@ const transporter = nodemailer.createTransport({
     },
 });
 
+// Variable pour la sécurité anti-spam des alertes Mistral (1h = 3600000ms)
+let lastMistralAlertTime = 0;
+
 async function sendErrorAlert(errorContext, error) {
     console.log("📨 Tentative d'envoi d'alerte mail...");
     const recipient = 'adjilan2403@gmail.com, agossadourin@gmail.com';
@@ -378,6 +381,19 @@ Texte à analyser : "${description}"
                     const content = response.data.choices[0].message.content.trim();
                     return JSON.parse(content);
                 } catch (error) {
+                    const status = error.response?.status;
+                    if (status === 401 || status === 429) {
+                        console.error(`❌ Erreur Mistral AI FATALE (${status}):`, error.message);
+                        
+                        // Sécurité anti-spam : Envoi d'un mail maximum par heure
+                        const now = Date.now();
+                        if (now - lastMistralAlertTime > 3600000) {
+                            sendErrorAlert("Mistral AI hors service (Quota ou Paiement)", `Erreur HTTP ${status} - L'API Mistral est bloquée. Le traitement a été suspendu pour cet élément.`);
+                            lastMistralAlertTime = now;
+                        }
+                        
+                        throw new Error('MISTRAL_QUOTA_EXCEEDED');
+                    }
                     console.error("❌ Erreur Mistral AI dans le Bot:", error.message);
                     return null;
                 }
