@@ -11,6 +11,7 @@ export default function FacebookGroups() {
   const [editingGroupId, setEditingGroupId] = useState(null);
   const [editingGroupName, setEditingGroupName] = useState('');
   const [toast, setToast] = useState(null);
+  const [confirmAction, setConfirmAction] = useState(null); // { type: 'validate' | 'reject', groupId: string, groupName: string }
 
   // Pagination states
   const [currentPage, setCurrentPage] = useState(1);
@@ -76,6 +77,8 @@ export default function FacebookGroups() {
       } else throw new Error(data.error);
     } catch (e) {
       setToast({ message: `❌ Erreur: ${e.message}`, type: 'error' });
+    } finally {
+      setConfirmAction(null);
     }
   };
 
@@ -93,6 +96,17 @@ export default function FacebookGroups() {
       } else throw new Error(data.error);
     } catch (e) {
       setToast({ message: `❌ Erreur: ${e.message}`, type: 'error' });
+    } finally {
+      setConfirmAction(null);
+    }
+  };
+
+  const processConfirmAction = () => {
+    if (!confirmAction) return;
+    if (confirmAction.type === 'validate') {
+      handleValidateGroup(confirmAction.groupId);
+    } else if (confirmAction.type === 'reject') {
+      handleRejectGroup(confirmAction.groupId);
     }
   };
 
@@ -288,7 +302,7 @@ export default function FacebookGroups() {
                           <>
                             {/* Valider */}
                             <button
-                              onClick={() => handleValidateGroup(group.group_id)}
+                              onClick={() => setConfirmAction({ type: 'validate', groupId: group.group_id, groupName: group.group_name })}
                               style={{ background: 'linear-gradient(135deg, #22c55e, #16a34a)', color: '#fff', border: 'none', borderRadius: '8px', padding: '8px 14px', fontWeight: '600', fontSize: '13px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px', transition: 'all 0.15s', boxShadow: '0 2px 8px rgba(34,197,94,0.3)' }}
                               onMouseEnter={e => { e.currentTarget.style.opacity = '0.9'; e.currentTarget.style.transform = 'scale(1.02)'; }}
                               onMouseLeave={e => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.transform = 'scale(1)'; }}
@@ -299,7 +313,7 @@ export default function FacebookGroups() {
 
                             {/* Rejeter */}
                             <button
-                              onClick={() => handleRejectGroup(group.group_id)}
+                              onClick={() => setConfirmAction({ type: 'reject', groupId: group.group_id, groupName: group.group_name })}
                               style={{ background: 'linear-gradient(135deg, #f87171, #dc2626)', color: '#fff', border: 'none', borderRadius: '8px', padding: '8px 14px', fontWeight: '600', fontSize: '13px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px', transition: 'all 0.15s', boxShadow: '0 2px 8px rgba(220,38,38,0.3)' }}
                               onMouseEnter={e => { e.currentTarget.style.opacity = '0.9'; e.currentTarget.style.transform = 'scale(1.02)'; }}
                               onMouseLeave={e => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.transform = 'scale(1)'; }}
@@ -413,6 +427,41 @@ export default function FacebookGroups() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Confirmation d'action */}
+      {confirmAction && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(6px)' }}
+          onClick={e => { if (e.target === e.currentTarget) setConfirmAction(null); }}
+        >
+          <div style={{ background: '#fff', borderRadius: '24px', padding: '40px', width: '100%', maxWidth: '420px', boxShadow: '0 24px 64px rgba(0,0,0,0.3)', animation: 'slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1)', textAlign: 'center' }}>
+            <div style={{ fontSize: '48px', marginBottom: '16px' }}>
+              {confirmAction.type === 'validate' ? '✅' : '🚫'}
+            </div>
+            <h2 style={{ fontSize: '20px', fontWeight: '800', color: '#1e293b', margin: '0 0 12px 0' }}>
+              {confirmAction.type === 'validate' ? 'Confirmer la validation' : 'Confirmer le rejet'}
+            </h2>
+            <p style={{ color: '#475569', fontSize: '15px', lineHeight: '1.5', margin: '0 0 32px 0' }}>
+              Êtes-vous sûr de vouloir {confirmAction.type === 'validate' ? 'valider' : 'rejeter'} le groupe<br/>
+              <strong style={{ color: '#1e293b' }}>{confirmAction.groupName || 'sans nom'}</strong> ?
+            </p>
+            <div style={{ display: 'flex', gap: '12px' }}>
+              <button type="button" onClick={() => setConfirmAction(null)}
+                style={{ flex: 1, padding: '14px', border: '2px solid #e2e8f0', background: '#fff', borderRadius: '12px', fontWeight: '700', fontSize: '15px', cursor: 'pointer', color: '#64748b', transition: 'background 0.15s' }}
+                onMouseEnter={e=>e.currentTarget.style.background='#f8fafc'} onMouseLeave={e=>e.currentTarget.style.background='#fff'}
+              >
+                Annuler
+              </button>
+              <button type="button" onClick={processConfirmAction}
+                style={{ flex: 1, padding: '14px', background: confirmAction.type === 'validate' ? 'linear-gradient(135deg, #22c55e, #16a34a)' : 'linear-gradient(135deg, #ef4444, #dc2626)', color: '#fff', border: 'none', borderRadius: '12px', fontWeight: '700', fontSize: '15px', cursor: 'pointer', boxShadow: confirmAction.type === 'validate' ? '0 8px 24px rgba(34,197,94,0.3)' : '0 8px 24px rgba(239,68,68,0.3)', transition: 'transform 0.15s' }}
+                onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-2px)'}
+                onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}
+              >
+                Oui, {confirmAction.type === 'validate' ? 'Valider' : 'Rejeter'}
+              </button>
+            </div>
           </div>
         </div>
       )}
