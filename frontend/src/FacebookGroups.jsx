@@ -215,7 +215,7 @@ export default function FacebookGroups() {
                 <tr style={{ background: 'linear-gradient(90deg, #f8faff 0%, #f1f5ff 100%)', borderBottom: '2px solid #e2e8f0' }}>
                   <th style={{ padding: '16px 24px', textAlign: 'left', fontWeight: '700', color: '#475569', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap' }}>ID Groupe</th>
                   <th style={{ padding: '16px 24px', textAlign: 'left', fontWeight: '700', color: '#475569', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Nom du Groupe</th>
-                  <th style={{ padding: '16px 24px', textAlign: 'center', fontWeight: '700', color: '#475569', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap' }}>Posts récupérés</th>
+                  <th style={{ padding: '16px 24px', textAlign: 'center', fontWeight: '700', color: '#475569', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap' }}>Biens créés</th>
                   <th style={{ padding: '16px 24px', textAlign: 'center', fontWeight: '700', color: '#475569', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Statut</th>
                   <th style={{ padding: '16px 24px', textAlign: 'center', fontWeight: '700', color: '#475569', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Actions</th>
                 </tr>
@@ -267,15 +267,10 @@ export default function FacebookGroups() {
                       )}
                     </td>
 
-                    {/* Nb de posts */}
+                    {/* Biens créés */}
                     <td style={{ padding: '16px 24px', textAlign: 'center' }}>
                       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
-                        <span style={{ fontWeight: '700', fontSize: '18px', color: '#1e293b' }}>{parseInt(group.total_posts) || 0}</span>
-                        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', justifyContent: 'center' }}>
-                          {parseInt(group.processed) > 0 && <span style={{ fontSize: '10px', background: '#dcfce7', color: '#16a34a', padding: '2px 6px', borderRadius: '6px', fontWeight: '700' }}>✅ {group.processed}</span>}
-                          {parseInt(group.pending) > 0 && <span style={{ fontSize: '10px', background: '#fef3c7', color: '#d97706', padding: '2px 6px', borderRadius: '6px', fontWeight: '700' }}>⏳ {group.pending}</span>}
-                          {parseInt(group.errors) > 0 && <span style={{ fontSize: '10px', background: '#fee2e2', color: '#dc2626', padding: '2px 6px', borderRadius: '6px', fontWeight: '700' }}>⚠️ {group.errors}</span>}
-                        </div>
+                        <span style={{ fontWeight: '700', fontSize: '18px', color: '#1e293b' }}>{parseInt(group.processed) || 0}</span>
                       </div>
                     </td>
 
