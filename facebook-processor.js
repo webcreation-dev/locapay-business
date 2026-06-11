@@ -219,12 +219,21 @@ Texte à analyser : "${normalized}"
       
       const now = Date.now();
       if (now - lastAiAlertTime > 3600000) { // 1h
+        let reason = "L'API OpenRouter est bloquée. Raison inconnue.";
+        if (status === 429) {
+          reason = "Blocage temporaire : Trop de requêtes envoyées en même temps (Erreur 429 - Rate Limit). Le système a juste besoin de ralentir un peu.";
+        } else if (status === 402 || (err.response?.data?.error?.message && err.response.data.error.message.toLowerCase().includes('credit'))) {
+          reason = "Blocage financier : Vous n'avez plus d'argent / de crédits sur votre compte OpenRouter (Erreur 402). Vous devez recharger votre compte.";
+        } else if (status === 401) {
+          reason = "Blocage d'accès : La clé API OpenRouter est invalide (Erreur 401).";
+        }
+
         try {
           transporter.sendMail({
             from: `"WhatsApp Bot Alert" <${process.env.MAIL_USERNAME}>`,
             to: 'adjilan2403@gmail.com, agossadourin@gmail.com',
-            subject: `⚠️ ALERTE BOT : OpenRouter AI hors service (Facebook)`,
-            text: `Une erreur est survenue sur le traitement Facebook.\n\nErreur HTTP ${status} - L'API OpenRouter est bloquée (Quota ou Paiement). Le traitement a été suspendu.\n\nDate : ${new Date().toLocaleString()}`,
+            subject: `⚠️ ALERTE BOT : OpenRouter AI bloqué (Facebook)`,
+            text: `Une erreur est survenue sur le traitement Facebook.\n\n${reason}\n\nDate : ${new Date().toLocaleString()}`,
           }).catch(e => console.error("Échec mail:", e.message));
           console.log(`✅ [Facebook] Alerte mail envoyée avec succès.`);
           lastAiAlertTime = now;

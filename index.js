@@ -390,7 +390,19 @@ Texte à analyser : "${description}"
                         // Sécurité anti-spam : Envoi d'un mail maximum par heure
                         const now = Date.now();
                         if (now - lastAiAlertTime > 3600000) {
-                            sendErrorAlert("OpenRouter AI hors service (Quota ou Paiement)", `Erreur HTTP ${status} - L'API OpenRouter est bloquée. Le traitement a été suspendu pour cet élément.`);
+                            let reason = "L'API OpenRouter est bloquée. Raison inconnue.";
+                            let title = "OpenRouter AI bloqué";
+                            if (status === 429) {
+                                reason = "Blocage temporaire : Trop de requêtes envoyées en même temps (Erreur 429 - Rate Limit). Le système a juste besoin de ralentir.";
+                                title = "OpenRouter AI - Trop de requêtes (429)";
+                            } else if (status === 402 || (error.response?.data?.error?.message && error.response.data.error.message.toLowerCase().includes('credit'))) {
+                                reason = "Blocage financier : Vous n'avez plus d'argent / de crédits sur votre compte OpenRouter (Erreur 402). Rechargez votre compte.";
+                                title = "OpenRouter AI - Plus de crédits (402)";
+                            } else if (status === 401) {
+                                reason = "Blocage d'accès : La clé API OpenRouter est invalide (Erreur 401).";
+                            }
+                            
+                            sendErrorAlert(title, `Erreur HTTP ${status} - ${reason}\n\nLe traitement a été suspendu pour cet élément.`);
                             lastAiAlertTime = now;
                         }
                         
