@@ -275,6 +275,7 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
             await db.query('ALTER TABLE facebook_posts ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();');
             await db.query('ALTER TABLE facebook_posts ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();');
             await db.query('ALTER TABLE facebook_posts ADD COLUMN IF NOT EXISTS is_client_demand BOOLEAN DEFAULT FALSE;');
+            await db.query('ALTER TABLE facebook_groups ADD COLUMN IF NOT EXISTS is_validated BOOLEAN DEFAULT NULL;');
 
             console.log('✅ Tables Facebook (facebook_groups, facebook_posts) prêtes.');
             // ────────────────────────────────────────────────────────────────
@@ -1544,6 +1545,44 @@ Texte à analyser : "${description}"
                         ORDER BY fg.last_scraped_at DESC
                     `);
                     res.json(rows);
+                } catch (err) {
+                    res.status(500).json({ error: err.message });
+                }
+            });
+
+            /**
+             * PATCH /api/facebook/groups/:groupId
+             * Met à jour le nom et/ou le statut is_validated d'un groupe
+             */
+            app.patch('/api/facebook/groups/:groupId', async (req, res) => {
+                try {
+                    const { groupId } = req.params;
+                    const { group_name, is_validated } = req.body;
+
+                    const updates = [];
+                    const params = [];
+
+                    if (group_name !== undefined) {
+                        params.push(group_name.trim());
+                        updates.push(`group_name = $${params.length}`);
+                    }
+                    if (is_validated !== undefined) {
+                        params.push(is_validated === null ? null : Boolean(is_validated));
+                        updates.push(`is_validated = $${params.length}`);
+                    }
+
+                    if (updates.length === 0) {
+                        return res.status(400).json({ error: 'Aucun champ à mettre à jour.' });
+                    }
+
+                    params.push(groupId);
+                    const { rows } = await db.query(
+                        `UPDATE facebook_groups SET ${updates.join(', ')} WHERE group_id = $${params.length} RETURNING *`,
+                        params
+                    );
+
+                    if (rows.length === 0) return res.status(404).json({ error: 'Groupe introuvable.' });
+                    res.json({ success: true, group: rows[0] });
                 } catch (err) {
                     res.status(500).json({ error: err.message });
                 }

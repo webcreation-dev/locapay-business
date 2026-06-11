@@ -173,6 +173,11 @@ function App() {
   const [fbIsLoadingGroups, setFbIsLoadingGroups] = useState(false);
   const [fbIsLoadingPosts, setFbIsLoadingPosts] = useState(false);
   const [fbIsSubmittingGroup, setFbIsSubmittingGroup] = useState(false);
+  const [fbGroupsAddModal, setFbGroupsAddModal] = useState(false);
+  const [fbAddUrl, setFbAddUrl] = useState('');
+  const [fbAddName, setFbAddName] = useState('');
+  const [editingGroupId, setEditingGroupId] = useState(null);
+  const [editingGroupName, setEditingGroupName] = useState('');
   const [fbProgress, setFbProgress] = useState(null); // SSE progress info
 
   const containerRef = useRef(null);       // ref vers la div messages-container
@@ -475,6 +480,106 @@ function App() {
       }
     } catch (e) {
       setToast({ message: `❌ Échec: ${e.message}`, type: 'error' });
+    }
+  };
+
+  // ─── GESTION DES GROUPES (VALIDATION / NOM) ──────────────────────────────────
+  const handleUpdateGroupName = async (groupId, newName) => {
+    if (!newName || !newName.trim()) return;
+    try {
+      const res = await fetch(`/api/facebook/groups/${encodeURIComponent(groupId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ group_name: newName.trim() }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setToast({ message: '✅ Nom du groupe mis à jour', type: 'success' });
+        fetchFbGroups();
+      } else throw new Error(data.error);
+    } catch (e) {
+      setToast({ message: `❌ Erreur: ${e.message}`, type: 'error' });
+    } finally {
+      setEditingGroupId(null);
+      setEditingGroupName('');
+    }
+  };
+
+  const handleValidateGroup = async (groupId) => {
+    try {
+      const res = await fetch(`/api/facebook/groups/${encodeURIComponent(groupId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_validated: true }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setToast({ message: '✅ Groupe validé', type: 'success' });
+        fetchFbGroups();
+      } else throw new Error(data.error);
+    } catch (e) {
+      setToast({ message: `❌ Erreur: ${e.message}`, type: 'error' });
+    }
+  };
+
+  const handleRejectGroup = async (groupId) => {
+    try {
+      const res = await fetch(`/api/facebook/groups/${encodeURIComponent(groupId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_validated: false }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setToast({ message: '🚫 Groupe rejeté', type: 'success' });
+        fetchFbGroups();
+      } else throw new Error(data.error);
+    } catch (e) {
+      setToast({ message: `❌ Erreur: ${e.message}`, type: 'error' });
+    }
+  };
+
+  const handleResetGroupValidation = async (groupId) => {
+    try {
+      const res = await fetch(`/api/facebook/groups/${encodeURIComponent(groupId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_validated: null }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setToast({ message: '↩️ Décision annulée', type: 'success' });
+        fetchFbGroups();
+      } else throw new Error(data.error);
+    } catch (e) {
+      setToast({ message: `❌ Erreur: ${e.message}`, type: 'error' });
+    }
+  };
+
+  const handleAddGroupFromModal = async (e) => {
+    e.preventDefault();
+    if (!fbAddUrl.trim()) return;
+    setFbIsSubmittingGroup(true);
+    try {
+      const res = await fetch('/api/facebook/groups', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ group_url: fbAddUrl.trim(), group_name: fbAddName.trim() || undefined }),
+      });
+      const data = await res.json();
+      if (data.success && data.inserted > 0) {
+        setToast({ message: '✅ Groupe ajouté !', type: 'success' });
+        setFbGroupsAddModal(false);
+        setFbAddUrl('');
+        setFbAddName('');
+        fetchFbGroups();
+      } else {
+        throw new Error(data.errors?.[0]?.error || data.error || 'Erreur inconnue');
+      }
+    } catch (e) {
+      setToast({ message: `❌ ${e.message}`, type: 'error' });
+    } finally {
+      setFbIsSubmittingGroup(false);
     }
   };
 
@@ -1345,6 +1450,13 @@ function App() {
               📘
             </button>
             <button
+              className={`view-toggle ${viewMode === 'fb_groups' ? 'active' : ''}`}
+              onClick={() => { setViewMode('fb_groups'); setSearchTerm(''); fetchFbGroups(); }}
+              title="Gestion des Groupes Facebook"
+            >
+              👥
+            </button>
+            <button
               className={`view-toggle ${viewMode === 'full_access' ? 'active' : ''}`}
               onClick={() => { setViewMode('full_access'); setSearchTerm(''); }}
               title="Accès Total (Tout voir)"
@@ -1473,7 +1585,235 @@ function App() {
 
       {/* Zone principale */}
       <main className="chat-view">
-        {viewMode === 'facebook' ? (
+        {viewMode === 'fb_groups' ? (
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', background: '#f1f5f9' }}>
+            {/* Header */}
+            <header className="chat-header" style={{ background: 'linear-gradient(135deg, #1877f2 0%, #0d5abf 100%)', color: '#fff', padding: '0 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', minHeight: '58px', flexShrink: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <span style={{ fontSize: '22px' }}>👥</span>
+                <div>
+                  <div style={{ fontWeight: '700', fontSize: '15px' }}>Gestion des Groupes Facebook</div>
+                  <div style={{ fontSize: '11px', opacity: 0.8 }}>{fbGroups.length} groupe(s) enregistré(s)</div>
+                </div>
+              </div>
+              <button
+                onClick={() => setFbGroupsAddModal(true)}
+                style={{ background: '#fff', color: '#1877f2', border: 'none', borderRadius: '8px', padding: '8px 16px', fontWeight: '700', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}
+              >
+                <span>+</span> Ajouter un groupe
+              </button>
+            </header>
+
+            {/* Table */}
+            <div style={{ flex: 1, overflow: 'auto', padding: '24px' }}>
+              {fbIsLoadingGroups ? (
+                <div style={{ textAlign: 'center', padding: '60px', color: '#94a3b8', fontSize: '14px' }}>Chargement des groupes...</div>
+              ) : fbGroups.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '80px 40px' }}>
+                  <div style={{ fontSize: '48px', marginBottom: '16px' }}>👥</div>
+                  <div style={{ fontSize: '16px', fontWeight: '600', color: '#475569', marginBottom: '8px' }}>Aucun groupe enregistré</div>
+                  <div style={{ fontSize: '13px', color: '#94a3b8', marginBottom: '24px' }}>Ajoutez votre premier groupe Facebook pour commencer à scraper des annonces.</div>
+                  <button onClick={() => setFbGroupsAddModal(true)} style={{ background: '#1877f2', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px 20px', fontWeight: '600', fontSize: '13px', cursor: 'pointer' }}>+ Ajouter un groupe</button>
+                </div>
+              ) : (
+                <div style={{ background: '#fff', borderRadius: '16px', boxShadow: '0 4px 24px rgba(0,0,0,0.06)', overflow: 'hidden' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                    <thead>
+                      <tr style={{ background: 'linear-gradient(90deg, #f8faff 0%, #f1f5ff 100%)', borderBottom: '2px solid #e2e8f0' }}>
+                        <th style={{ padding: '14px 20px', textAlign: 'left', fontWeight: '700', color: '#475569', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap' }}>ID Groupe</th>
+                        <th style={{ padding: '14px 20px', textAlign: 'left', fontWeight: '700', color: '#475569', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Nom du Groupe</th>
+                        <th style={{ padding: '14px 16px', textAlign: 'center', fontWeight: '700', color: '#475569', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap' }}>Posts récupérés</th>
+                        <th style={{ padding: '14px 16px', textAlign: 'center', fontWeight: '700', color: '#475569', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Statut</th>
+                        <th style={{ padding: '14px 20px', textAlign: 'center', fontWeight: '700', color: '#475569', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {fbGroups.map((group, idx) => (
+                        <tr key={group.group_id} style={{ borderBottom: '1px solid #f1f5f9', background: idx % 2 === 0 ? '#fff' : '#fafbff', transition: 'background 0.15s' }}
+                          onMouseEnter={e => e.currentTarget.style.background = '#f0f7ff'}
+                          onMouseLeave={e => e.currentTarget.style.background = idx % 2 === 0 ? '#fff' : '#fafbff'}
+                        >
+                          {/* ID */}
+                          <td style={{ padding: '14px 20px', whiteSpace: 'nowrap' }}>
+                            <span
+                              title={group.group_id}
+                              style={{ fontFamily: 'monospace', fontSize: '11px', background: '#f1f5f9', color: '#475569', padding: '3px 8px', borderRadius: '5px', cursor: 'pointer' }}
+                              onClick={() => { navigator.clipboard.writeText(group.group_id); setToast({ message: '📋 ID copié !', type: 'success' }); }}
+                            >
+                              {group.group_id.length > 16 ? group.group_id.substring(0, 14) + '…' : group.group_id}
+                            </span>
+                          </td>
+
+                          {/* Nom éditable */}
+                          <td style={{ padding: '10px 20px', minWidth: '200px', maxWidth: '320px' }}>
+                            {editingGroupId === group.group_id ? (
+                              <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                                <input
+                                  autoFocus
+                                  value={editingGroupName}
+                                  onChange={e => setEditingGroupName(e.target.value)}
+                                  onKeyDown={e => {
+                                    if (e.key === 'Enter') handleUpdateGroupName(group.group_id, editingGroupName);
+                                    if (e.key === 'Escape') { setEditingGroupId(null); setEditingGroupName(''); }
+                                  }}
+                                  onBlur={() => handleUpdateGroupName(group.group_id, editingGroupName)}
+                                  style={{ flex: 1, padding: '5px 10px', border: '2px solid #1877f2', borderRadius: '7px', fontSize: '13px', outline: 'none', background: '#f0f7ff' }}
+                                />
+                              </div>
+                            ) : (
+                              <div
+                                onClick={() => { setEditingGroupId(group.group_id); setEditingGroupName(group.group_name || ''); }}
+                                title="Cliquer pour modifier le nom"
+                                style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', padding: '4px 8px', borderRadius: '6px', transition: 'background 0.15s' }}
+                                onMouseEnter={e => { e.currentTarget.style.background = '#e8f0fe'; }}
+                                onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+                              >
+                                <span style={{ fontWeight: '600', color: '#1e293b' }}>{group.group_name || <em style={{ color: '#94a3b8' }}>Sans nom</em>}</span>
+                                <span style={{ fontSize: '11px', color: '#94a3b8', opacity: 0 }} className="edit-hint">✏️</span>
+                              </div>
+                            )}
+                          </td>
+
+                          {/* Nb de posts */}
+                          <td style={{ padding: '14px 16px', textAlign: 'center' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px' }}>
+                              <span style={{ fontWeight: '700', fontSize: '16px', color: '#1e293b' }}>{parseInt(group.total_posts) || 0}</span>
+                              <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', justifyContent: 'center' }}>
+                                {parseInt(group.processed) > 0 && <span style={{ fontSize: '9px', background: '#dcfce7', color: '#16a34a', padding: '1px 5px', borderRadius: '4px', fontWeight: '600' }}>✅ {group.processed}</span>}
+                                {parseInt(group.pending) > 0 && <span style={{ fontSize: '9px', background: '#fef3c7', color: '#d97706', padding: '1px 5px', borderRadius: '4px', fontWeight: '600' }}>⏳ {group.pending}</span>}
+                                {parseInt(group.errors) > 0 && <span style={{ fontSize: '9px', background: '#fee2e2', color: '#dc2626', padding: '1px 5px', borderRadius: '4px', fontWeight: '600' }}>⚠️ {group.errors}</span>}
+                              </div>
+                            </div>
+                          </td>
+
+                          {/* Statut validation */}
+                          <td style={{ padding: '14px 16px', textAlign: 'center' }}>
+                            {group.is_validated === true && (
+                              <span style={{ background: '#dcfce7', color: '#15803d', padding: '4px 12px', borderRadius: '20px', fontWeight: '700', fontSize: '11px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>✅ Validé</span>
+                            )}
+                            {group.is_validated === false && (
+                              <span style={{ background: '#fee2e2', color: '#dc2626', padding: '4px 12px', borderRadius: '20px', fontWeight: '700', fontSize: '11px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>🚫 Rejeté</span>
+                            )}
+                            {group.is_validated === null && (
+                              <span style={{ background: '#f1f5f9', color: '#64748b', padding: '4px 12px', borderRadius: '20px', fontWeight: '600', fontSize: '11px' }}>— En attente</span>
+                            )}
+                          </td>
+
+                          {/* Actions */}
+                          <td style={{ padding: '14px 20px', textAlign: 'center', whiteSpace: 'nowrap' }}>
+                            <div style={{ display: 'flex', gap: '6px', justifyContent: 'center', alignItems: 'center' }}>
+                              {/* Voir sur Facebook */}
+                              {group.group_url && (
+                                <a
+                                  href={group.group_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  style={{ background: '#e8f0fe', color: '#1877f2', border: 'none', borderRadius: '7px', padding: '6px 12px', fontWeight: '600', fontSize: '12px', cursor: 'pointer', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '4px', transition: 'background 0.15s' }}
+                                  title="Voir le groupe sur Facebook"
+                                >
+                                  👁️ Voir
+                                </a>
+                              )}
+
+                              {/* Valider */}
+                              {group.is_validated !== true && (
+                                <button
+                                  onClick={() => handleValidateGroup(group.group_id)}
+                                  style={{ background: 'linear-gradient(135deg, #22c55e, #16a34a)', color: '#fff', border: 'none', borderRadius: '7px', padding: '6px 12px', fontWeight: '600', fontSize: '12px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px', transition: 'opacity 0.15s', boxShadow: '0 2px 6px rgba(34,197,94,0.3)' }}
+                                  onMouseEnter={e => e.currentTarget.style.opacity = '0.85'}
+                                  onMouseLeave={e => e.currentTarget.style.opacity = '1'}
+                                  title="Valider ce groupe"
+                                >
+                                  ✅ Valider
+                                </button>
+                              )}
+
+                              {/* Rejeter */}
+                              {group.is_validated !== false && (
+                                <button
+                                  onClick={() => handleRejectGroup(group.group_id)}
+                                  style={{ background: 'linear-gradient(135deg, #f87171, #dc2626)', color: '#fff', border: 'none', borderRadius: '7px', padding: '6px 12px', fontWeight: '600', fontSize: '12px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px', transition: 'opacity 0.15s', boxShadow: '0 2px 6px rgba(220,38,38,0.3)' }}
+                                  onMouseEnter={e => e.currentTarget.style.opacity = '0.85'}
+                                  onMouseLeave={e => e.currentTarget.style.opacity = '1'}
+                                  title="Rejeter ce groupe"
+                                >
+                                  🚫 Rejeter
+                                </button>
+                              )}
+
+                              {/* Reset si déjà décidé */}
+                              {group.is_validated !== null && (
+                                <button
+                                  onClick={() => handleResetGroupValidation(group.group_id)}
+                                  style={{ background: '#f1f5f9', color: '#64748b', border: 'none', borderRadius: '7px', padding: '6px 8px', fontWeight: '600', fontSize: '11px', cursor: 'pointer', transition: 'background 0.15s' }}
+                                  title="Annuler la décision"
+                                >
+                                  ↩️
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Ajouter un groupe */}
+            {fbGroupsAddModal && (
+              <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(4px)' }}
+                onClick={e => { if (e.target === e.currentTarget) setFbGroupsAddModal(false); }}
+              >
+                <div style={{ background: '#fff', borderRadius: '20px', padding: '32px', width: '100%', maxWidth: '460px', boxShadow: '0 24px 64px rgba(0,0,0,0.2)', animation: 'slideUp 0.2s ease' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+                    <h2 style={{ fontSize: '18px', fontWeight: '700', color: '#1e293b', margin: 0 }}>👥 Ajouter un Groupe Facebook</h2>
+                    <button onClick={() => setFbGroupsAddModal(false)} style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer', color: '#94a3b8', padding: '4px' }}>✕</button>
+                  </div>
+                  <form onSubmit={handleAddGroupFromModal} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#475569', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>URL ou ID du Groupe *</label>
+                      <input
+                        type="text"
+                        required
+                        autoFocus
+                        value={fbAddUrl}
+                        onChange={e => setFbAddUrl(e.target.value)}
+                        placeholder="https://www.facebook.com/groups/123456789/"
+                        style={{ width: '100%', padding: '11px 14px', border: '2px solid #e2e8f0', borderRadius: '10px', fontSize: '13px', outline: 'none', transition: 'border-color 0.15s', boxSizing: 'border-box' }}
+                        onFocus={e => e.target.style.borderColor = '#1877f2'}
+                        onBlur={e => e.target.style.borderColor = '#e2e8f0'}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#475569', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Nom du Groupe (facultatif)</label>
+                      <input
+                        type="text"
+                        value={fbAddName}
+                        onChange={e => setFbAddName(e.target.value)}
+                        placeholder="Ex: Immo Cotonou"
+                        style={{ width: '100%', padding: '11px 14px', border: '2px solid #e2e8f0', borderRadius: '10px', fontSize: '13px', outline: 'none', transition: 'border-color 0.15s', boxSizing: 'border-box' }}
+                        onFocus={e => e.target.style.borderColor = '#1877f2'}
+                        onBlur={e => e.target.style.borderColor = '#e2e8f0'}
+                      />
+                    </div>
+                    <div style={{ display: 'flex', gap: '10px', marginTop: '8px' }}>
+                      <button type="button" onClick={() => setFbGroupsAddModal(false)}
+                        style={{ flex: 1, padding: '12px', border: '2px solid #e2e8f0', background: '#fff', borderRadius: '10px', fontWeight: '600', fontSize: '13px', cursor: 'pointer', color: '#64748b' }}>
+                        Annuler
+                      </button>
+                      <button type="submit" disabled={fbIsSubmittingGroup}
+                        style={{ flex: 2, padding: '12px', background: 'linear-gradient(135deg, #1877f2, #0d5abf)', color: '#fff', border: 'none', borderRadius: '10px', fontWeight: '700', fontSize: '13px', cursor: 'pointer', opacity: fbIsSubmittingGroup ? 0.7 : 1, boxShadow: '0 4px 12px rgba(24,119,242,0.3)' }}>
+                        {fbIsSubmittingGroup ? 'Ajout...' : 'Enregistrer le groupe'}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : viewMode === 'facebook' ? (
           <div className="fb-dashboard">
             <header className="chat-header fb-header" style={{ justifyContent: 'space-between' }}>
               <div className="chat-header-info">
