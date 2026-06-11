@@ -24,8 +24,8 @@ export default function FacebookGroups() {
     }
   }, [toast]);
 
-  const fetchFbGroups = useCallback(async () => {
-    setFbIsLoadingGroups(true);
+  const fetchFbGroups = useCallback(async (showLoader = false) => {
+    if (showLoader) setFbIsLoadingGroups(true);
     try {
       const res = await fetch('/api/facebook/groups');
       const data = await res.json();
@@ -33,13 +33,13 @@ export default function FacebookGroups() {
     } catch (e) {
       console.error('fetchFbGroups error', e);
     } finally {
-      setFbIsLoadingGroups(false);
+      if (showLoader) setFbIsLoadingGroups(false);
     }
   }, []);
 
   useEffect(() => {
-    fetchFbGroups();
-    const interval = setInterval(fetchFbGroups, 10000);
+    fetchFbGroups(true);
+    const interval = setInterval(() => fetchFbGroups(false), 10000);
     return () => clearInterval(interval);
   }, [fetchFbGroups]);
 
