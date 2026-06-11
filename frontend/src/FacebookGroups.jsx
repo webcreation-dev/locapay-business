@@ -258,7 +258,7 @@ export default function FacebookGroups() {
 
                     {/* Depuis le */}
                     <td style={{ padding: '16px 24px', textAlign: 'center', color: '#64748b', fontSize: '13px' }}>
-                      {group.first_post_date ? new Date(group.first_post_date).toLocaleDateString('fr-FR') : '—'}
+                      {group.first_post_date ? new Date(group.first_post_date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : '—'}
                     </td>
 
                     {/* Biens créés */}
