@@ -1538,7 +1538,8 @@ Texte à analyser : "${description}"
                             COUNT(fp.id) FILTER (WHERE fp.is_processed = TRUE) AS processed,
                             COUNT(fp.id) FILTER (WHERE fp.is_noise = TRUE) AS noise,
                             COUNT(fp.id) FILTER (WHERE fp.is_processed = FALSE AND fp.is_noise = FALSE AND fp.analysis_error IS NULL) AS pending,
-                            COUNT(fp.id) FILTER (WHERE fp.analysis_error IS NOT NULL AND fp.is_noise = FALSE AND fp.is_processed = FALSE) AS errors
+                            COUNT(fp.id) FILTER (WHERE fp.analysis_error IS NOT NULL AND fp.is_noise = FALSE AND fp.is_processed = FALSE) AS errors,
+                            MIN(fp.estimated_post_at) AS first_post_date
                         FROM facebook_groups fg
                         LEFT JOIN facebook_posts fp ON fp.group_id = fg.group_id
                         GROUP BY fg.id

@@ -212,9 +212,9 @@ export default function FacebookGroups() {
           <div style={{ background: '#fff', borderRadius: '16px', boxShadow: '0 4px 24px rgba(0,0,0,0.06)', overflow: 'hidden' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
               <thead>
-                <tr style={{ background: 'linear-gradient(90deg, #f8faff 0%, #f1f5ff 100%)', borderBottom: '2px solid #e2e8f0' }}>
-                  <th style={{ padding: '16px 24px', textAlign: 'left', fontWeight: '700', color: '#475569', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap' }}>ID Groupe</th>
+                <tr style={{ background: 'linear-gradient(90deg, #f8faff 0%, #f1f5ff 100%)', borderBottom: '2px solid #e2e8f0', position: 'sticky', top: 0, zIndex: 10 }}>
                   <th style={{ padding: '16px 24px', textAlign: 'left', fontWeight: '700', color: '#475569', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Nom du Groupe</th>
+                  <th style={{ padding: '16px 24px', textAlign: 'center', fontWeight: '700', color: '#475569', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap' }}>Depuis le</th>
                   <th style={{ padding: '16px 24px', textAlign: 'center', fontWeight: '700', color: '#475569', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap' }}>Biens créés</th>
                   <th style={{ padding: '16px 24px', textAlign: 'center', fontWeight: '700', color: '#475569', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Statut</th>
                   <th style={{ padding: '16px 24px', textAlign: 'center', fontWeight: '700', color: '#475569', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Actions</th>
@@ -226,17 +226,6 @@ export default function FacebookGroups() {
                     onMouseEnter={e => e.currentTarget.style.background = '#f0f7ff'}
                     onMouseLeave={e => e.currentTarget.style.background = idx % 2 === 0 ? '#fff' : '#fafbff'}
                   >
-                    {/* ID */}
-                    <td style={{ padding: '16px 24px', whiteSpace: 'nowrap' }}>
-                      <span
-                        title={group.group_id}
-                        style={{ fontFamily: 'monospace', fontSize: '13px', background: '#f1f5f9', color: '#475569', padding: '4px 10px', borderRadius: '6px', cursor: 'pointer', border: '1px solid #e2e8f0' }}
-                        onClick={() => { navigator.clipboard.writeText(group.group_id); setToast({ message: '📋 ID copié !', type: 'success' }); }}
-                      >
-                        {group.group_id.length > 16 ? group.group_id.substring(0, 14) + '…' : group.group_id}
-                      </span>
-                    </td>
-
                     {/* Nom éditable */}
                     <td style={{ padding: '16px 24px', minWidth: '240px', maxWidth: '360px' }}>
                       {editingGroupId === group.group_id ? (
@@ -267,6 +256,11 @@ export default function FacebookGroups() {
                       )}
                     </td>
 
+                    {/* Depuis le */}
+                    <td style={{ padding: '16px 24px', textAlign: 'center', color: '#64748b', fontSize: '13px' }}>
+                      {group.first_post_date ? new Date(group.first_post_date).toLocaleDateString('fr-FR') : '—'}
+                    </td>
+
                     {/* Biens créés */}
                     <td style={{ padding: '16px 24px', textAlign: 'center' }}>
                       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
@@ -290,7 +284,33 @@ export default function FacebookGroups() {
                     {/* Actions */}
                     <td style={{ padding: '16px 24px', textAlign: 'center', whiteSpace: 'nowrap' }}>
                       <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', alignItems: 'center' }}>
-                        {/* Voir sur Facebook */}
+                        {group.is_validated === null && (
+                          <>
+                            {/* Valider */}
+                            <button
+                              onClick={() => handleValidateGroup(group.group_id)}
+                              style={{ background: 'linear-gradient(135deg, #22c55e, #16a34a)', color: '#fff', border: 'none', borderRadius: '8px', padding: '8px 14px', fontWeight: '600', fontSize: '13px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px', transition: 'all 0.15s', boxShadow: '0 2px 8px rgba(34,197,94,0.3)' }}
+                              onMouseEnter={e => { e.currentTarget.style.opacity = '0.9'; e.currentTarget.style.transform = 'scale(1.02)'; }}
+                              onMouseLeave={e => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.transform = 'scale(1)'; }}
+                              title="Valider ce groupe"
+                            >
+                              ✅ Valider
+                            </button>
+
+                            {/* Rejeter */}
+                            <button
+                              onClick={() => handleRejectGroup(group.group_id)}
+                              style={{ background: 'linear-gradient(135deg, #f87171, #dc2626)', color: '#fff', border: 'none', borderRadius: '8px', padding: '8px 14px', fontWeight: '600', fontSize: '13px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px', transition: 'all 0.15s', boxShadow: '0 2px 8px rgba(220,38,38,0.3)' }}
+                              onMouseEnter={e => { e.currentTarget.style.opacity = '0.9'; e.currentTarget.style.transform = 'scale(1.02)'; }}
+                              onMouseLeave={e => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.transform = 'scale(1)'; }}
+                              title="Rejeter ce groupe"
+                            >
+                              🚫 Rejeter
+                            </button>
+                          </>
+                        )}
+
+                        {/* Voir sur Facebook (Toujours à la fin) */}
                         {group.group_url && (
                           <a
                             href={group.group_url}
@@ -301,45 +321,6 @@ export default function FacebookGroups() {
                           >
                             👁️ Voir
                           </a>
-                        )}
-
-                        {/* Valider */}
-                        {group.is_validated !== true && (
-                          <button
-                            onClick={() => handleValidateGroup(group.group_id)}
-                            style={{ background: 'linear-gradient(135deg, #22c55e, #16a34a)', color: '#fff', border: 'none', borderRadius: '8px', padding: '8px 14px', fontWeight: '600', fontSize: '13px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px', transition: 'all 0.15s', boxShadow: '0 2px 8px rgba(34,197,94,0.3)' }}
-                            onMouseEnter={e => { e.currentTarget.style.opacity = '0.9'; e.currentTarget.style.transform = 'scale(1.02)'; }}
-                            onMouseLeave={e => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.transform = 'scale(1)'; }}
-                            title="Valider ce groupe"
-                          >
-                            ✅ Valider
-                          </button>
-                        )}
-
-                        {/* Rejeter */}
-                        {group.is_validated !== false && (
-                          <button
-                            onClick={() => handleRejectGroup(group.group_id)}
-                            style={{ background: 'linear-gradient(135deg, #f87171, #dc2626)', color: '#fff', border: 'none', borderRadius: '8px', padding: '8px 14px', fontWeight: '600', fontSize: '13px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px', transition: 'all 0.15s', boxShadow: '0 2px 8px rgba(220,38,38,0.3)' }}
-                            onMouseEnter={e => { e.currentTarget.style.opacity = '0.9'; e.currentTarget.style.transform = 'scale(1.02)'; }}
-                            onMouseLeave={e => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.transform = 'scale(1)'; }}
-                            title="Rejeter ce groupe"
-                          >
-                            🚫 Rejeter
-                          </button>
-                        )}
-
-                        {/* Reset si déjà décidé */}
-                        {group.is_validated !== null && (
-                          <button
-                            onClick={() => handleResetGroupValidation(group.group_id)}
-                            style={{ background: '#f1f5f9', color: '#64748b', border: '1px solid #cbd5e1', borderRadius: '8px', padding: '8px 10px', fontWeight: '600', fontSize: '13px', cursor: 'pointer', transition: 'all 0.15s' }}
-                            onMouseEnter={e => { e.currentTarget.style.background = '#e2e8f0'; }}
-                            onMouseLeave={e => { e.currentTarget.style.background = '#f1f5f9'; }}
-                            title="Annuler la décision"
-                          >
-                            ↩️
-                          </button>
                         )}
                       </div>
                     </td>
