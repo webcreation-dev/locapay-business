@@ -12,8 +12,8 @@ const db = new Pool({
     connectionString: process.env.DATABASE_URL
 });
 
-const MISTRAL_API_KEY = process.env.MISTRAL_API_KEY;
-const MISTRAL_MODEL = process.env.AI_MODEL || 'mistral-medium';
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+const AI_MODEL = process.env.AI_MODEL || 'deepseek/deepseek-chat';
 
 /**
  * Récupère les messages non traités pour un chat spécifique
@@ -36,7 +36,7 @@ async function getUnprocessedMessages(chatId, limit = 20) {
 }
 
 /**
- * Envoie le lot de messages à Mistral pour segmentation
+ * Envoie le lot de messages à OpenRouter (DeepSeek) pour segmentation
  */
 async function segmentMessagesWithAI(messages) {
     if (messages.length === 0) return null;
@@ -82,8 +82,8 @@ async function segmentMessagesWithAI(messages) {
     `;
 
     try {
-        const response = await axios.post('https://api.mistral.ai/v1/chat/completions', {
-            model: MISTRAL_MODEL,
+        const response = await axios.post('https://openrouter.ai/api/v1/chat/completions', {
+            model: AI_MODEL,
             messages: [
                 { role: 'system', content: 'Tu es un expert en analyse de données immobilières. Réponds uniquement en JSON valide.' },
                 { role: 'user', content: prompt }
@@ -91,14 +91,16 @@ async function segmentMessagesWithAI(messages) {
             response_format: { type: 'json_object' }
         }, {
             headers: {
-                'Authorization': `Bearer ${MISTRAL_API_KEY}`,
-                'Content-Type': 'application/json'
+                'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+                'Content-Type': 'application/json',
+                'HTTP-Referer': 'http://localhost:3000',
+                'X-Title': 'LocaPay Scraper'
             }
         });
 
         return JSON.parse(response.data.choices[0].message.content);
     } catch (error) {
-        console.error("❌ Erreur Mistral AI:", error.response ? error.response.data : error.message);
+        console.error("❌ Erreur OpenRouter AI:", error.response ? error.response.data : error.message);
         return null;
     }
 }
@@ -124,7 +126,7 @@ async function runSegmentation() {
             continue;
         }
 
-        console.log(`💬 ${messages.length} messages récupérés. Envoi à Mistral...`);
+        console.log(`💬 ${messages.length} messages récupérés. Envoi à l'IA...`);
         const result = await segmentMessagesWithAI(messages);
 
         if (result) {

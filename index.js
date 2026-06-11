@@ -69,8 +69,8 @@ const transporter = nodemailer.createTransport({
     },
 });
 
-// Variable pour la sécurité anti-spam des alertes Mistral (1h = 3600000ms)
-let lastMistralAlertTime = 0;
+// Variable pour la sécurité anti-spam des alertes OpenRouter (1h = 3600000ms)
+let lastAiAlertTime = 0;
 
 async function sendErrorAlert(errorContext, error) {
     console.log("📨 Tentative d'envoi d'alerte mail...");
@@ -282,7 +282,7 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
 
 
             // --- PRÉ-TRAITEMENT DES ABRÉVIATIONS DE PRIX ---
-            // Normalise les abréviations locales (mille, milles, mil, k) avant envoi à Mistral
+            // Normalise les abréviations locales (mille, milles, mil, k) avant envoi à l'IA
             // Ex: "28mil" → "28000", "1.5mil" → "1500", "50k" → "50000", "27MILLES" → "27000"
             function normalizePriceAbbreviations(text) {
                 return text.replace(/(\d+)[.,]?(\d*)\s*(milles?|mil|k)\b/gi, (match, int, dec, unit) => {
@@ -317,13 +317,13 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
                 return result.normalize('NFKD').replace(/[\u0300-\u036f]/g, "").toLowerCase();
             }
 
-            // --- FONCTION D'EXTRACTION IA MISTRAL ---
+            // --- FONCTION D'EXTRACTION IA OPENROUTER ---
             async function extractPropertyDataWithAI(description) {
-                const MISTRAL_API_KEY = process.env.MISTRAL_API_KEY;
-                const MISTRAL_MODEL = process.env.AI_MODEL || 'mistral-medium-latest';
+                const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+                const AI_MODEL = process.env.AI_MODEL || 'deepseek/deepseek-chat';
 
-                if (!MISTRAL_API_KEY) {
-                    console.error("❌ MISTRAL_API_KEY manquante dans le .env du Bot");
+                if (!OPENROUTER_API_KEY) {
+                    console.error("❌ OPENROUTER_API_KEY manquante dans le .env du Bot");
                     return null;
                 }
 
@@ -363,8 +363,8 @@ Texte à analyser : "${description}"
 
 
                 try {
-                    const response = await axios.post('https://api.mistral.ai/v1/chat/completions', {
-                        model: MISTRAL_MODEL,
+                    const response = await axios.post('https://openrouter.ai/api/v1/chat/completions', {
+                        model: AI_MODEL,
                         messages: [
                             { role: 'system', content: 'Tu es un expert en analyse immobilière. Réponds uniquement en JSON valide sans bloc markdown.' },
                             { role: 'user', content: prompt }
@@ -372,8 +372,10 @@ Texte à analyser : "${description}"
                         response_format: { type: 'json_object' }
                     }, {
                         headers: {
-                            'Authorization': `Bearer ${MISTRAL_API_KEY}`,
-                            'Content-Type': 'application/json'
+                            'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+                            'Content-Type': 'application/json',
+                            'HTTP-Referer': 'http://localhost:3000',
+                            'X-Title': 'LocaPay Scraper'
                         },
                         timeout: 45000 // 45s de timeout pour l'IA
                     });
@@ -382,19 +384,19 @@ Texte à analyser : "${description}"
                     return JSON.parse(content);
                 } catch (error) {
                     const status = error.response?.status;
-                    if (status === 401 || status === 429) {
-                        console.error(`❌ Erreur Mistral AI FATALE (${status}):`, error.message);
+                    if (status === 401 || status === 429 || status === 402) {
+                        console.error(`❌ Erreur OpenRouter AI FATALE (${status}):`, error.message);
                         
                         // Sécurité anti-spam : Envoi d'un mail maximum par heure
                         const now = Date.now();
-                        if (now - lastMistralAlertTime > 3600000) {
-                            sendErrorAlert("Mistral AI hors service (Quota ou Paiement)", `Erreur HTTP ${status} - L'API Mistral est bloquée. Le traitement a été suspendu pour cet élément.`);
-                            lastMistralAlertTime = now;
+                        if (now - lastAiAlertTime > 3600000) {
+                            sendErrorAlert("OpenRouter AI hors service (Quota ou Paiement)", `Erreur HTTP ${status} - L'API OpenRouter est bloquée. Le traitement a été suspendu pour cet élément.`);
+                            lastAiAlertTime = now;
                         }
                         
-                        throw new Error('MISTRAL_QUOTA_EXCEEDED');
+                        throw new Error('OPENROUTER_QUOTA_EXCEEDED');
                     }
-                    console.error("❌ Erreur Mistral AI dans le Bot:", error.message);
+                    console.error("❌ Erreur OpenRouter AI dans le Bot:", error.message);
                     return null;
                 }
             }
@@ -1101,9 +1103,9 @@ Texte à analyser : "${description}"
                         return { success: false, error: errMsg };
                     }
 
-                    // 4. Normaliser les abréviations de prix et analyser avec Mistral
+                    // 4. Normaliser les abréviations de prix et analyser avec l'IA
                     const normalizedDescription = normalizePriceAbbreviations(finalDescription);
-                    console.log(`🤖 Analyse Mistral en cours pour ${texts.length} messages...`);
+                    console.log(`🤖 Analyse OpenRouter en cours pour ${texts.length} messages...`);
                     const extractedData = await extractPropertyDataWithAI(normalizedDescription);
 
                     if (!extractedData) {

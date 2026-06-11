@@ -22,7 +22,7 @@ const transporter = nodemailer.createTransport({
     },
 });
 
-let lastMistralAlertTime = 0; // Anti-spam 1h
+let lastAiAlertTime = 0; // Anti-spam 1h
 
 // ─── MOTS INTERDITS (même liste que WhatsApp) ───────────────────────────────
 const FORBIDDEN_KEYWORDS = [
@@ -141,15 +141,15 @@ async function downloadImageAsBase64(url, timeoutMs = 15000) {
 }
 
 /**
- * Appel Mistral pour extraction des données du post
+ * Appel OpenRouter (DeepSeek) pour extraction des données du post
  * (même prompt que le bot WhatsApp, adapté Facebook)
  */
 async function extractPropertyDataWithAI(description) {
-  const MISTRAL_API_KEY = process.env.MISTRAL_API_KEY;
-  const MISTRAL_MODEL = process.env.AI_MODEL || 'mistral-medium-latest';
+  const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+  const AI_MODEL = process.env.AI_MODEL || 'deepseek/deepseek-chat';
 
-  if (!MISTRAL_API_KEY) {
-    console.error('❌ [Facebook] MISTRAL_API_KEY manquante');
+  if (!OPENROUTER_API_KEY) {
+    console.error('❌ [Facebook] OPENROUTER_API_KEY manquante');
     return null;
   }
 
@@ -193,8 +193,8 @@ Texte à analyser : "${normalized}"
 `;
 
   try {
-    const response = await axios.post('https://api.mistral.ai/v1/chat/completions', {
-      model: MISTRAL_MODEL,
+    const response = await axios.post('https://openrouter.ai/api/v1/chat/completions', {
+      model: AI_MODEL,
       messages: [
         { role: 'system', content: 'Tu es un expert en analyse immobilière. Réponds uniquement en JSON valide sans bloc markdown.' },
         { role: 'user', content: prompt },
@@ -202,8 +202,10 @@ Texte à analyser : "${normalized}"
       response_format: { type: 'json_object' },
     }, {
       headers: {
-        'Authorization': `Bearer ${MISTRAL_API_KEY}`,
+        'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
         'Content-Type': 'application/json',
+        'HTTP-Referer': 'http://localhost:3000',
+        'X-Title': 'LocaPay Scraper'
       },
       timeout: 45000,
     });
@@ -212,25 +214,25 @@ Texte à analyser : "${normalized}"
     return JSON.parse(content);
   } catch (err) {
     const status = err.response?.status;
-    if (status === 401 || status === 429) {
-      console.error(`❌ [Facebook] Erreur Mistral AI FATALE (${status}):`, err.message);
+    if (status === 401 || status === 429 || status === 402) {
+      console.error(`❌ [Facebook] Erreur OpenRouter AI FATALE (${status}):`, err.message);
       
       const now = Date.now();
-      if (now - lastMistralAlertTime > 3600000) { // 1h
+      if (now - lastAiAlertTime > 3600000) { // 1h
         try {
           transporter.sendMail({
             from: `"WhatsApp Bot Alert" <${process.env.MAIL_USERNAME}>`,
             to: 'adjilan2403@gmail.com, agossadourin@gmail.com',
-            subject: `⚠️ ALERTE BOT : Mistral AI hors service (Facebook)`,
-            text: `Une erreur est survenue sur le traitement Facebook.\n\nErreur HTTP ${status} - L'API Mistral est bloquée (Quota ou Paiement). Le traitement a été suspendu.\n\nDate : ${new Date().toLocaleString()}`,
+            subject: `⚠️ ALERTE BOT : OpenRouter AI hors service (Facebook)`,
+            text: `Une erreur est survenue sur le traitement Facebook.\n\nErreur HTTP ${status} - L'API OpenRouter est bloquée (Quota ou Paiement). Le traitement a été suspendu.\n\nDate : ${new Date().toLocaleString()}`,
           }).catch(e => console.error("Échec mail:", e.message));
           console.log(`✅ [Facebook] Alerte mail envoyée avec succès.`);
-          lastMistralAlertTime = now;
+          lastAiAlertTime = now;
         } catch (e) {}
       }
-      throw new Error('MISTRAL_QUOTA_EXCEEDED');
+      throw new Error('OPENROUTER_QUOTA_EXCEEDED');
     }
-    console.error('❌ [Facebook] Erreur Mistral AI:', err.message);
+    console.error('❌ [Facebook] Erreur OpenRouter AI:', err.message);
     return null;
   }
 }
@@ -314,8 +316,8 @@ async function processFacebookPost(post, db, groupInfo) {
       console.log(`✅ [Facebook] ${imagesBase64.length}/${imageUrls.length} images téléchargées pour post ${postId}`);
     }
 
-    // ── 5. Analyse IA Mistral ──────────────────────────────────────────────
-    console.log(`🤖 [Facebook] Analyse Mistral pour post ${postId}...`);
+    // ── 5. Analyse IA OpenRouter ──────────────────────────────────────────────
+    console.log(`🤖 [Facebook] Analyse OpenRouter pour post ${postId}...`);
     const extractedData = await extractPropertyDataWithAI(post.text);
 
     if (!extractedData) {
@@ -463,9 +465,9 @@ async function processFacebookPost(post, db, groupInfo) {
     }
 
   } catch (err) {
-    if (err.message === 'MISTRAL_QUOTA_EXCEEDED') {
-      console.log(`⚠️ [Facebook] Post ${postId} laissé en attente suite à erreur Mistral.`);
-      return { success: false, fatal: true, error: 'MISTRAL_QUOTA_EXCEEDED' };
+    if (err.message === 'OPENROUTER_QUOTA_EXCEEDED') {
+      console.log(`⚠️ [Facebook] Post ${postId} laissé en attente suite à erreur OpenRouter.`);
+      return { success: false, fatal: true, error: 'OPENROUTER_QUOTA_EXCEEDED' };
     }
 
     const errMsg = err.response
@@ -483,7 +485,7 @@ async function processFacebookPost(post, db, groupInfo) {
 
 /**
  * Traite tous les posts Facebook non traités (batch)
- * Avec pause de 2s entre chaque pour ne pas saturer NestJS/Mistral
+ * Avec pause de 2s entre chaque pour ne pas saturer NestJS/OpenRouter
  *
  * @param {object} db          - Pool PostgreSQL
  * @param {function} onProgress - Callback de progression optionnel
@@ -514,7 +516,7 @@ async function processFacebookBatch(db, onProgress = null) {
     const result = await processFacebookPost(post, db, groupInfo);
 
     if (result.fatal) {
-      console.log('🛑 [Facebook] Arrêt immédiat du batch suite à une erreur fatale Mistral.');
+      console.log('🛑 [Facebook] Arrêt immédiat du batch suite à une erreur fatale OpenRouter.');
       break;
     }
 

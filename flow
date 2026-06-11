@@ -27,7 +27,7 @@ Pour chaque post, la fonction `processFacebookPost` exécute la logique suivante
 * Si le post contient des images, le bot tente de les télécharger et de les convertir en Base64.
 * Si le téléchargement échoue (images expirées de Facebook) $\rightarrow$ Le post est marqué en `is_noise = true` (erreur *'Images expirées ou inaccessibles'*).
 
-#### 3. Appel à l'IA Mistral
+#### 3. Appel à l'IA OpenRouter (DeepSeek)
 C'est à cette étape que l'IA intervient pour analyser le texte et retourner un JSON structuré contenant le champ crucial `"intent"` (`CLIENT_DEMAND`, `OFFER` ou `NOISE`), ainsi que les caractéristiques du bien (type, loyer, localisation, etc.).
 
 ---
