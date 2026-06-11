@@ -146,7 +146,7 @@ async function downloadImageAsBase64(url, timeoutMs = 15000) {
  */
 async function extractPropertyDataWithAI(description) {
   const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-  const AI_MODEL = process.env.AI_MODEL || 'deepseek/deepseek-chat';
+  const AI_MODEL = process.env.AI_MODEL || 'deepseek/deepseek-v4-flash';
 
   if (!OPENROUTER_API_KEY) {
     console.error('❌ [Facebook] OPENROUTER_API_KEY manquante');
@@ -192,23 +192,38 @@ Tu es un expert en analyse immobilière. Analyse la description suivante et extr
 Texte à analyser : "${normalized}"
 `;
 
+  // Fonction interne pour faire un appel API
+  const doApiCall = () => axios.post('https://openrouter.ai/api/v1/chat/completions', {
+    model: AI_MODEL,
+    messages: [
+      { role: 'system', content: 'Tu es un expert en analyse immobilière. Réponds uniquement en JSON valide sans bloc markdown.' },
+      { role: 'user', content: prompt },
+    ],
+    response_format: { type: 'json_object' },
+  }, {
+    headers: {
+      'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': 'http://localhost:3000',
+      'X-Title': 'LocaPay Scraper'
+    },
+    timeout: 45000,
+  });
+
   try {
-    const response = await axios.post('https://openrouter.ai/api/v1/chat/completions', {
-      model: AI_MODEL,
-      messages: [
-        { role: 'system', content: 'Tu es un expert en analyse immobilière. Réponds uniquement en JSON valide sans bloc markdown.' },
-        { role: 'user', content: prompt },
-      ],
-      response_format: { type: 'json_object' },
-    }, {
-      headers: {
-        'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': 'http://localhost:3000',
-        'X-Title': 'LocaPay Scraper'
-      },
-      timeout: 45000,
-    });
+    let response;
+    try {
+      response = await doApiCall();
+    } catch (firstErr) {
+      // Si c'est une erreur 429 (rate limit), on attend 10s et on réessaie UNE fois
+      if (firstErr.response?.status === 429) {
+        console.warn(`⚠️ [Facebook] Erreur 429 détectée. Pause de 10s avant retry...`);
+        await new Promise(r => setTimeout(r, 10000));
+        response = await doApiCall(); // 2ème tentative
+      } else {
+        throw firstErr; // Autre erreur → on laisse le catch principal gérer
+      }
+    }
 
     const content = response.data.choices[0].message.content.trim();
     return JSON.parse(content);
@@ -537,8 +552,8 @@ async function processFacebookBatch(db, onProgress = null) {
       onProgress({ type: 'progress', current: i + 1, total: posts.length, success, errors, noise });
     }
 
-    // Pause pour ne pas saturer les APIs
-    await new Promise(r => setTimeout(r, 2000));
+    // Pause de 5s entre chaque post pour éviter le Rate Limit OpenRouter (429)
+    await new Promise(r => setTimeout(r, 5000));
   }
 
   console.log(`🏁 [Facebook] Batch terminé — Succès: ${success}, Erreurs: ${errors}, Bruit: ${noise}`);

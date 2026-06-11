@@ -13,7 +13,7 @@ const db = new Pool({
 });
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const AI_MODEL = process.env.AI_MODEL || 'deepseek/deepseek-chat';
+const AI_MODEL = process.env.AI_MODEL || 'deepseek/deepseek-v4-flash';
 
 /**
  * Récupère les messages non traités pour un chat spécifique
