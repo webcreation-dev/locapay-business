@@ -209,15 +209,15 @@ export default function FacebookGroups() {
             <button onClick={() => setFbGroupsAddModal(true)} style={{ background: '#1877f2', color: '#fff', border: 'none', borderRadius: '8px', padding: '12px 24px', fontWeight: '600', fontSize: '15px', cursor: 'pointer', boxShadow: '0 4px 12px rgba(24,119,242,0.3)' }}>+ Ajouter un groupe</button>
           </div>
         ) : (
-          <div style={{ background: '#fff', borderRadius: '16px', boxShadow: '0 4px 24px rgba(0,0,0,0.06)', overflow: 'hidden' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
+          <div style={{ background: '#fff', borderRadius: '16px', boxShadow: '0 4px 24px rgba(0,0,0,0.06)' }}>
+            <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: '14px' }}>
               <thead>
-                <tr style={{ background: 'linear-gradient(90deg, #f8faff 0%, #f1f5ff 100%)', borderBottom: '2px solid #e2e8f0', position: 'sticky', top: 0, zIndex: 10 }}>
-                  <th style={{ padding: '16px 24px', textAlign: 'left', fontWeight: '700', color: '#475569', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Nom du Groupe</th>
-                  <th style={{ padding: '16px 24px', textAlign: 'center', fontWeight: '700', color: '#475569', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap' }}>Depuis le</th>
-                  <th style={{ padding: '16px 24px', textAlign: 'center', fontWeight: '700', color: '#475569', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap' }}>Biens créés</th>
-                  <th style={{ padding: '16px 24px', textAlign: 'center', fontWeight: '700', color: '#475569', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Statut</th>
-                  <th style={{ padding: '16px 24px', textAlign: 'center', fontWeight: '700', color: '#475569', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Actions</th>
+                <tr style={{ position: 'sticky', top: 0, zIndex: 10 }}>
+                  <th style={{ background: '#f8fafc', padding: '18px 24px', textAlign: 'left', fontWeight: '800', color: '#0f172a', fontSize: '13px', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '2px solid #cbd5e1', borderTopLeftRadius: '16px' }}>Nom du Groupe</th>
+                  <th style={{ background: '#f8fafc', padding: '18px 24px', textAlign: 'center', fontWeight: '800', color: '#0f172a', fontSize: '13px', textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap', borderBottom: '2px solid #cbd5e1' }}>Depuis le</th>
+                  <th style={{ background: '#f8fafc', padding: '18px 24px', textAlign: 'center', fontWeight: '800', color: '#0f172a', fontSize: '13px', textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap', borderBottom: '2px solid #cbd5e1' }}>Biens créés</th>
+                  <th style={{ background: '#f8fafc', padding: '18px 24px', textAlign: 'center', fontWeight: '800', color: '#0f172a', fontSize: '13px', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '2px solid #cbd5e1' }}>Statut</th>
+                  <th style={{ background: '#f8fafc', padding: '18px 24px', textAlign: 'center', fontWeight: '800', color: '#0f172a', fontSize: '13px', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '2px solid #cbd5e1', borderTopRightRadius: '16px' }}>Actions</th>
                 </tr>
               </thead>
               <tbody>
