@@ -39,8 +39,6 @@ export default function FacebookGroups() {
 
   useEffect(() => {
     fetchFbGroups(true);
-    const interval = setInterval(() => fetchFbGroups(false), 10000);
-    return () => clearInterval(interval);
   }, [fetchFbGroups]);
 
   const handleUpdateGroupName = async (groupId, newName) => {
