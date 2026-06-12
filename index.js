@@ -1125,10 +1125,11 @@ Texte à analyser : "${description}"
                         return { success: false, error: `Ignoré (Vente/Terrain): "${foundKeyword}"` };
                     }
 
-                    if (imagesBase64.length === 0) {
-                        const errMsg = "Au moins une image ou vidéo est requise.";
-                        await db.query(`UPDATE messages SET submission_failed = TRUE, analysis_error = $1 WHERE id = ANY($2)`, [errMsg, messageIds]);
-                        return { success: false, error: errMsg };
+                    const hasVideo = imagesBase64.some(media => media.mimeType.startsWith('video/'));
+                    if (!hasVideo && imagesBase64.length < 3) {
+                        await db.query(`UPDATE messages SET property_group_id = 'noise', submission_failed = TRUE, analysis_error = NULL WHERE id = ANY($1)`, [messageIds]);
+                        await deleteMediaFiles(messageIds);
+                        return { success: false, error: `Ignoré: Moins de 3 images fournies (${imagesBase64.length})` };
                     }
 
                     // 4. Normaliser les abréviations de prix et analyser avec l'IA

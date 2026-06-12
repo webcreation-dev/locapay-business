@@ -306,13 +306,13 @@ async function processFacebookPost(post, db, groupInfo) {
     const hasVideo = post.video_url && post.video_url.trim() !== '';
     const hasSearchKeywords = CLIENT_SEARCH_KEYWORDS.some(kw => normalizeText(post.text).includes(kw));
 
-    if (!hasSearchKeywords && imageUrls.length === 0 && !hasVideo) {
+    if (!hasSearchKeywords && imageUrls.length < 3 && !hasVideo) {
       await db.query(
-        `UPDATE facebook_posts SET is_noise = TRUE, analysis_error = 'Aucun média attaché', updated_at = NOW() WHERE post_id = $1`,
+        `UPDATE facebook_posts SET is_noise = TRUE, analysis_error = 'Moins de 3 images attachées', updated_at = NOW() WHERE post_id = $1`,
         [postId]
       );
-      console.log(`🚫 [Facebook] Post ${postId} → noise (aucun média)`);
-      return { success: false, error: 'Aucun média attaché' };
+      console.log(`🚫 [Facebook] Post ${postId} → noise (Moins de 3 images attachées)`);
+      return { success: false, error: 'Moins de 3 images attachées' };
     }
 
     // ── 3. Extraction du téléphone (regex d'abord) ─────────────────────────
@@ -328,13 +328,13 @@ async function processFacebookPost(post, db, groupInfo) {
         if (img) imagesBase64.push(img);
       }
 
-      if (imagesBase64.length === 0) {
+      if (imagesBase64.length < 3 && !hasVideo) {
         await db.query(
-          `UPDATE facebook_posts SET is_noise = TRUE, analysis_error = 'Images expirées ou inaccessibles', updated_at = NOW() WHERE post_id = $1`,
+          `UPDATE facebook_posts SET is_noise = TRUE, analysis_error = 'Moins de 3 images accessibles', updated_at = NOW() WHERE post_id = $1`,
           [postId]
         );
-        console.warn(`⚠️ [Facebook] Post ${postId} → noise (aucune image téléchargeable)`);
-        return { success: false, error: 'Images expirées ou inaccessibles' };
+        console.warn(`⚠️ [Facebook] Post ${postId} → noise (moins de 3 images téléchargeables)`);
+        return { success: false, error: 'Moins de 3 images accessibles' };
       }
 
       console.log(`✅ [Facebook] ${imagesBase64.length}/${imageUrls.length} images téléchargées pour post ${postId}`);
@@ -423,13 +423,13 @@ async function processFacebookPost(post, db, groupInfo) {
     }
 
     // C'est une offre (OFFER) : On vérifie la présence de média obligatoirement
-    if (imagesBase64.length === 0 && !hasVideo) {
+    if (imagesBase64.length < 3 && !hasVideo) {
       await db.query(
-        `UPDATE facebook_posts SET is_noise = TRUE, analysis_error = 'Aucun média attaché pour une offre', updated_at = NOW() WHERE post_id = $1`,
+        `UPDATE facebook_posts SET is_noise = TRUE, analysis_error = 'Moins de 3 images attachées pour une offre', updated_at = NOW() WHERE post_id = $1`,
         [postId]
       );
-      console.log(`🚫 [Facebook] Post ${postId} → noise (offre sans média)`);
-      return { success: false, error: 'Aucun média attaché pour une offre' };
+      console.log(`🚫 [Facebook] Post ${postId} → noise (offre avec moins de 3 images)`);
+      return { success: false, error: 'Moins de 3 images attachées pour une offre' };
     }
 
     // Sauvegarder le téléphone extrait
@@ -616,9 +616,9 @@ async function importFacebookPosts(posts, db, explicitGroupId = null) {
     } else if (hasSearchKeywords && !managerPhone) {
       isNoiseOnImport = true;
       noiseError = 'Recherche sans numéro de téléphone';
-    } else if (!hasSearchKeywords && imageUrls.length === 0 && !videoUrl) {
+    } else if (!hasSearchKeywords && imageUrls.length < 3 && !videoUrl) {
       isNoiseOnImport = true;
-      noiseError = 'Aucun média attaché';
+      noiseError = 'Moins de 3 images attachées';
     } else if (isOlderThan24h) {
       isNoiseOnImport = true;
       noiseError = 'Bien de plus de 24h';
