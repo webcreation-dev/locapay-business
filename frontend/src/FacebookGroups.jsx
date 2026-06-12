@@ -163,6 +163,7 @@ export default function FacebookGroups() {
   const totalPosts = fbGroups.reduce((acc, g) => acc + parseInt(g.total_posts || 0), 0);
   const totalProcessed = fbGroups.reduce((acc, g) => acc + parseInt(g.processed || 0), 0);
   const totalPending = fbGroups.reduce((acc, g) => acc + parseInt(g.pending || 0), 0);
+  const totalActiveGroups = fbGroups.filter(g => g.is_validated === true).length;
 
   return (
     <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, overflowY: 'auto', fontFamily: 'var(--font-family)', display: 'flex', flexDirection: 'column', background: '#f1f5f9' }}>
@@ -196,7 +197,7 @@ export default function FacebookGroups() {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px' }}>
           <div style={{ background: 'rgba(255,255,255,0.1)', padding: '16px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.2)' }}>
             <div style={{ fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.05em', opacity: 0.8, marginBottom: '8px', fontWeight: '600' }}>Groupes Suivis</div>
-            <div style={{ fontSize: '28px', fontWeight: '700' }}>{fbGroups.length}</div>
+            <div style={{ fontSize: '28px', fontWeight: '700' }}>{totalActiveGroups}</div>
           </div>
           <div style={{ background: 'rgba(255,255,255,0.1)', padding: '16px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.2)' }}>
             <div style={{ fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.05em', opacity: 0.8, marginBottom: '8px', fontWeight: '600' }}>Total Posts</div>
