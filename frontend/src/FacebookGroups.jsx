@@ -163,7 +163,7 @@ export default function FacebookGroups() {
   const totalPending = fbGroups.reduce((acc, g) => acc + parseInt(g.pending || 0), 0);
 
   return (
-    <div style={{ fontFamily: 'var(--font-family)', display: 'flex', flexDirection: 'column', minHeight: '100vh', background: '#f1f5f9' }}>
+    <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, overflowY: 'auto', fontFamily: 'var(--font-family)', display: 'flex', flexDirection: 'column', background: '#f1f5f9' }}>
       {toast && (
         <div className={`toast ${toast.type}`}>
           {toast.message}
