@@ -8,6 +8,7 @@ export default function FacebookGroups() {
   const [fbGroupsAddModal, setFbGroupsAddModal] = useState(false);
   const [fbAddUrl, setFbAddUrl] = useState('');
   const [fbAddName, setFbAddName] = useState('');
+  const [fbAddError, setFbAddError] = useState('');
   const [editingGroupId, setEditingGroupId] = useState(null);
   const [editingGroupName, setEditingGroupName] = useState('');
   const [toast, setToast] = useState(null);
@@ -131,6 +132,7 @@ export default function FacebookGroups() {
     e.preventDefault();
     if (!fbAddUrl.trim()) return;
     setFbIsSubmittingGroup(true);
+    setFbAddError('');
     try {
       const res = await fetch('/api/facebook/groups', {
         method: 'POST',
@@ -143,14 +145,14 @@ export default function FacebookGroups() {
         setFbGroupsAddModal(false);
         setFbAddUrl('');
         setFbAddName('');
-        fetchFbGroups();
       } else {
         throw new Error(data.errors?.[0]?.error || data.error || 'Erreur inconnue');
       }
     } catch (e) {
-      setToast({ message: `❌ ${e.message}`, type: 'error' });
+      setFbAddError(e.message);
     } finally {
       setFbIsSubmittingGroup(false);
+      fetchFbGroups();
     }
   };
 
@@ -382,9 +384,14 @@ export default function FacebookGroups() {
           <div style={{ background: '#fff', borderRadius: '24px', padding: '40px', width: '100%', maxWidth: '500px', boxShadow: '0 24px 64px rgba(0,0,0,0.3)', animation: 'slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
               <h2 style={{ fontSize: '22px', fontWeight: '800', color: '#1e293b', margin: 0 }}>👥 Ajouter un Groupe</h2>
-              <button onClick={() => setFbGroupsAddModal(false)} style={{ background: '#f1f5f9', border: 'none', fontSize: '20px', cursor: 'pointer', color: '#64748b', padding: '8px', borderRadius: '50%', width: '40px', height: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background 0.15s' }} onMouseEnter={e=>e.currentTarget.style.background='#e2e8f0'} onMouseLeave={e=>e.currentTarget.style.background='#f1f5f9'}>✕</button>
+              <button onClick={() => { setFbGroupsAddModal(false); setFbAddError(''); }} style={{ background: '#f1f5f9', border: 'none', fontSize: '20px', cursor: 'pointer', color: '#64748b', padding: '8px', borderRadius: '50%', width: '40px', height: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background 0.15s' }} onMouseEnter={e=>e.currentTarget.style.background='#e2e8f0'} onMouseLeave={e=>e.currentTarget.style.background='#f1f5f9'}>✕</button>
             </div>
             <form onSubmit={handleAddGroupFromModal} style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+              {fbAddError && (
+                <div style={{ background: '#fef2f2', border: '1px solid #fecaca', color: '#ef4444', padding: '12px 16px', borderRadius: '8px', fontSize: '14px', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '8px', animation: 'fadeIn 0.3s' }}>
+                  <span>❌</span> {fbAddError}
+                </div>
+              )}
               <div>
                 <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', color: '#475569', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>URL ou ID du Groupe *</label>
                 <input
@@ -392,11 +399,11 @@ export default function FacebookGroups() {
                   required
                   autoFocus
                   value={fbAddUrl}
-                  onChange={e => setFbAddUrl(e.target.value)}
+                  onChange={e => { setFbAddUrl(e.target.value); if (fbAddError) setFbAddError(''); }}
                   placeholder="https://www.facebook.com/groups/123456789/"
-                  style={{ width: '100%', padding: '14px 16px', border: '2px solid #e2e8f0', borderRadius: '12px', fontSize: '15px', outline: 'none', transition: 'all 0.2s', boxSizing: 'border-box' }}
+                  style={{ width: '100%', padding: '14px 16px', border: `2px solid ${fbAddError ? '#ef4444' : '#e2e8f0'}`, borderRadius: '12px', fontSize: '15px', outline: 'none', transition: 'all 0.2s', boxSizing: 'border-box' }}
                   onFocus={e => { e.target.style.borderColor = '#1877f2'; e.target.style.boxShadow = '0 0 0 4px rgba(24,119,242,0.1)'; }}
-                  onBlur={e => { e.target.style.borderColor = '#e2e8f0'; e.target.style.boxShadow = 'none'; }}
+                  onBlur={e => { e.target.style.borderColor = fbAddError ? '#ef4444' : '#e2e8f0'; e.target.style.boxShadow = 'none'; }}
                 />
               </div>
               <div>
@@ -412,7 +419,7 @@ export default function FacebookGroups() {
                 />
               </div>
               <div style={{ display: 'flex', gap: '12px', marginTop: '16px' }}>
-                <button type="button" onClick={() => setFbGroupsAddModal(false)}
+                <button type="button" onClick={() => { setFbGroupsAddModal(false); setFbAddError(''); }}
                   style={{ flex: 1, padding: '16px', border: '2px solid #e2e8f0', background: '#fff', borderRadius: '12px', fontWeight: '700', fontSize: '15px', cursor: 'pointer', color: '#64748b', transition: 'background 0.15s' }}
                   onMouseEnter={e=>e.currentTarget.style.background='#f8fafc'} onMouseLeave={e=>e.currentTarget.style.background='#fff'}
                 >
