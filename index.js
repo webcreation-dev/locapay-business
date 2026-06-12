@@ -1531,7 +1531,13 @@ Texte à analyser : "${description}"
              * Liste tous les groupes Facebook importés
              */
             app.get('/api/facebook/groups', async (req, res) => {
+                const showAll = req.query.all === 'true';
                 try {
+                    let whereClause = '';
+                    if (!showAll) {
+                        whereClause = 'WHERE fg.is_validated IS NOT FALSE';
+                    }
+                    
                     const { rows } = await db.query(`
                         SELECT fg.*,
                             COUNT(fp.id) AS total_posts,
@@ -1542,6 +1548,7 @@ Texte à analyser : "${description}"
                             MIN(fp.estimated_post_at) AS first_post_date
                         FROM facebook_groups fg
                         LEFT JOIN facebook_posts fp ON fp.group_id = fg.group_id
+                        ${whereClause}
                         GROUP BY fg.id
                         ORDER BY fg.last_scraped_at DESC
                     `);

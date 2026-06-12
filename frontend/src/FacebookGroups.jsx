@@ -28,7 +28,7 @@ export default function FacebookGroups() {
   const fetchFbGroups = useCallback(async (showLoader = false) => {
     if (showLoader) setFbIsLoadingGroups(true);
     try {
-      const res = await fetch('/api/facebook/groups');
+      const res = await fetch('/api/facebook/groups?all=true');
       const data = await res.json();
       setFbGroups(data);
     } catch (e) {
