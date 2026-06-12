@@ -164,6 +164,8 @@ export default function FacebookGroups() {
   const totalProcessed = fbGroups.reduce((acc, g) => acc + parseInt(g.processed || 0), 0);
   const totalPending = fbGroups.reduce((acc, g) => acc + parseInt(g.pending || 0), 0);
   const totalActiveGroups = fbGroups.filter(g => g.is_validated === true).length;
+  const totalPostsYesterday = fbGroups.reduce((acc, g) => acc + parseInt(g.posts_yesterday || 0), 0);
+  const totalProcessedYesterday = fbGroups.reduce((acc, g) => acc + parseInt(g.processed_yesterday || 0), 0);
 
   return (
     <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, overflowY: 'auto', fontFamily: 'var(--font-family)', display: 'flex', flexDirection: 'column', background: '#f1f5f9' }}>
@@ -201,11 +203,21 @@ export default function FacebookGroups() {
           </div>
           <div style={{ background: 'rgba(255,255,255,0.1)', padding: '16px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.2)' }}>
             <div style={{ fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.05em', opacity: 0.8, marginBottom: '8px', fontWeight: '600' }}>Total Posts</div>
-            <div style={{ fontSize: '28px', fontWeight: '700' }}>{totalPosts}</div>
+            <div style={{ fontSize: '28px', fontWeight: '700', display: 'flex', alignItems: 'baseline', gap: '8px' }}>
+              {totalPosts}
+              <span style={{ fontSize: '14px', fontWeight: '600', opacity: 0.9 }}>
+                ({totalPostsYesterday > 0 ? '+' : ''}{totalPostsYesterday} hier)
+              </span>
+            </div>
           </div>
           <div style={{ background: 'rgba(255,255,255,0.1)', padding: '16px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.2)' }}>
             <div style={{ fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.05em', opacity: 0.8, marginBottom: '8px', fontWeight: '600' }}>Biens Créés</div>
-            <div style={{ fontSize: '28px', fontWeight: '700', color: '#86efac' }}>{totalProcessed}</div>
+            <div style={{ fontSize: '28px', fontWeight: '700', color: '#86efac', display: 'flex', alignItems: 'baseline', gap: '8px' }}>
+              {totalProcessed}
+              <span style={{ fontSize: '14px', fontWeight: '600', opacity: 0.9 }}>
+                ({totalProcessedYesterday > 0 ? '+' : ''}{totalProcessedYesterday} hier)
+              </span>
+            </div>
           </div>
           <div style={{ background: 'rgba(255,255,255,0.1)', padding: '16px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.2)' }}>
             <div style={{ fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.05em', opacity: 0.8, marginBottom: '8px', fontWeight: '600' }}>En Attente</div>
