@@ -319,6 +319,38 @@ async function processFacebookPost(post, db, groupInfo) {
     let managerPhone = extractPhone(post.text);
     console.log(`📞 [Facebook] Post ${postId} — téléphone regex: ${managerPhone || 'non trouvé'}`);
 
+    // ── 3.5 Détection de doublons via NestJS (Anti-coûts IA & Bande passante) ──
+    if (managerPhone) {
+      const nestUrl = process.env.NESTJS_FACEBOOK_URL
+        || process.env.NESTJS_API_URL?.replace('create-from-whatsapp', 'create-from-facebook')
+        || 'http://nestjs_app:8000/properties/create-from-facebook';
+      const checkUrl = nestUrl.replace('/create-from-facebook', '/check-duplicate');
+
+      try {
+        console.log(`🔍 [Facebook] Vérification des doublons pour post ${postId}...`);
+        const dupResponse = await axios.post(checkUrl, {
+          description_original: post.text,
+          manager_phone: managerPhone
+        }, { timeout: 15000 });
+
+        if (dupResponse.data && dupResponse.data.exists) {
+          const existingId = dupResponse.data.propertyId;
+          console.log(`⏭️ [Facebook] Doublon détecté (Bien #${existingId}) ! On ignore le téléchargement et l'IA.`);
+          
+          await db.query(
+            `UPDATE facebook_posts 
+             SET is_processed = TRUE, real_property_id = $1, analysis_error = 'Doublon ignoré avant IA', updated_at = NOW()
+             WHERE post_id = $2`,
+            [existingId, postId]
+          );
+          
+          return { success: true, propertyId: existingId };
+        }
+      } catch (err) {
+        console.warn(`⚠️ [Facebook] Erreur vérification doublon: ${err.message}. On continue le processus normal...`);
+      }
+    }
+
     // ── 4. Téléchargement des images ───────────────────────────────────────
     const imagesBase64 = [];
     if (imageUrls.length > 0) {
