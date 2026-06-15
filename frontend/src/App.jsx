@@ -170,6 +170,8 @@ function App() {
   const [fbPostsStatus, setFbPostsStatus] = useState('all'); // all, pending, processed, error, noise
   const [fbNewGroupUrl, setFbNewGroupUrl] = useState('');
   const [fbNewGroupName, setFbNewGroupName] = useState('');
+  const [fbDailyAnalytics, setFbDailyAnalytics] = useState([]);
+  const [fbIsLoadingAnalytics, setFbIsLoadingAnalytics] = useState(false);
   const [fbIsLoadingGroups, setFbIsLoadingGroups] = useState(false);
   const [fbIsLoadingPosts, setFbIsLoadingPosts] = useState(false);
   const [fbIsSubmittingGroup, setFbIsSubmittingGroup] = useState(false);
@@ -352,7 +354,21 @@ function App() {
     }
   }, []);
 
+  const fetchFbDailyAnalytics = useCallback(async () => {
+    setFbIsLoadingAnalytics(true);
+    try {
+      const res = await fetch('/api/facebook/daily-analytics');
+      const data = await res.json();
+      setFbDailyAnalytics(data);
+    } catch (e) {
+      console.error('fetchFbDailyAnalytics error', e);
+    } finally {
+      setFbIsLoadingAnalytics(false);
+    }
+  }, []);
+
   // Poll stats and groups if viewMode is facebook
+
   useEffect(() => {
     if (viewMode === 'facebook') {
       fetchFbGroups();
@@ -366,6 +382,12 @@ function App() {
   }, [viewMode, fetchFbGroups, fetchFbStats]);
 
   // Load posts whenever group or status tab changes
+  useEffect(() => {
+    if (viewMode === 'fb_analytics') {
+      fetchFbDailyAnalytics();
+    }
+  }, [viewMode, fetchFbDailyAnalytics]);
+
   useEffect(() => {
     if (viewMode === 'facebook') {
       fetchFbPosts(currentFbGroupId, fbPostsStatus);
@@ -1450,6 +1472,13 @@ function App() {
               📘
             </button>
             <button
+              className={`view-toggle ${viewMode === 'fb_analytics' ? 'active' : ''}`}
+              onClick={() => { setViewMode('fb_analytics'); setSearchTerm(''); }}
+              title="Analytics Globaux"
+            >
+              📈
+            </button>
+            <button
               className={`view-toggle ${viewMode === 'full_access' ? 'active' : ''}`}
               onClick={() => { setViewMode('full_access'); setSearchTerm(''); }}
               title="Accès Total (Tout voir)"
@@ -1578,7 +1607,61 @@ function App() {
 
       {/* Zone principale */}
       <main className="chat-view">
-        {viewMode === 'facebook' ? (
+        {viewMode === 'fb_analytics' ? (
+          <div className="properties-dashboard">
+            <header className="chat-header properties-header">
+              <div className="chat-header-info">
+                <div className="name">Analytics Globaux (Facebook)</div>
+                <div className="subtitle">Vue d'ensemble des performances journalières de l'IA</div>
+              </div>
+              <button className="refresh-fab" onClick={fetchFbDailyAnalytics} title="Actualiser">
+                🔄
+              </button>
+            </header>
+
+            <div className="messages-container" style={{ padding: '20px' }}>
+              {fbIsLoadingAnalytics ? (
+                <div className="loading-state">Chargement des analytics...</div>
+              ) : fbDailyAnalytics.length === 0 ? (
+                <div className="empty-state">
+                  <h1>Aucune donnée trouvée</h1>
+                  <p>Attendez la collecte de données ou relancez un traitement.</p>
+                </div>
+              ) : (
+                <div style={{ background: '#fff', borderRadius: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
+                    <thead style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
+                      <tr>
+                        <th style={{ padding: '16px', textAlign: 'left', color: '#475569', fontWeight: '700', textTransform: 'uppercase', fontSize: '12px' }}>Jour</th>
+                        <th style={{ padding: '16px', textAlign: 'center', color: '#475569', fontWeight: '700', textTransform: 'uppercase', fontSize: '12px' }}>Total Récupérés</th>
+                        <th style={{ padding: '16px', textAlign: 'center', color: '#16a34a', fontWeight: '700', textTransform: 'uppercase', fontSize: '12px' }}>Biens Créés</th>
+                        <th style={{ padding: '16px', textAlign: 'center', color: '#ea580c', fontWeight: '700', textTransform: 'uppercase', fontSize: '12px' }}>Doublons</th>
+                        <th style={{ padding: '16px', textAlign: 'center', color: '#64748b', fontWeight: '700', textTransform: 'uppercase', fontSize: '12px' }}>Écarts sans IA</th>
+                        <th style={{ padding: '16px', textAlign: 'center', color: '#dc2626', fontWeight: '700', textTransform: 'uppercase', fontSize: '12px' }}>Écarts avec IA</th>
+                        <th style={{ padding: '16px', textAlign: 'center', color: '#ca8a04', fontWeight: '700', textTransform: 'uppercase', fontSize: '12px' }}>En attente</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {fbDailyAnalytics.map((row, index) => (
+                        <tr key={index} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                          <td style={{ padding: '16px', fontWeight: '600', color: '#1e293b' }}>
+                            {new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }).format(new Date(row.jour))}
+                          </td>
+                          <td style={{ padding: '16px', textAlign: 'center', fontWeight: '600' }}>{row.total_posts_recuperes}</td>
+                          <td style={{ padding: '16px', textAlign: 'center', fontWeight: '700', color: '#16a34a' }}>{row.biens_crees_uniques}</td>
+                          <td style={{ padding: '16px', textAlign: 'center', fontWeight: '600', color: '#ea580c' }}>{row.doublons}</td>
+                          <td style={{ padding: '16px', textAlign: 'center', color: '#64748b' }}>{row.ecart_sans_analyse_ia}</td>
+                          <td style={{ padding: '16px', textAlign: 'center', color: '#dc2626', fontWeight: '600' }}>{row.ecart_avec_analyse_ia}</td>
+                          <td style={{ padding: '16px', textAlign: 'center', color: '#ca8a04' }}>{row.en_attente}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        ) : viewMode === 'facebook' ? (
           <div className="fb-dashboard">
             <header className="chat-header fb-header" style={{ justifyContent: 'space-between' }}>
               <div className="chat-header-info">

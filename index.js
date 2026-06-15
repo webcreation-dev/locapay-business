@@ -1542,13 +1542,13 @@ Texte à analyser : "${description}"
                     const { rows } = await db.query(`
                         SELECT fg.*,
                             COUNT(fp.id) AS total_posts,
-                            COUNT(fp.id) FILTER (WHERE fp.is_processed = TRUE) AS processed,
-                            COUNT(fp.id) FILTER (WHERE fp.is_noise = TRUE) AS noise,
+                            COUNT(fp.id) FILTER (WHERE fp.is_processed = TRUE AND fp.analysis_error IS NULL) AS processed,
+                            COUNT(fp.id) FILTER (WHERE fp.is_noise = TRUE OR (fp.is_processed = TRUE AND fp.analysis_error IS NOT NULL)) AS noise,
                             COUNT(fp.id) FILTER (WHERE fp.is_processed = FALSE AND fp.is_noise = FALSE AND fp.analysis_error IS NULL) AS pending,
                             COUNT(fp.id) FILTER (WHERE fp.analysis_error IS NOT NULL AND fp.is_noise = FALSE AND fp.is_processed = FALSE) AS errors,
                             MIN(fp.estimated_post_at) AS first_post_date,
                             COUNT(fp.id) FILTER (WHERE DATE(COALESCE(fp.estimated_post_at, fp.scraped_at, fp.created_at)) = CURRENT_DATE - INTERVAL '1 day') AS posts_yesterday,
-                            COUNT(fp.id) FILTER (WHERE fp.is_processed = TRUE AND DATE(COALESCE(fp.estimated_post_at, fp.scraped_at, fp.created_at)) = CURRENT_DATE - INTERVAL '1 day') AS processed_yesterday
+                            COUNT(fp.id) FILTER (WHERE fp.is_processed = TRUE AND fp.analysis_error IS NULL AND DATE(COALESCE(fp.estimated_post_at, fp.scraped_at, fp.created_at)) = CURRENT_DATE - INTERVAL '1 day') AS processed_yesterday
                         FROM facebook_groups fg
                         LEFT JOIN facebook_posts fp ON fp.group_id = fg.group_id
                         ${whereClause}
@@ -1853,8 +1853,8 @@ Texte à analyser : "${description}"
                     const { rows } = await db.query(`
                         SELECT
                             COUNT(*) AS total,
-                            COUNT(*) FILTER (WHERE is_processed = TRUE) AS processed,
-                            COUNT(*) FILTER (WHERE is_noise = TRUE) AS noise,
+                            COUNT(*) FILTER (WHERE is_processed = TRUE AND analysis_error IS NULL) AS processed,
+                            COUNT(*) FILTER (WHERE is_noise = TRUE OR (is_processed = TRUE AND analysis_error IS NOT NULL)) AS noise,
                             COUNT(*) FILTER (WHERE is_processed = FALSE AND is_noise = FALSE AND analysis_error IS NULL) AS pending,
                             COUNT(*) FILTER (WHERE analysis_error IS NOT NULL AND is_noise = FALSE AND is_processed = FALSE) AS errors
                         FROM facebook_posts
@@ -1877,14 +1877,75 @@ Texte à analyser : "${description}"
                         SELECT 
                             DATE(COALESCE(estimated_post_at, scraped_at, created_at)) as day,
                             COUNT(*) as post_count,
-                            COUNT(*) FILTER (WHERE is_processed = TRUE) AS processed_count,
-                            COUNT(*) FILTER (WHERE is_noise = TRUE) AS noise_count,
+                            COUNT(*) FILTER (WHERE is_processed = TRUE AND analysis_error IS NULL) AS processed_count,
+                            COUNT(*) FILTER (WHERE is_noise = TRUE OR (is_processed = TRUE AND analysis_error IS NOT NULL)) AS noise_count,
                             COUNT(*) FILTER (WHERE analysis_error IS NOT NULL AND is_noise = FALSE AND is_processed = FALSE) AS error_count
                         FROM facebook_posts
                         WHERE group_id = $1
                         GROUP BY DATE(COALESCE(estimated_post_at, scraped_at, created_at))
                         ORDER BY day DESC;
                     `, [groupId]);
+                    res.json(rows);
+                } catch (err) {
+                    res.status(500).json({ error: err.message });
+                }
+            });
+
+            /**
+             * GET /api/facebook/daily-analytics
+             * Statistiques analytiques globales par jour pour le pipeline Facebook
+             */
+            app.get('/api/facebook/daily-analytics', async (req, res) => {
+                try {
+                    const { rows } = await db.query(`
+                        SELECT 
+                            DATE(created_at) AS jour,
+                            
+                            -- 1. Le nombre total de posts récupérés dans la journée
+                            COUNT(*) AS total_posts_recuperes,
+                            
+                            -- 2. Le nombre de biens UNIQUES réellement créés (On exclut les doublons)
+                            COUNT(*) FILTER (
+                                WHERE real_property_id IS NOT NULL 
+                                AND analysis_error IS NULL
+                            ) AS biens_crees_uniques,
+                            
+                            -- 3. NOUVEAU : Le nombre de doublons (Historiques rattrapés + Nouveaux bloqués avant l'IA)
+                            COUNT(*) FILTER (
+                                WHERE analysis_error IN ('Doublon post-IA (Historique)', 'Doublon ignoré avant IA')
+                            ) AS doublons,
+                            
+                            -- 4. Le nombre d'écarts SANS analyse IA (Filtres durs avant l'IA)
+                            COUNT(*) FILTER (
+                                WHERE real_property_id IS NULL 
+                                AND (
+                                    analysis_error IN ('Bien de plus de 24h', 'Moins de 3 images attachées', 'Moins de 3 images accessibles', 'Recherche sans numéro de téléphone') 
+                                    OR analysis_error LIKE 'Mot interdit:%'
+                                )
+                            ) AS ecart_sans_analyse_ia,
+                            
+                            -- 5. Le nombre d'écarts AVEC analyse IA (Erreurs IA, Ventes, Bruit IA, etc.)
+                            COUNT(*) FILTER (
+                                WHERE real_property_id IS NULL 
+                                AND NOT (
+                                    analysis_error IN ('Bien de plus de 24h', 'Moins de 3 images attachées', 'Moins de 3 images accessibles', 'Recherche sans numéro de téléphone') 
+                                    OR analysis_error LIKE 'Mot interdit:%'
+                                )
+                                AND NOT (is_processed = FALSE AND is_noise = FALSE AND analysis_error IS NULL AND is_client_demand = FALSE)
+                            ) AS ecart_avec_analyse_ia,
+                            
+                            -- 6. Les posts en attente d'être traités par le scraper
+                            COUNT(*) FILTER (
+                                WHERE is_processed = FALSE 
+                                AND is_noise = FALSE 
+                                AND analysis_error IS NULL 
+                                AND is_client_demand = FALSE
+                            ) AS en_attente
+                        
+                        FROM facebook_posts
+                        GROUP BY DATE(created_at)
+                        ORDER BY jour DESC;
+                    `);
                     res.json(rows);
                 } catch (err) {
                     res.status(500).json({ error: err.message });
