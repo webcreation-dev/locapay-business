@@ -28,6 +28,9 @@ let lastAiAlertTime = 0; // Anti-spam 1h
 const FORBIDDEN_KEYWORDS = [
   'vendre', 'vente', 'parcelle', 'terrain', 'titre foncier',
   ' tf ', '\ntf\n', 'domaine',
+  // Faux positifs ajoutés
+  'pièces à jour', 'pieces a jour', 'état boutique', 'etat boutique',
+  'guéridon', 'gueridon', 'matelas', 'galet', 'voiture', 'toyota', 'honda', 'ford'
 ];
 
 // Mots-clés indiquant qu'un client recherche un bien
@@ -67,6 +70,16 @@ function isNoiseBeforeAI(text) {
   const normalizedText = normalizeText(text);
   const realEstateRegex = /(chambre|salon|appartement|villa|loyer|louer|location|caution|avance|boutique|bureau|magasin|studio|piece|sanitaire|wcd|entree coucher)/;
   return !realEstateRegex.test(normalizedText);
+}
+
+/**
+ * Vérifie si le texte est une location journalière (Nuitée)
+ */
+function isDailyRentalBeforeAI(text) {
+  if (!text) return false;
+  const normalizedText = normalizeText(text);
+  const dailyRegex = /(nuitée|nuitee|par nuit|\/nuit|journalière|journaliere|par jour|\/jour)/;
+  return dailyRegex.test(normalizedText);
 }
 
 /**
@@ -320,6 +333,16 @@ async function processFacebookPost(post, db, groupInfo) {
       );
       console.log(`🚫 [Facebook] Post ${postId} → noise (Classé comme bruit avant IA - Vocabulaire manquant)`);
       return { success: false, error: 'Classé comme bruit avant IA (Vocabulaire manquant)' };
+    }
+
+    // ── 1.6 Filtre Location Journalière (Nuitée) ────────────
+    if (isDailyRentalBeforeAI(post.text)) {
+      await db.query(
+        `UPDATE facebook_posts SET is_noise = TRUE, analysis_error = 'Location journalière (DAILY) non acceptée', updated_at = NOW() WHERE post_id = $1`,
+        [postId]
+      );
+      console.log(`🚫 [Facebook] Post ${postId} → noise (Location journalière détectée avant IA)`);
+      return { success: false, error: 'Location journalière (DAILY) non acceptée' };
     }
 
     // ── 2. Filtre absence de média ──────────────────────────────────────────
@@ -666,6 +689,9 @@ async function importFacebookPosts(posts, db, explicitGroupId = null) {
     if (forbiddenKw) {
       isNoiseOnImport = true;
       noiseError = `Mot interdit: "${forbiddenKw}"`;
+    } else if (isDailyRentalBeforeAI(post.text)) {
+      isNoiseOnImport = true;
+      noiseError = 'Location journalière (DAILY) non acceptée';
     } else if (isNoiseBeforeAI(post.text)) {
       isNoiseOnImport = true;
       noiseError = 'Classé comme bruit avant IA (Vocabulaire manquant)';
