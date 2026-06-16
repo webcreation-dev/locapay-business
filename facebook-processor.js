@@ -59,6 +59,17 @@ function normalizeText(text) {
 }
 
 /**
+ * Vérifie si le texte est du bruit en s'assurant qu'il contient
+ * au moins un mot-clé du vocabulaire immobilier.
+ */
+function isNoiseBeforeAI(text) {
+  if (!text || text.trim() === '') return true;
+  const normalizedText = normalizeText(text);
+  const realEstateRegex = /(chambre|salon|appartement|villa|loyer|louer|location|caution|avance|boutique|bureau|magasin|studio|piece|sanitaire|wcd|entree coucher)/;
+  return !realEstateRegex.test(normalizedText);
+}
+
+/**
  * Vérifie si le texte contient un mot interdit
  */
 function containsForbiddenKeyword(text) {
@@ -299,6 +310,16 @@ async function processFacebookPost(post, db, groupInfo) {
       );
       console.log(`🚫 [Facebook] Post ${postId} → noise (mot interdit: "${forbiddenKw}")`);
       return { success: false, error: `Mot interdit: "${forbiddenKw}"` };
+    }
+
+    // ── 1.5 Filtre Heuristique Immobilier (Absence de mots-clés) ────────────
+    if (isNoiseBeforeAI(post.text)) {
+      await db.query(
+        `UPDATE facebook_posts SET is_noise = TRUE, analysis_error = 'Classé comme bruit avant IA (Vocabulaire manquant)', updated_at = NOW() WHERE post_id = $1`,
+        [postId]
+      );
+      console.log(`🚫 [Facebook] Post ${postId} → noise (Classé comme bruit avant IA - Vocabulaire manquant)`);
+      return { success: false, error: 'Classé comme bruit avant IA (Vocabulaire manquant)' };
     }
 
     // ── 2. Filtre absence de média ──────────────────────────────────────────
@@ -645,6 +666,9 @@ async function importFacebookPosts(posts, db, explicitGroupId = null) {
     if (forbiddenKw) {
       isNoiseOnImport = true;
       noiseError = `Mot interdit: "${forbiddenKw}"`;
+    } else if (isNoiseBeforeAI(post.text)) {
+      isNoiseOnImport = true;
+      noiseError = 'Classé comme bruit avant IA (Vocabulaire manquant)';
     } else if (hasSearchKeywords && !managerPhone) {
       isNoiseOnImport = true;
       noiseError = 'Recherche sans numéro de téléphone';
@@ -739,6 +763,7 @@ module.exports = {
   processFacebookBatch,
   extractPhone,
   containsForbiddenKeyword,
+  isNoiseBeforeAI,
   normalizeText,
   triggerNestPropertyBump,
 };
