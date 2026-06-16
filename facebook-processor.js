@@ -30,7 +30,7 @@ const FORBIDDEN_KEYWORDS = [
   ' tf ', '\ntf\n', 'domaine',
   // Faux positifs ajoutés
   'pièces à jour', 'pieces a jour', 'état boutique', 'etat boutique',
-  'guéridon', 'gueridon', 'matelas', 'galet', 'voiture', 'toyota', 'honda', 'ford'
+  'guéridon', 'gueridon', 'matelas', 'galet', 'toyota', 'honda', 'ford'
 ];
 
 // Mots-clés indiquant qu'un client recherche un bien

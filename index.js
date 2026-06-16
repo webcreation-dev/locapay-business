@@ -562,7 +562,7 @@ Texte à analyser : "${description}"
 
             const internalAnalyzeChat = async (chatId) => {
                 // Mots interdits (ventes, terrains, recherches, etc.)
-                const FORBIDDEN_REGEX = 'vendre|vente|parcelle|terrain|titre\\sfoncier|\\stf\\s|\\stf\n|domaine|\\stf$|opportunite|recherche|pièces\\sà\\sjour|pieces\\sa\\sjour|état\\sboutique|etat\\sboutique|guéridon|gueridon|matelas|galet|voiture|toyota|honda|ford';
+                const FORBIDDEN_REGEX = 'vendre|vente|parcelle|terrain|titre\\sfoncier|\\stf\\s|\\stf\n|domaine|\\stf$|opportunite|recherche|pièces\\sà\\sjour|pieces\\sa\\sjour|état\\sboutique|etat\\sboutique|guéridon|gueridon|matelas|galet|toyota|honda|ford';
                 const forbiddenPattern = new RegExp(FORBIDDEN_REGEX.replace(/\\/g, '\\'), 'i');
 
                 await db.query(
@@ -709,7 +709,7 @@ Texte à analyser : "${description}"
                         AND m.property_group_id IS NOT NULL
                         AND m.property_group_id != 'noise'
                         AND m.real_property_id IS NULL
-                        AND NOT (m.body ~* 'vendre|vente|parcelle|terrain|titre\\sfoncier|\\stf\\s|\\stf\n|domaine|\\stf$|opportunite|recherche|pièces\\sà\\sjour|pieces\\sa\\sjour|état\\sboutique|etat\\sboutique|guéridon|gueridon|matelas|galet|voiture|toyota|honda|ford')
+                        AND NOT (m.body ~* 'vendre|vente|parcelle|terrain|titre\\sfoncier|\\stf\\s|\\stf\n|domaine|\\stf$|opportunite|recherche|pièces\\sà\\sjour|pieces\\sa\\sjour|état\\sboutique|etat\\sboutique|guéridon|gueridon|matelas|galet|toyota|honda|ford')
                         GROUP BY m.property_group_id, m.chat_id, c.chat_name, m.analysis_error
                         ORDER BY m.analysis_error, MIN(m.timestamp) DESC
                     `);
@@ -769,7 +769,7 @@ Texte à analyser : "${description}"
                         AND m.real_property_id IS NULL
                         AND m.analysis_error IS NULL
                         -- Double sécurité : exclure les mots interdits même s'ils sont déjà groupés
-                        AND NOT (m.body ~* 'vendre|vente|parcelle|terrain|titre\\sfoncier|\\stf\\s|\\stf\n|domaine|\\stf$|opportunite|recherche|pièces\\sà\\sjour|pieces\\sa\\sjour|état\\sboutique|etat\\sboutique|guéridon|gueridon|matelas|galet|voiture|toyota|honda|ford')
+                        AND NOT (m.body ~* 'vendre|vente|parcelle|terrain|titre\\sfoncier|\\stf\\s|\\stf\n|domaine|\\stf$|opportunite|recherche|pièces\\sà\\sjour|pieces\\sa\\sjour|état\\sboutique|etat\\sboutique|guéridon|gueridon|matelas|galet|toyota|honda|ford')
                         GROUP BY m.property_group_id, m.chat_id, c.chat_name
                         ORDER BY MIN(m.timestamp) DESC
                     `);
@@ -826,7 +826,7 @@ Texte à analyser : "${description}"
                         WITH banned_groups AS (
                             SELECT DISTINCT property_group_id
                             FROM messages
-                            WHERE body ~* 'vendre|vente|parcelle|terrain|titre foncier| tf|domaine|pièces à jour|pieces a jour|état boutique|etat boutique|guéridon|gueridon|matelas|galet|voiture|toyota|honda|ford'
+                            WHERE body ~* 'vendre|vente|parcelle|terrain|titre foncier| tf|domaine|pièces à jour|pieces a jour|état boutique|etat boutique|guéridon|gueridon|matelas|galet|toyota|honda|ford'
                             AND property_group_id IS NOT NULL
                         ),
                         valid_pending_msgs AS (
@@ -839,7 +839,7 @@ Texte à analyser : "${description}"
                             AND m.is_from_me = FALSE
                             AND bg.property_group_id IS NULL -- Exclure les membres d'un groupe interdit
                             AND COALESCE(m.message_type, '') NOT IN ('audio', 'ptt', 'sticker')
-                            AND (m.body IS NULL OR m.body !~* 'vendre|vente|parcelle|terrain|titre foncier| tf|domaine|pièces à jour|pieces a jour|état boutique|etat boutique|guéridon|gueridon|matelas|galet|voiture|toyota|honda|ford')
+                            AND (m.body IS NULL OR m.body !~* 'vendre|vente|parcelle|terrain|titre foncier| tf|domaine|pièces à jour|pieces a jour|état boutique|etat boutique|guéridon|gueridon|matelas|galet|toyota|honda|ford')
                             AND ((m.body IS NOT NULL AND LENGTH(TRIM(m.body)) >= 20) OR m.has_media = TRUE)
                         ),
                         pending_counts AS (
@@ -920,7 +920,7 @@ Texte à analyser : "${description}"
                         banned_groups AS (
                             SELECT DISTINCT property_group_id
                             FROM raw_msgs
-                            WHERE body ~* 'vendre|vente|parcelle|terrain|titre foncier| tf|domaine|pièces à jour|pieces a jour|état boutique|etat boutique|guéridon|gueridon|matelas|galet|voiture|toyota|honda|ford'
+                            WHERE body ~* 'vendre|vente|parcelle|terrain|titre foncier| tf|domaine|pièces à jour|pieces a jour|état boutique|etat boutique|guéridon|gueridon|matelas|galet|toyota|honda|ford'
                             AND property_group_id IS NOT NULL
                         ),
                         filtered_msgs AS (
@@ -929,7 +929,7 @@ Texte à analyser : "${description}"
                             WHERE bg.property_group_id IS NULL -- Exclure TOUS les membres d'un groupe contenant 'vendre'
                             AND r.is_analyzed = FALSE
                             AND r.real_property_id IS NULL
-                            AND (r.body IS NULL OR r.body !~* 'vendre|vente|parcelle|terrain|titre foncier| tf|domaine|pièces à jour|pieces a jour|état boutique|etat boutique|guéridon|gueridon|matelas|galet|voiture|toyota|honda|ford') -- Vérif individuelle au cas où (message non groupé)
+                            AND (r.body IS NULL OR r.body !~* 'vendre|vente|parcelle|terrain|titre foncier| tf|domaine|pièces à jour|pieces a jour|état boutique|etat boutique|guéridon|gueridon|matelas|galet|toyota|honda|ford') -- Vérif individuelle au cas où (message non groupé)
                             AND ( (r.body IS NOT NULL AND LENGTH(TRIM(r.body)) >= 20) OR r.has_media = TRUE )
                             AND r.message_type NOT IN ('audio', 'ptt', 'sticker')
                         )
@@ -1113,7 +1113,7 @@ Texte à analyser : "${description}"
                     const finalDescription = texts.join('\n\n').trim() || '(Annonce immobilière WhatsApp - Sans texte)';
 
                     // FILTRES DE SÉCURITÉ (avec normalisation)
-                    const forbiddenKeywords = ['vendre', 'vente', 'parcelle', 'terrain', 'titre foncier', ' tf ', ' tf\n', 'domaine', 'opportunite', 'recherche', 'pièces à jour', 'pieces a jour', 'état boutique', 'etat boutique', 'guéridon', 'gueridon', 'matelas', 'galet', 'voiture', 'toyota', 'honda', 'ford'];
+                    const forbiddenKeywords = ['vendre', 'vente', 'parcelle', 'terrain', 'titre foncier', ' tf ', ' tf\n', 'domaine', 'opportunite', 'recherche', 'pièces à jour', 'pieces a jour', 'état boutique', 'etat boutique', 'guéridon', 'gueridon', 'matelas', 'galet', 'toyota', 'honda', 'ford'];
                     const descriptionNormalized = normalizeStyledText(finalDescription);
                     const foundKeyword = forbiddenKeywords.find(kw => descriptionNormalized.includes(kw));
 
