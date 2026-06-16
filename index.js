@@ -1919,7 +1919,7 @@ Texte à analyser : "${description}"
                             COUNT(*) FILTER (
                                 WHERE real_property_id IS NULL 
                                 AND (
-                                    analysis_error IN ('Bien de plus de 24h', 'Moins de 3 images attachées', 'Moins de 3 images accessibles', 'Recherche sans numéro de téléphone') 
+                                    analysis_error IN ('Bien de plus de 24h', 'Moins de 3 images attachées', 'Moins de 3 images accessibles', 'Recherche sans numéro de téléphone', 'Classé comme bruit avant IA (Vocabulaire manquant)') 
                                     OR analysis_error LIKE 'Mot interdit:%'
                                 )
                             ) AS ecart_sans_analyse_ia,
@@ -1928,7 +1928,7 @@ Texte à analyser : "${description}"
                             COUNT(*) FILTER (
                                 WHERE real_property_id IS NULL 
                                 AND NOT (
-                                    analysis_error IN ('Bien de plus de 24h', 'Moins de 3 images attachées', 'Moins de 3 images accessibles', 'Recherche sans numéro de téléphone') 
+                                    analysis_error IN ('Bien de plus de 24h', 'Moins de 3 images attachées', 'Moins de 3 images accessibles', 'Recherche sans numéro de téléphone', 'Classé comme bruit avant IA (Vocabulaire manquant)', 'Doublon post-IA (Historique)', 'Doublon ignoré avant IA') 
                                     OR analysis_error LIKE 'Mot interdit:%'
                                 )
                                 AND NOT (is_processed = FALSE AND is_noise = FALSE AND analysis_error IS NULL AND is_client_demand = FALSE)
