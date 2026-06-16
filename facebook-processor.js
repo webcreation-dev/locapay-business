@@ -514,6 +514,29 @@ async function processFacebookPost(post, db, groupInfo) {
       [managerPhone, postId]
     );
 
+    // --- ASSOUPLISSEMENT (Eviter les crashs NestJS pour les champs manquants) ---
+    if (extractedData && extractedData.type) {
+      const t = extractedData.type.toUpperCase();
+      // Commerciaux / 1-pièce
+      if (['STORE', 'SHOP', 'OFFICE', 'BOUTIQUE', 'MAGASIN', 'STUDIO', 'ROOM'].includes(t)) {
+          if (extractedData.number_rooms === undefined || extractedData.number_rooms === null || extractedData.number_rooms === '') {
+              extractedData.number_rooms = 1;
+          }
+          if (extractedData.number_living_rooms === undefined || extractedData.number_living_rooms === null || extractedData.number_living_rooms === '') {
+              extractedData.number_living_rooms = 0;
+          }
+      }
+      // Habitations classiques
+      if (['APARTMENT', 'HOUSE', 'VILLA'].includes(t)) {
+          if (extractedData.number_rooms === undefined || extractedData.number_rooms === null || extractedData.number_rooms === '') {
+              extractedData.number_rooms = 1;
+          }
+          if (extractedData.number_living_rooms === undefined || extractedData.number_living_rooms === null || extractedData.number_living_rooms === '') {
+              extractedData.number_living_rooms = 1;
+          }
+      }
+    }
+
     // ── 6. Envoi à NestJS /create-from-facebook ────────────────────────────
     const nestUrl = process.env.NESTJS_FACEBOOK_URL
       || process.env.NESTJS_API_URL?.replace('create-from-whatsapp', 'create-from-facebook')

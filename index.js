@@ -1161,6 +1161,29 @@ Texte à analyser : "${description}"
                         return { success: false, error: errMsg };
                     }
 
+                    // --- ASSOUPLISSEMENT (Eviter les crashs NestJS pour les champs manquants) ---
+                    if (extractedData && extractedData.type) {
+                        const t = extractedData.type.toUpperCase();
+                        // Commerciaux / 1-pièce
+                        if (['STORE', 'SHOP', 'OFFICE', 'BOUTIQUE', 'MAGASIN', 'STUDIO', 'ROOM'].includes(t)) {
+                            if (extractedData.number_rooms === undefined || extractedData.number_rooms === null || extractedData.number_rooms === '') {
+                                extractedData.number_rooms = 1;
+                            }
+                            if (extractedData.number_living_rooms === undefined || extractedData.number_living_rooms === null || extractedData.number_living_rooms === '') {
+                                extractedData.number_living_rooms = 0;
+                            }
+                        }
+                        // Habitations classiques
+                        if (['APARTMENT', 'HOUSE', 'VILLA'].includes(t)) {
+                            if (extractedData.number_rooms === undefined || extractedData.number_rooms === null || extractedData.number_rooms === '') {
+                                extractedData.number_rooms = 1;
+                            }
+                            if (extractedData.number_living_rooms === undefined || extractedData.number_living_rooms === null || extractedData.number_living_rooms === '') {
+                                extractedData.number_living_rooms = 1;
+                            }
+                        }
+                    }
+
                     const nestUrl = process.env.NESTJS_API_URL || 'http://host.docker.internal:4000/properties/create-from-whatsapp';
 
                     try {
