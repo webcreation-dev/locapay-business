@@ -1571,7 +1571,8 @@ Texte à analyser : "${description}"
                             COUNT(fp.id) FILTER (WHERE fp.analysis_error IS NOT NULL AND fp.is_noise = FALSE AND fp.is_processed = FALSE) AS errors,
                             MIN(fp.estimated_post_at) AS first_post_date,
                             COUNT(fp.id) FILTER (WHERE DATE(COALESCE(fp.estimated_post_at, fp.scraped_at, fp.created_at)) = CURRENT_DATE - INTERVAL '1 day') AS posts_yesterday,
-                            COUNT(fp.id) FILTER (WHERE fp.is_processed = TRUE AND fp.analysis_error IS NULL AND DATE(COALESCE(fp.estimated_post_at, fp.scraped_at, fp.created_at)) = CURRENT_DATE - INTERVAL '1 day') AS processed_yesterday
+                            COUNT(fp.id) FILTER (WHERE fp.is_processed = TRUE AND fp.analysis_error IS NULL AND DATE(COALESCE(fp.estimated_post_at, fp.scraped_at, fp.created_at)) = CURRENT_DATE - INTERVAL '1 day') AS processed_yesterday,
+                            COALESCE(COUNT(fp.id)::float / NULLIF(COUNT(DISTINCT DATE(COALESCE(fp.estimated_post_at, fp.scraped_at, fp.created_at))), 0), 0) AS daily_avg_posts
                         FROM facebook_groups fg
                         LEFT JOIN facebook_posts fp ON fp.group_id = fg.group_id
                         ${whereClause}

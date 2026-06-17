@@ -24,6 +24,17 @@ export default function FacebookGroups() {
   const [sidebarData, setSidebarData] = useState([]);
   const [isLoadingSidebar, setIsLoadingSidebar] = useState(false);
 
+  // Sorting
+  const [sortConfig, setSortConfig] = useState({ key: 'daily_avg_posts', direction: 'desc' });
+
+  const requestSort = (key) => {
+    let direction = 'desc';
+    if (sortConfig && sortConfig.key === key && sortConfig.direction === 'desc') {
+      direction = 'asc';
+    }
+    setSortConfig({ key, direction });
+  };
+
   const openStatsSidebar = async (group) => {
     setSidebarGroup(group);
     setIsSidebarOpen(true);
@@ -200,9 +211,42 @@ export default function FacebookGroups() {
     }
   };
 
-  // Pagination logic
-  const totalPages = Math.ceil(fbGroups.length / itemsPerPage);
-  const currentGroups = fbGroups.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+  // Pagination & Sorting logic
+  const sortedGroups = React.useMemo(() => {
+    let sortableItems = [...fbGroups];
+    if (sortConfig !== null) {
+      sortableItems.sort((a, b) => {
+        let aValue = a[sortConfig.key];
+        let bValue = b[sortConfig.key];
+        
+        if (sortConfig.key === 'daily_avg_posts') {
+           aValue = parseFloat(aValue) || 0;
+           bValue = parseFloat(bValue) || 0;
+        } else if (sortConfig.key === 'processed' || sortConfig.key === 'total_posts') {
+           aValue = parseInt(aValue) || 0;
+           bValue = parseInt(bValue) || 0;
+        } else if (sortConfig.key === 'first_post_date' || sortConfig.key === 'last_scraped_at') {
+           aValue = new Date(aValue).getTime() || 0;
+           bValue = new Date(bValue).getTime() || 0;
+        } else if (sortConfig.key === 'group_name') {
+           aValue = (aValue || '').toLowerCase();
+           bValue = (bValue || '').toLowerCase();
+        }
+
+        if (aValue < bValue) {
+          return sortConfig.direction === 'asc' ? -1 : 1;
+        }
+        if (aValue > bValue) {
+          return sortConfig.direction === 'asc' ? 1 : -1;
+        }
+        return 0;
+      });
+    }
+    return sortableItems;
+  }, [fbGroups, sortConfig]);
+
+  const totalPages = Math.ceil(sortedGroups.length / itemsPerPage);
+  const currentGroups = sortedGroups.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
   const totalPosts = fbGroups.reduce((acc, g) => acc + parseInt(g.total_posts || 0), 0);
   const totalProcessed = fbGroups.reduce((acc, g) => acc + parseInt(g.processed || 0), 0);
@@ -286,9 +330,10 @@ export default function FacebookGroups() {
             <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: '14px' }}>
               <thead>
                 <tr style={{ position: 'sticky', top: 0, zIndex: 10 }}>
-                  <th style={{ background: '#f8fafc', padding: '18px 24px', textAlign: 'left', fontWeight: '800', color: '#0f172a', fontSize: '13px', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '2px solid #cbd5e1', borderTopLeftRadius: '16px' }}>Nom du Groupe</th>
-                  <th style={{ background: '#f8fafc', padding: '18px 24px', textAlign: 'center', fontWeight: '800', color: '#0f172a', fontSize: '13px', textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap', borderBottom: '2px solid #cbd5e1' }}>Depuis le</th>
-                  <th style={{ background: '#f8fafc', padding: '18px 24px', textAlign: 'center', fontWeight: '800', color: '#0f172a', fontSize: '13px', textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap', borderBottom: '2px solid #cbd5e1' }}>Biens créés</th>
+                  <th onClick={() => requestSort('group_name')} style={{ cursor: 'pointer', background: '#f8fafc', padding: '18px 24px', textAlign: 'left', fontWeight: '800', color: '#0f172a', fontSize: '13px', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '2px solid #cbd5e1', borderTopLeftRadius: '16px' }}>Nom du Groupe {sortConfig.key === 'group_name' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}</th>
+                  <th onClick={() => requestSort('first_post_date')} style={{ cursor: 'pointer', background: '#f8fafc', padding: '18px 24px', textAlign: 'center', fontWeight: '800', color: '#0f172a', fontSize: '13px', textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap', borderBottom: '2px solid #cbd5e1' }}>Depuis le {sortConfig.key === 'first_post_date' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}</th>
+                  <th onClick={() => requestSort('daily_avg_posts')} style={{ cursor: 'pointer', background: '#e0e7ff', padding: '18px 24px', textAlign: 'center', fontWeight: '800', color: '#1e3a8a', fontSize: '13px', textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap', borderBottom: '2px solid #cbd5e1' }}>Moyenne/J {sortConfig.key === 'daily_avg_posts' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}</th>
+                  <th onClick={() => requestSort('processed')} style={{ cursor: 'pointer', background: '#f8fafc', padding: '18px 24px', textAlign: 'center', fontWeight: '800', color: '#0f172a', fontSize: '13px', textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap', borderBottom: '2px solid #cbd5e1' }}>Biens créés {sortConfig.key === 'processed' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}</th>
                   <th style={{ background: '#f8fafc', padding: '18px 24px', textAlign: 'center', fontWeight: '800', color: '#0f172a', fontSize: '13px', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '2px solid #cbd5e1' }}>Statut</th>
                   <th style={{ background: '#f8fafc', padding: '18px 24px', textAlign: 'center', fontWeight: '800', color: '#0f172a', fontSize: '13px', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '2px solid #cbd5e1', borderTopRightRadius: '16px' }}>Actions</th>
                 </tr>
@@ -330,8 +375,16 @@ export default function FacebookGroups() {
                     </td>
 
                     {/* Depuis le */}
-                    <td style={{ padding: '16px 24px', textAlign: 'center', color: '#64748b', fontSize: '13px' }}>
-                      {group.first_post_date ? new Date(group.first_post_date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : '—'}
+                    <td style={{ padding: '16px 24px', textAlign: 'center', fontWeight: '600', color: '#475569' }}>
+                      {group.first_post_date ? new Date(group.first_post_date).toLocaleDateString('fr-FR') : '—'}
+                    </td>
+
+                    {/* Moyenne Journalière */}
+                    <td style={{ padding: '16px 24px', textAlign: 'center', background: idx % 2 === 0 ? '#eef2ff' : '#f5f7ff' }}>
+                      <div style={{ fontSize: '18px', fontWeight: '800', color: '#3730a3' }}>
+                        {Math.round(group.daily_avg_posts || 0)}
+                      </div>
+                      <div style={{ fontSize: '11px', color: '#6366f1', fontWeight: '700', textTransform: 'uppercase' }}>posts/j</div>
                     </td>
 
                     {/* Biens créés */}
