@@ -172,6 +172,7 @@ function App() {
   const [fbNewGroupName, setFbNewGroupName] = useState('');
   const [fbDailyAnalytics, setFbDailyAnalytics] = useState([]);
   const [fbIsLoadingAnalytics, setFbIsLoadingAnalytics] = useState(false);
+  const [isFbAnalyticsSidebarOpen, setIsFbAnalyticsSidebarOpen] = useState(false);
   const [fbIsLoadingGroups, setFbIsLoadingGroups] = useState(false);
   const [fbIsLoadingPosts, setFbIsLoadingPosts] = useState(false);
   const [fbIsSubmittingGroup, setFbIsSubmittingGroup] = useState(false);
@@ -1662,7 +1663,7 @@ function App() {
             </div>
           </div>
         ) : viewMode === 'facebook' ? (
-          <div className="fb-dashboard">
+          <div className="fb-dashboard" style={{ position: 'relative', overflow: 'hidden' }}>
             <header className="chat-header fb-header" style={{ justifyContent: 'space-between' }}>
               <div className="chat-header-info">
                 <div className="name" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -1674,6 +1675,14 @@ function App() {
                 </div>
               </div>
               <div style={{ display: 'flex', gap: '10px' }}>
+                <button
+                  onClick={() => { setIsFbAnalyticsSidebarOpen(true); fetchFbDailyAnalytics(); }}
+                  style={{ background: '#f1f5f9', color: '#1e293b', padding: '0 16px', borderRadius: '8px', border: '1px solid #cbd5e1', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', transition: 'background 0.2s' }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = '#e2e8f0'}
+                  onMouseLeave={(e) => e.currentTarget.style.background = '#f1f5f9'}
+                >
+                  📈 Stats Scraping
+                </button>
                 <button
                   className="btn-fb-primary"
                   onClick={handleFbProcessAll}
@@ -1882,6 +1891,61 @@ function App() {
                 </div>
               )}
             </div>
+
+            {/* OVERLAY ET SIDEBAR POUR LES STATS DE SCRAPING */}
+            {isFbAnalyticsSidebarOpen && (
+              <>
+                <div 
+                  style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', zIndex: 90 }}
+                  onClick={() => setIsFbAnalyticsSidebarOpen(false)}
+                />
+                
+                <div 
+                  style={{
+                    position: 'absolute', top: 0, right: 0, bottom: 0, width: '400px', backgroundColor: '#f1f5f9',
+                    boxShadow: '-4px 0 24px rgba(0,0,0,0.15)', zIndex: 100, display: 'flex', flexDirection: 'column',
+                    animation: 'slideInRight 0.3s forwards'
+                  }}
+                >
+                  <div style={{ padding: '24px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#fff' }}>
+                    <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '800', color: '#1e293b', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span>📈</span> Historique Scraping
+                    </h2>
+                    <button 
+                      onClick={() => setIsFbAnalyticsSidebarOpen(false)}
+                      style={{ background: '#f1f5f9', border: 'none', fontSize: '18px', cursor: 'pointer', color: '#64748b', width: '36px', height: '36px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                    >✕</button>
+                  </div>
+
+                  <div style={{ padding: '20px', overflowY: 'auto', flex: 1 }}>
+                    {fbIsLoadingAnalytics ? (
+                      <div style={{ textAlign: 'center', padding: '40px', color: '#64748b', fontWeight: '600' }}>Chargement des données...</div>
+                    ) : fbDailyAnalytics.length === 0 ? (
+                      <div style={{ textAlign: 'center', padding: '40px', color: '#64748b' }}>Aucune donnée disponible.</div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                        {fbDailyAnalytics.map((row, idx) => (
+                          <div key={idx} style={{ background: '#fff', padding: '16px 20px', borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.03)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: '1px solid #e2e8f0' }}>
+                            <div>
+                              <div style={{ fontWeight: '700', color: '#1e293b', fontSize: '15px', textTransform: 'capitalize' }}>
+                                {new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' }).format(new Date(row.jour))}
+                              </div>
+                              <div style={{ fontSize: '12px', color: '#64748b', marginTop: '2px' }}>Scraping FB Auto</div>
+                            </div>
+                            <div style={{ textAlign: 'right' }}>
+                              <div style={{ fontSize: '24px', fontWeight: '800', color: '#1877f2', lineHeight: '1' }}>
+                                {row.total_posts_recuperes}
+                              </div>
+                              <div style={{ fontSize: '11px', color: '#94a3b8', textTransform: 'uppercase', fontWeight: '700', letterSpacing: '0.5px', marginTop: '4px' }}>posts récupérés</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         ) : viewMode === 'properties' ? (
           <div className="properties-dashboard">
