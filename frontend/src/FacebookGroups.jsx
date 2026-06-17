@@ -234,7 +234,7 @@ export default function FacebookGroups() {
   const totalPosts = fbGroups.reduce((acc, g) => acc + parseInt(g.total_posts || 0), 0);
   const totalProcessed = fbGroups.reduce((acc, g) => acc + parseInt(g.processed || 0), 0);
   const totalPending = fbGroups.reduce((acc, g) => acc + parseInt(g.pending || 0), 0);
-  const totalActiveGroups = fbGroups.filter(g => g.is_validated === true).length;
+  const totalActiveGroups = fbGroups.filter(g => g.is_validated !== false).length;
   const totalPostsYesterday = fbGroups.reduce((acc, g) => acc + parseInt(g.posts_yesterday || 0), 0);
   const totalProcessedYesterday = fbGroups.reduce((acc, g) => acc + parseInt(g.processed_yesterday || 0), 0);
 
