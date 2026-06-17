@@ -40,6 +40,28 @@ export default function FacebookGroups() {
     }
   };
 
+  const handleDeleteGroup = async () => {
+    if (!window.confirm(`Êtes-vous sûr de vouloir supprimer DÉFINITIVEMENT ce groupe et TOUS ses posts de la base de données ?\n\nGroupe: ${sidebarGroup.group_name || sidebarGroup.group_id}`)) {
+      return;
+    }
+    
+    try {
+      const res = await fetch(`/api/facebook/groups/${encodeURIComponent(sidebarGroup.group_id)}`, {
+        method: 'DELETE'
+      });
+      const data = await res.json();
+      if (data.success) {
+        setToast({ message: '✅ Groupe supprimé avec succès !', type: 'success' });
+        setIsSidebarOpen(false);
+        fetchFbGroups();
+      } else {
+        throw new Error(data.error || 'Erreur lors de la suppression');
+      }
+    } catch (e) {
+      setToast({ message: `❌ Erreur: ${e.message}`, type: 'error' });
+    }
+  };
+
   // ─── EFFACER TOAST APRÈS 8s ───────────────────────────
   useEffect(() => {
     if (toast && !toast.persistent) {
@@ -555,7 +577,28 @@ export default function FacebookGroups() {
               ) : sidebarData.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '40px', color: '#64748b' }}>Aucune donnée disponible pour ce groupe.</div>
               ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  
+                  {/* Résumé et Actions */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#e2e8f0', padding: '16px', borderRadius: '12px' }}>
+                    <div>
+                      <div style={{ fontSize: '12px', color: '#475569', textTransform: 'uppercase', fontWeight: '700', letterSpacing: '0.5px' }}>Moyenne journalière</div>
+                      <div style={{ fontSize: '24px', fontWeight: '800', color: '#0f172a' }}>
+                        {sidebarData.length > 0 ? Math.round(sidebarData.reduce((acc, row) => acc + parseInt(row.post_count || 0), 0) / sidebarData.length) : 0} <span style={{ fontSize: '14px', fontWeight: '600', color: '#64748b' }}>posts/j</span>
+                      </div>
+                    </div>
+                    <button
+                      onClick={handleDeleteGroup}
+                      style={{ background: '#fee2e2', color: '#dc2626', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px 16px', fontWeight: '700', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', transition: 'all 0.15s' }}
+                      onMouseEnter={e => e.currentTarget.style.background = '#fecaca'}
+                      onMouseLeave={e => e.currentTarget.style.background = '#fee2e2'}
+                      title="Supprimer définitivement ce groupe"
+                    >
+                      🗑️ Supprimer le groupe
+                    </button>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                   {sidebarData.map((row, idx) => (
                     <div key={idx} style={{ background: '#fff', padding: '16px 20px', borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.03)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: '1px solid #e2e8f0' }}>
                       <div>
@@ -571,6 +614,7 @@ export default function FacebookGroups() {
                       </div>
                     </div>
                   ))}
+                  </div>
                 </div>
               )}
             </div>

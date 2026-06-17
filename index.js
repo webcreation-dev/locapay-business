@@ -1622,6 +1622,25 @@ Texte à analyser : "${description}"
                 }
             });
 
+            /**
+             * DELETE /api/facebook/groups/:groupId
+             * Supprime un groupe Facebook et tous ses posts
+             */
+            app.delete('/api/facebook/groups/:groupId', async (req, res) => {
+                try {
+                    const { groupId } = req.params;
+                    // Les posts seront supprimés en cascade si la foreign key l'autorise.
+                    // Sinon on les supprime d'abord manuellement.
+                    await db.query('DELETE FROM facebook_posts WHERE group_id = $1', [groupId]);
+                    const { rowCount } = await db.query('DELETE FROM facebook_groups WHERE group_id = $1', [groupId]);
+
+                    if (rowCount === 0) return res.status(404).json({ error: 'Groupe introuvable.' });
+                    res.json({ success: true, message: 'Groupe supprimé avec succès.' });
+                } catch (err) {
+                    res.status(500).json({ error: err.message });
+                }
+            });
+
             // /**
             //  * POST /api/facebook/groups
             //  * Ajoute un ou plusieurs nouveaux groupes Facebook
