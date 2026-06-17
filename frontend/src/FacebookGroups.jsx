@@ -81,10 +81,12 @@ export default function FacebookGroups() {
     }
   }, [toast]);
 
+  const [showRejected, setShowRejected] = useState(false);
+
   const fetchFbGroups = useCallback(async (showLoader = false) => {
     if (showLoader) setFbIsLoadingGroups(true);
     try {
-      const res = await fetch('/api/facebook/groups?all=true');
+      const res = await fetch(`/api/facebook/groups${showRejected ? '?all=true' : ''}`);
       const data = await res.json();
       setFbGroups(data);
     } catch (e) {
@@ -92,7 +94,7 @@ export default function FacebookGroups() {
     } finally {
       if (showLoader) setFbIsLoadingGroups(false);
     }
-  }, []);
+  }, [showRejected]);
 
   useEffect(() => {
     fetchFbGroups(true);
@@ -273,14 +275,25 @@ export default function FacebookGroups() {
               <div style={{ fontSize: '13px', opacity: 0.9, marginTop: '4px' }}>Surveillez et validez vos sources d'importation</div>
             </div>
           </div>
-          <button
-            onClick={() => setFbGroupsAddModal(true)}
-            style={{ background: '#fff', color: '#1877f2', border: 'none', borderRadius: '8px', padding: '10px 20px', fontWeight: '700', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', transition: 'transform 0.15s' }}
-            onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-2px)'}
-            onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}
-          >
-            <span style={{ fontSize: '18px' }}>+</span> Ajouter un groupe
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#fff', fontSize: '14px', fontWeight: '600', cursor: 'pointer', background: 'rgba(255,255,255,0.1)', padding: '8px 16px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.2)' }}>
+              <input 
+                type="checkbox" 
+                checked={showRejected} 
+                onChange={(e) => setShowRejected(e.target.checked)} 
+                style={{ cursor: 'pointer', width: '16px', height: '16px', accentColor: '#1877f2' }}
+              />
+              Afficher rejetés
+            </label>
+            <button
+              onClick={() => setFbGroupsAddModal(true)}
+              style={{ background: '#fff', color: '#1877f2', border: 'none', borderRadius: '8px', padding: '10px 20px', fontWeight: '700', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', transition: 'transform 0.15s' }}
+              onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-2px)'}
+              onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}
+            >
+              <span style={{ fontSize: '18px' }}>+</span> Ajouter un groupe
+            </button>
+          </div>
         </div>
 
         {/* Stats Grid */}
