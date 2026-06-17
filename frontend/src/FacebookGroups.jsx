@@ -397,7 +397,7 @@ export default function FacebookGroups() {
                       <div style={{ fontSize: '18px', fontWeight: '800', color: '#3730a3' }}>
                         {Math.round(group.daily_avg_posts || 0)}
                       </div>
-                      <div style={{ fontSize: '11px', color: '#6366f1', fontWeight: '700', textTransform: 'uppercase' }}>posts/j</div>
+                      <div style={{ fontSize: '11px', color: '#6366f1', fontWeight: '700', textTransform: 'uppercase' }}>biens/j</div>
                     </td>
 
                     {/* Biens créés */}
@@ -650,7 +650,7 @@ export default function FacebookGroups() {
                     <div>
                       <div style={{ fontSize: '12px', color: '#475569', textTransform: 'uppercase', fontWeight: '700', letterSpacing: '0.5px' }}>Moyenne journalière</div>
                       <div style={{ fontSize: '24px', fontWeight: '800', color: '#0f172a' }}>
-                        {sidebarData.length > 0 ? Math.round(sidebarData.reduce((acc, row) => acc + parseInt(row.post_count || 0), 0) / sidebarData.length) : 0} <span style={{ fontSize: '14px', fontWeight: '600', color: '#64748b' }}>posts/j</span>
+                        {sidebarData.length > 0 ? Math.round(sidebarData.reduce((acc, row) => acc + parseInt(row.processed_count || 0), 0) / sidebarData.length) : 0} <span style={{ fontSize: '14px', fontWeight: '600', color: '#64748b' }}>biens/j</span>
                       </div>
                     </div>
                     <button
@@ -674,9 +674,9 @@ export default function FacebookGroups() {
                       </div>
                       <div style={{ textAlign: 'right' }}>
                         <div style={{ fontSize: '24px', fontWeight: '800', color: '#1877f2', lineHeight: '1' }}>
-                          {row.post_count}
+                          {row.processed_count}
                         </div>
-                        <div style={{ fontSize: '11px', color: '#94a3b8', textTransform: 'uppercase', fontWeight: '700', letterSpacing: '0.5px', marginTop: '4px' }}>posts insérés</div>
+                        <div style={{ fontSize: '11px', color: '#94a3b8', textTransform: 'uppercase', fontWeight: '700', letterSpacing: '0.5px', marginTop: '4px' }}>biens créés</div>
                       </div>
                     </div>
                   ))}
