@@ -17,6 +17,28 @@ export default function FacebookGroups() {
   // Pagination states
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
+  
+  // Sidebar stats states
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [sidebarGroup, setSidebarGroup] = useState(null);
+  const [sidebarData, setSidebarData] = useState([]);
+  const [isLoadingSidebar, setIsLoadingSidebar] = useState(false);
+
+  const openStatsSidebar = async (group) => {
+    setSidebarGroup(group);
+    setIsSidebarOpen(true);
+    setIsLoadingSidebar(true);
+    setSidebarData([]);
+    try {
+      const response = await fetch(`/api/facebook/groups/${encodeURIComponent(group.group_id)}/daily-stats`);
+      const data = await response.json();
+      setSidebarData(data);
+    } catch (e) {
+      console.error('Erreur chargement stats sidebar', e);
+    } finally {
+      setIsLoadingSidebar(false);
+    }
+  };
 
   // ─── EFFACER TOAST APRÈS 8s ───────────────────────────
   useEffect(() => {
@@ -339,6 +361,17 @@ export default function FacebookGroups() {
                           </>
                         )}
 
+                        {/* Voir Stats */}
+                        <button
+                          onClick={() => openStatsSidebar(group)}
+                          style={{ background: '#f8fafc', color: '#0f172a', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '8px 14px', fontWeight: '600', fontSize: '13px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px', transition: 'all 0.15s' }}
+                          onMouseEnter={e => { e.currentTarget.style.background = '#f1f5f9'; }}
+                          onMouseLeave={e => { e.currentTarget.style.background = '#f8fafc'; }}
+                          title="Statistiques de scraping du groupe"
+                        >
+                          📈 Stats
+                        </button>
+
                         {/* Voir sur Facebook (Toujours à la fin) */}
                         {group.group_url && (
                           <a
@@ -485,6 +518,66 @@ export default function FacebookGroups() {
           </div>
         </div>
       )}
+
+      {/* OVERLAY ET SIDEBAR POUR LES STATS DU GROUPE */}
+      {isSidebarOpen && sidebarGroup && (
+        <>
+          <div 
+            style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', zIndex: 99990 }}
+            onClick={() => setIsSidebarOpen(false)}
+          />
+          
+          <div 
+            style={{
+              position: 'fixed', top: 0, right: 0, bottom: 0, width: '450px', backgroundColor: '#f1f5f9',
+              boxShadow: '-4px 0 24px rgba(0,0,0,0.15)', zIndex: 99991, display: 'flex', flexDirection: 'column',
+              animation: 'slideInRight 0.3s forwards'
+            }}
+          >
+            <div style={{ padding: '24px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#fff' }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '800', color: '#1e293b', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span>📈</span> Stats de Scraping
+                </h2>
+                <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px', maxWidth: '300px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {sidebarGroup.group_name || sidebarGroup.group_id}
+                </div>
+              </div>
+              <button 
+                onClick={() => setIsSidebarOpen(false)}
+                style={{ background: '#f1f5f9', border: 'none', fontSize: '18px', cursor: 'pointer', color: '#64748b', width: '36px', height: '36px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              >✕</button>
+            </div>
+
+            <div style={{ padding: '20px', overflowY: 'auto', flex: 1 }}>
+              {isLoadingSidebar ? (
+                <div style={{ textAlign: 'center', padding: '40px', color: '#64748b', fontWeight: '600' }}>Chargement des données...</div>
+              ) : sidebarData.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '40px', color: '#64748b' }}>Aucune donnée disponible pour ce groupe.</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {sidebarData.map((row, idx) => (
+                    <div key={idx} style={{ background: '#fff', padding: '16px 20px', borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.03)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: '1px solid #e2e8f0' }}>
+                      <div>
+                        <div style={{ fontWeight: '700', color: '#1e293b', fontSize: '15px', textTransform: 'capitalize' }}>
+                          {new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' }).format(new Date(row.jour))}
+                        </div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontSize: '24px', fontWeight: '800', color: '#1877f2', lineHeight: '1' }}>
+                          {row.total_recuperes}
+                        </div>
+                        <div style={{ fontSize: '11px', color: '#94a3b8', textTransform: 'uppercase', fontWeight: '700', letterSpacing: '0.5px', marginTop: '4px' }}>posts insérés</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+
     </div>
   );
 }
