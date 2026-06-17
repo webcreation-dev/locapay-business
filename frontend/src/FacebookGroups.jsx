@@ -560,12 +560,12 @@ export default function FacebookGroups() {
                     <div key={idx} style={{ background: '#fff', padding: '16px 20px', borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.03)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: '1px solid #e2e8f0' }}>
                       <div>
                         <div style={{ fontWeight: '700', color: '#1e293b', fontSize: '15px', textTransform: 'capitalize' }}>
-                          {new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' }).format(new Date(row.jour))}
+                          {row.day ? new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' }).format(new Date(row.day)) : 'Date inconnue'}
                         </div>
                       </div>
                       <div style={{ textAlign: 'right' }}>
                         <div style={{ fontSize: '24px', fontWeight: '800', color: '#1877f2', lineHeight: '1' }}>
-                          {row.total_recuperes}
+                          {row.post_count}
                         </div>
                         <div style={{ fontSize: '11px', color: '#94a3b8', textTransform: 'uppercase', fontWeight: '700', letterSpacing: '0.5px', marginTop: '4px' }}>posts insérés</div>
                       </div>
