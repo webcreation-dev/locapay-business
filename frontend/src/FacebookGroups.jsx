@@ -51,27 +51,8 @@ export default function FacebookGroups() {
     }
   };
 
-  const handleDeleteGroup = async () => {
-    if (!window.confirm(`Êtes-vous sûr de vouloir supprimer DÉFINITIVEMENT ce groupe et TOUS ses posts de la base de données ?\n\nGroupe: ${sidebarGroup.group_name || sidebarGroup.group_id}`)) {
-      return;
-    }
-    
-    try {
-      const res = await fetch(`/api/facebook/groups/${encodeURIComponent(sidebarGroup.group_id)}`, {
-        method: 'DELETE'
-      });
-      const data = await res.json();
-      if (data.success) {
-        setToast({ message: '✅ Groupe supprimé avec succès !', type: 'success' });
-        setIsSidebarOpen(false);
-        fetchFbGroups();
-      } else {
-        throw new Error(data.error || 'Erreur lors de la suppression');
-      }
-    } catch (e) {
-      setToast({ message: `❌ Erreur: ${e.message}`, type: 'error' });
-    }
-  };
+  // La suppression (DELETE) a été remplacée par un rejet (PATCH is_validated = false)
+  // pour garder une trace du groupe.
 
   // ─── EFFACER TOAST APRÈS 8s ───────────────────────────
   useEffect(() => {
@@ -660,13 +641,16 @@ export default function FacebookGroups() {
                       </div>
                     </div>
                     <button
-                      onClick={handleDeleteGroup}
+                      onClick={() => {
+                        setConfirmAction({ type: 'reject', groupId: sidebarGroup.group_id, groupName: sidebarGroup.group_name || sidebarGroup.group_id });
+                        setIsSidebarOpen(false);
+                      }}
                       style={{ background: '#fee2e2', color: '#dc2626', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px 16px', fontWeight: '700', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', transition: 'all 0.15s' }}
                       onMouseEnter={e => e.currentTarget.style.background = '#fecaca'}
                       onMouseLeave={e => e.currentTarget.style.background = '#fee2e2'}
-                      title="Supprimer définitivement ce groupe"
+                      title="Rejeter ce groupe (il ne sera plus traité)"
                     >
-                      🗑️ Supprimer le groupe
+                      🚫 Rejeter le groupe
                     </button>
                   </div>
 
