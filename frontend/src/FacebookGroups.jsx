@@ -25,7 +25,7 @@ export default function FacebookGroups() {
   const [isLoadingSidebar, setIsLoadingSidebar] = useState(false);
 
   // Sorting
-  const [sortConfig, setSortConfig] = useState({ key: 'daily_avg_posts', direction: 'desc' });
+  const [sortConfig, setSortConfig] = useState({ key: 'daily_avg_posts', direction: 'asc' });
 
   const requestSort = (key) => {
     let direction = 'desc';
