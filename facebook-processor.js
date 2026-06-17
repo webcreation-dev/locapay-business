@@ -13,13 +13,13 @@ const nodemailer = require('nodemailer');
 
 // --- CONFIGURATION ALERTE MAIL FACEBOOK ---
 const transporter = nodemailer.createTransport({
-    host: process.env.MAIL_HOST || 'smtp.gmail.com',
-    port: parseInt(process.env.MAIL_PORT) || 465,
-    secure: true,
-    auth: {
-        user: process.env.MAIL_USERNAME,
-        pass: process.env.MAIL_PASSWORD,
-    },
+  host: process.env.MAIL_HOST || 'smtp.gmail.com',
+  port: parseInt(process.env.MAIL_PORT) || 465,
+  secure: true,
+  auth: {
+    user: process.env.MAIL_USERNAME,
+    pass: process.env.MAIL_PASSWORD,
+  },
 });
 
 let lastAiAlertTime = 0; // Anti-spam 1h
@@ -30,7 +30,7 @@ const FORBIDDEN_KEYWORDS = [
   ' tf ', '\ntf\n', 'domaine',
   // Faux positifs ajoutés
   'pièces à jour', 'pieces a jour', 'état boutique', 'etat boutique',
-  'guéridon', 'gueridon', 'matelas', 'galet', 'toyota', 'honda', 'ford'
+  'guéridon', 'gueridon', 'matelas', 'galet', 'toyota', 'honda', 'ford', '$'
 ];
 
 // Mots-clés indiquant qu'un client recherche un bien
@@ -255,7 +255,7 @@ Texte à analyser : "${normalized}"
     const status = err.response?.status;
     if (status === 401 || status === 429 || status === 402) {
       console.error(`❌ [Facebook] Erreur OpenRouter AI FATALE (${status}):`, err.message);
-      
+
       const now = Date.now();
       if (now - lastAiAlertTime > 3600000) { // 1h
         let reason = "L'API OpenRouter est bloquée. Raison inconnue.";
@@ -276,7 +276,7 @@ Texte à analyser : "${normalized}"
           }).catch(e => console.error("Échec mail:", e.message));
           console.log(`✅ [Facebook] Alerte mail envoyée avec succès.`);
           lastAiAlertTime = now;
-        } catch (e) {}
+        } catch (e) { }
       }
       throw new Error('OPENROUTER_QUOTA_EXCEEDED');
     }
@@ -380,14 +380,14 @@ async function processFacebookPost(post, db, groupInfo) {
         if (dupResponse.data && dupResponse.data.exists) {
           const existingId = dupResponse.data.propertyId;
           console.log(`⏭️ [Facebook] Doublon détecté (Bien #${existingId}) ! On ignore le téléchargement et l'IA.`);
-          
+
           await db.query(
             `UPDATE facebook_posts 
              SET is_processed = TRUE, real_property_id = $1, analysis_error = 'Doublon ignoré avant IA', updated_at = NOW()
              WHERE post_id = $2`,
             [existingId, postId]
           );
-          
+
           return { success: true, propertyId: existingId };
         }
       } catch (err) {
@@ -519,21 +519,21 @@ async function processFacebookPost(post, db, groupInfo) {
       const t = extractedData.type.toUpperCase();
       // Commerciaux / 1-pièce
       if (['STORE', 'SHOP', 'OFFICE', 'BOUTIQUE', 'MAGASIN', 'STUDIO', 'ROOM'].includes(t)) {
-          if (extractedData.number_rooms === undefined || extractedData.number_rooms === null || extractedData.number_rooms === '') {
-              extractedData.number_rooms = 1;
-          }
-          if (extractedData.number_living_rooms === undefined || extractedData.number_living_rooms === null || extractedData.number_living_rooms === '') {
-              extractedData.number_living_rooms = 0;
-          }
+        if (extractedData.number_rooms === undefined || extractedData.number_rooms === null || extractedData.number_rooms === '') {
+          extractedData.number_rooms = 1;
+        }
+        if (extractedData.number_living_rooms === undefined || extractedData.number_living_rooms === null || extractedData.number_living_rooms === '') {
+          extractedData.number_living_rooms = 0;
+        }
       }
       // Habitations classiques
       if (['APARTMENT', 'HOUSE', 'VILLA'].includes(t)) {
-          if (extractedData.number_rooms === undefined || extractedData.number_rooms === null || extractedData.number_rooms === '') {
-              extractedData.number_rooms = 1;
-          }
-          if (extractedData.number_living_rooms === undefined || extractedData.number_living_rooms === null || extractedData.number_living_rooms === '') {
-              extractedData.number_living_rooms = 1;
-          }
+        if (extractedData.number_rooms === undefined || extractedData.number_rooms === null || extractedData.number_rooms === '') {
+          extractedData.number_rooms = 1;
+        }
+        if (extractedData.number_living_rooms === undefined || extractedData.number_living_rooms === null || extractedData.number_living_rooms === '') {
+          extractedData.number_living_rooms = 1;
+        }
       }
     }
 
