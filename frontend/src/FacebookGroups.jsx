@@ -398,6 +398,9 @@ export default function FacebookGroups() {
                         {Math.round(group.daily_avg_posts || 0)}
                       </div>
                       <div style={{ fontSize: '11px', color: '#6366f1', fontWeight: '700', textTransform: 'uppercase' }}>biens/j</div>
+                      <div style={{ fontSize: '10px', color: '#94a3b8', fontWeight: '600', marginTop: '4px' }}>
+                        sur {Math.round(group.daily_total_avg_posts || 0)} posts/j
+                      </div>
                     </td>
 
                     {/* Biens créés */}
@@ -652,6 +655,9 @@ export default function FacebookGroups() {
                       <div style={{ fontSize: '24px', fontWeight: '800', color: '#0f172a' }}>
                         {sidebarData.length > 0 ? Math.round(sidebarData.reduce((acc, row) => acc + parseInt(row.processed_count || 0), 0) / sidebarData.length) : 0} <span style={{ fontSize: '14px', fontWeight: '600', color: '#64748b' }}>biens/j</span>
                       </div>
+                      <div style={{ fontSize: '11px', color: '#94a3b8', fontWeight: '600', marginTop: '2px' }}>
+                        sur {sidebarData.length > 0 ? Math.round(sidebarData.reduce((acc, row) => acc + parseInt(row.post_count || 0), 0) / sidebarData.length) : 0} posts/j au total
+                      </div>
                     </div>
                     <button
                       onClick={handleDeleteGroup}
@@ -677,6 +683,7 @@ export default function FacebookGroups() {
                           {row.processed_count}
                         </div>
                         <div style={{ fontSize: '11px', color: '#94a3b8', textTransform: 'uppercase', fontWeight: '700', letterSpacing: '0.5px', marginTop: '4px' }}>biens créés</div>
+                        <div style={{ fontSize: '10px', color: '#cbd5e1', fontWeight: '600', marginTop: '2px' }}>sur {row.post_count} posts</div>
                       </div>
                     </div>
                   ))}
