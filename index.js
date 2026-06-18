@@ -1713,7 +1713,7 @@ Texte à analyser : "${description}"
             
                             const { rows } = await db.query(`
                                 INSERT INTO facebook_groups (group_id, group_url, group_name, last_scraped_at)
-                                VALUES ($1, $2, $3, NOW())
+                                VALUES ($1, $2, $3, NULL)
                                 RETURNING *
                             `, [groupId.trim(), groupUrl.trim(), groupName.trim()]);
             
