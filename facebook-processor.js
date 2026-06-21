@@ -286,6 +286,104 @@ Texte à analyser : "${normalized}"
 }
 
 /**
+ * Extraction déterministe (Regex) locale pour remplacer l'IA
+ */
+function extractPropertyDataDeterministic(text) {
+    const textLower = normalizeText(text).replace(/\s+/g, ' ');
+
+    const result = {
+        intent: 'OFFER', // par défaut
+        type: 'APARTMENT',
+        to_sell: false,
+        rent_price: null,
+        number_living_rooms: 0,
+        number_rooms: 0,
+        tarification: 'MONTHLY',
+        sanitary: 'YES',
+        localisation: null,
+        description: text
+    };
+
+    if (CLIENT_SEARCH_KEYWORDS.some(kw => textLower.includes(kw))) {
+        result.intent = 'CLIENT_DEMAND';
+    }
+
+    // LOYER
+    const rentPatterns = [
+        /(?:loyer|prix).*?(?::|\.|est de|=|-|\s)*(\d{1,2})\s*millions?\s*(\d{1,3})?(?:\s*mille)?/i,
+        /(?:loyer|prix|mensualite)[a-z\s]*(?::|\.|est de|=|-|\s)+(?:(?:~.*?~\s*)?|(?:\d{2,7}[f\s~]*\s*)*)(\d{1,3}(?:[.\s]\d{3})+|\d{4,7})\s*(?:f\b|fr|fcfa|cfa|francs|mille|k\b|mil|(?=\s|$|conditions|avance))/i,
+        /(\d{1,3}(?:[.\s]\d{3})+|\d{4,7})\s*(?:f\b|fr|fcfa|cfa|francs|mille|k\b|mil)?\s*(?:\/|par\s+)mois/i,
+        /(?:à|de)\s+(\d{1,3}(?:[.\s]\d{3})+|\d{4,7})\s*(?:f\b|fr|fcfa|cfa|francs|mille|k\b|mil)/i,
+        /(\d{2,3}(?:[.\s]\d{3})*|\d+)\s*(?:mille|milles|k\b|mil)\s*(?:f\b|fr|fcfa|cfa|francs)?/i,
+        /(\d{1,3}(?:[.\s]\d{3})+|\d{4,7})\s*(?:f\b|fr|fcfa|cfa|francs)/i,
+        /(?:loyer)\s*(?::|\.|est de|=|-|\s)*(\d{1,3}(?:[.\s]\d{3})+|\d{4,7})/i,
+        /(?:de)\s+(\d{1,3}(?:[.\s]\d{3})+)\b/i,
+        /(\d{2,4}(?:[.\s]\d{3})+)\b/i
+    ];
+    for (const pat of rentPatterns) {
+        const match = textLower.match(pat);
+        if (match) {
+            let val;
+            if (pat.toString().includes('million')) {
+                let m = parseInt(match[1]);
+                let k = match[2] ? parseInt(match[2].padEnd(3, '0')) : 0;
+                val = m * 1000000 + k * 1000;
+            } else {
+                let valStr = match[1].replace(/[.\s]/g, '');
+                val = parseInt(valStr, 10);
+                if (val < 1000 && val >= 10 && /(?:mille|milles|k|mil)/i.test(match[0])) val *= 1000;
+                if (val < 1000 && val >= 10 && !/(?:mille|milles|k|mil)/i.test(match[0])) val *= 1000; 
+            }
+            if (val >= 5000 && val <= 5000000) { result.rent_price = val; break; }
+        }
+    }
+
+    if (/(?:boutique|magasin)/i.test(textLower)) {
+        result.type = 'STORE'; result.number_rooms = 1; result.number_living_rooms = 0;
+    } else if (/(?:bureau)/i.test(textLower)) {
+        result.type = 'OFFICE'; result.number_rooms = 1; result.number_living_rooms = 0;
+    } else if (/(?:villa|maison basse)/i.test(textLower)) {
+        result.type = 'VILLA';
+    } else if (/(?:studio|entree\s*couche)/i.test(textLower)) {
+        result.type = 'STUDIO'; result.number_rooms = 1; result.number_living_rooms = 0;
+    } else {
+        const roomMatch = textLower.match(/(?:(0?\d+|un|une|deux|trois|quatre|cinq|six|sept|huit)\s*)?(?:chambres?|pieces?)\s*(?:sanitaires?\s*)?(?:ordinaires?\s*)?(?:et\s*|\+?\s*|,?\s*)?(?:(0?\d+|un|une|deux|trois|quatre|cinq|six)\s*)?salons?/i);
+        if (roomMatch) {
+            const wordToNum = { 'un': 1, 'une': 1, 'deux': 2, 'trois': 3, 'quatre': 4, 'cinq': 5, 'six': 6, 'sept': 7, 'huit': 8 };
+            result.number_rooms = parseInt(roomMatch[1], 10) || wordToNum[roomMatch[1]?.trim()] || 1;
+            result.number_living_rooms = parseInt(roomMatch[2], 10) || wordToNum[roomMatch[2]?.trim()] || 1;
+        } else if (/(?:chambre)/i.test(textLower)) {
+            result.number_rooms = 1; result.number_living_rooms = 0;
+        } else if (/(?:appartement)/i.test(textLower)) {
+             result.number_rooms = 1; result.number_living_rooms = 1;
+        }
+    }
+
+    // fallback pieces si pas trouvé
+    if (result.number_rooms === 0 && result.number_living_rooms === 0 && /(?:(un|une|deux|trois|quatre|cinq|six|0?\d+)\s*)pieces?/i.test(textLower)) {
+        const pMatch = textLower.match(/(?:(un|une|deux|trois|quatre|cinq|six|0?\d+)\s*)pieces?/i);
+        const wordToNum = { 'un': 1, 'une': 1, 'deux': 2, 'trois': 3, 'quatre': 4, 'cinq': 5, 'six': 6 };
+        let num = parseInt(pMatch[1]) || wordToNum[pMatch[1]] || 1;
+        result.number_rooms = num; result.number_living_rooms = 0;
+    }
+
+    if (/(?:sanitaire|douche|wc|toilette|wcd)/i.test(textLower)) result.sanitary = 'YES';
+    else result.sanitary = 'NO';
+
+    try {
+        const locations = require('./locations_dict.json');
+        for (const loc of locations) {
+            const regex = new RegExp(`\\b${loc.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, 'i');
+            if (regex.test(textLower)) { result.localisation = loc; break; }
+        }
+    } catch (e) {
+        console.warn('⚠️ [Facebook] Impossible de charger locations_dict.json');
+    }
+
+    return result;
+}
+
+/**
  * Traite un post Facebook unique :
  * 1. Filtre (mots interdits, pas de média)
  * 2. Télécharge les images
@@ -416,20 +514,28 @@ async function processFacebookPost(post, db, groupInfo) {
       console.log(`✅ [Facebook] ${imagesBase64.length}/${imageUrls.length} images téléchargées pour post ${postId}`);
     }
 
-    // ── 5. Analyse IA OpenRouter ──────────────────────────────────────────────
-    console.log(`🤖 [Facebook] Analyse OpenRouter pour post ${postId}...`);
-    const extractedData = await extractPropertyDataWithAI(post.text);
+    // ── 5. Analyse : IA (OpenRouter) ou Algorithme Déterministe (Regex) ───────
+    const useAI = process.env.USE_AI_FACEBOOK_EXTRACTION === 'true';
+    let extractedData;
+
+    if (useAI) {
+      console.log(`🤖 [Facebook] Analyse OpenRouter pour post ${postId}...`);
+      extractedData = await extractPropertyDataWithAI(post.text);
+    } else {
+      console.log(`⚡ [Facebook] Analyse Regex (Déterministe) pour post ${postId}...`);
+      extractedData = extractPropertyDataDeterministic(post.text);
+    }
 
     if (!extractedData) {
       await db.query(
-        `UPDATE facebook_posts SET analysis_error = 'Échec analyse IA', updated_at = NOW() WHERE post_id = $1`,
-        [postId]
+        `UPDATE facebook_posts SET analysis_error = $1, updated_at = NOW() WHERE post_id = $2`,
+        [useAI ? 'Échec analyse IA' : 'Échec analyse locale', postId]
       );
-      return { success: false, error: 'Échec analyse IA' };
+      return { success: false, error: useAI ? 'Échec analyse IA' : 'Échec analyse locale' };
     }
 
     const intent = extractedData.intent || 'OFFER';
-    console.log(`🤖 [Facebook] Post ${postId} — intention IA: ${intent}`);
+    console.log(`🧠 [Facebook] Post ${postId} — intention: ${intent}`);
 
     if (intent === 'NOISE') {
       await db.query(
