@@ -1,0 +1,6 @@
+#!/usr/bin/expect -f
+set timeout -1
+spawn ssh -o StrictHostKeyChecking=no root@213.136.81.100 "PGPASSWORD=YgWsW9ScFtWECh3yx8SX8K psql -h 127.0.0.1 -p 5435 -U locapay -d locapay -c '\\d property'"
+expect "password:"
+send "DQfhFtvXfr2iXLV28mzQ\r"
+expect eof

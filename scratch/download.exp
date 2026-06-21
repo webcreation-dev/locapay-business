@@ -1,0 +1,6 @@
+#!/usr/bin/expect -f
+set timeout -1
+spawn scp -o StrictHostKeyChecking=no root@213.136.81.100:/root/full_dataset.json.gz full_dataset.json.gz
+expect "*?assword:*"
+send "DQfhFtvXfr2iXLV28mzQ\r"
+expect eof

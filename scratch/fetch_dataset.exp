@@ -1,0 +1,17 @@
+#!/usr/bin/expect -f
+set timeout -1
+
+spawn scp -o StrictHostKeyChecking=no scratch/remote_script.js root@213.136.81.100:/root/remote_script.js
+expect "*?assword:*"
+send "DQfhFtvXfr2iXLV28mzQ\r"
+expect eof
+
+spawn ssh -o StrictHostKeyChecking=no root@213.136.81.100 "cd /root && npm install pg && node remote_script.js && gzip -f full_dataset.json"
+expect "*?assword:*"
+send "DQfhFtvXfr2iXLV28mzQ\r"
+expect eof
+
+spawn scp -o StrictHostKeyChecking=no root@213.136.81.100:/root/full_dataset.json.gz full_dataset.json.gz
+expect "*?assword:*"
+send "DQfhFtvXfr2iXLV28mzQ\r"
+expect eof
