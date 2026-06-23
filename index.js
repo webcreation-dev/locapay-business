@@ -2203,10 +2203,10 @@ app.post('/api/webhook/wasender', async (req, res) => {
     res.status(200).send('OK');
 
     const payload = req.body;
-    // console.log('\n======================================');
-    // console.log('✅ [WEBHOOK WASENDER] Nouveau POST reçu !');
-    // console.log(JSON.stringify(payload, null, 2));
-    // console.log('======================================\n');
+    console.log('\n======================================');
+    console.log('✅ [WEBHOOK WASENDER] Nouveau POST reçu !');
+    console.log(JSON.stringify(payload, null, 2));
+    console.log('======================================\n');
 
     // Gérer le statut de la session
     if (payload.event === 'session.status') {
