@@ -2236,7 +2236,12 @@ client.on('disconnected', () => {
                     const senderName = msgObj.pushName || (isGroup ? "Groupe Wasender" : "Inconnu");
 
                     const messageId = messageKey.id || msgObj.id || `wasender_${Date.now()}`;
-                    const timestamp = msgObj.messageTimestamp || Math.floor(Date.now() / 1000);
+                    
+                    let timestamp = msgObj.messageTimestamp;
+                    if (timestamp && typeof timestamp === 'object' && timestamp.low !== undefined) {
+                        timestamp = timestamp.low;
+                    }
+                    timestamp = timestamp || Math.floor(Date.now() / 1000);
 
                     // Le contenu texte est dans msgObj.message (sous-objet)
                     const msgContent = msgObj.message || {};
