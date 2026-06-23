@@ -2271,8 +2271,13 @@ client.on('disconnected', () => {
                             const wasenderApiKey = process.env.WASENDER_API_TOKEN;
                             const mediaMsg = msgContent.imageMessage || msgContent.videoMessage || msgContent.documentMessage || null;
 
-                            if (wasenderApiKey && mediaMsg && mediaMsg.mediaKey && mediaMsg.url) {
+                            if (wasenderApiKey && mediaMsg && mediaMsg.mediaKey && (mediaMsg.url || mediaMsg.directPath)) {
                                 console.log(`📥 Téléchargement média WasenderAPI pour ${messageId}...`);
+
+                                // Reconstruction de l'URL si elle est vide mais qu'on a le directPath
+                                if (!mediaMsg.url && mediaMsg.directPath) {
+                                    mediaMsg.url = `https://mmg.whatsapp.net${mediaMsg.directPath}`;
+                                }
 
                                 // Étape 1 : Déchiffrer le média via WasenderAPI
                                 // L'API attend l'objet message entier emballé dans { data: { messages: {...} } }
