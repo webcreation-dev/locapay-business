@@ -2252,21 +2252,53 @@ client.on('disconnected', () => {
                     if (msgContent.imageMessage) { mediaType = 'image'; mediaMimeType = msgContent.imageMessage.mimetype || 'image/jpeg'; }
                     else if (msgContent.videoMessage) { mediaType = 'video'; mediaMimeType = msgContent.videoMessage.mimetype || 'video/mp4'; }
 
-                    // Téléchargement des médias depuis WasenderAPI (si applicable)
+                    // Téléchargement des médias via WasenderAPI (decrypt-media)
                     let savedMediaPath = null;
                     if (hasMedia) {
                         try {
                             const wasenderApiKey = process.env.WASENDER_API_TOKEN;
-                            if (wasenderApiKey) {
-                                console.log(`📥 Tentative de téléchargement média depuis WasenderAPI pour le message ${messageId}...`);
-                                // La documentation exacte pour dl le média sur Wasender n'est pas précisée, 
-                                // Mais typiquement on fait un GET sur une URL de média
-                                // Pour l'instant on skip car ça nécessite l'URL du media dans le payload
-                                // On peut loguer le payload complet pour observer
-                                console.log('Média détecté, payload:', JSON.stringify(payload.data).substring(0, 500));
+                            const mediaMsg = msgContent.imageMessage || msgContent.videoMessage || msgContent.documentMessage || null;
+
+                            if (wasenderApiKey && mediaMsg && mediaMsg.mediaKey && mediaMsg.url) {
+                                console.log(`📥 Téléchargement média WasenderAPI pour ${messageId}...`);
+
+                                // Étape 1 : Déchiffrer le média via WasenderAPI
+                                const decryptRes = await axios.post(
+                                    'https://api.wasenderapi.com/api/decrypt-media',
+                                    {
+                                        mediaKey: mediaMsg.mediaKey,
+                                        url: mediaMsg.url,
+                                        directPath: mediaMsg.directPath || '',
+                                        mediaType: mediaType,
+                                    },
+                                    {
+                                        headers: {
+                                            'Authorization': `Bearer ${wasenderApiKey}`,
+                                            'Content-Type': 'application/json'
+                                        },
+                                        timeout: 30000
+                                    }
+                                );
+
+                                const publicUrl = decryptRes.data?.publicUrl || decryptRes.data?.url;
+                                if (publicUrl) {
+                                    // Étape 2 : Télécharger le fichier depuis l'URL publique
+                                    const ext = mediaMimeType.split('/')[1]?.split(';')[0] || 'jpg';
+                                    const fileName = `wasender_${messageId}_${Date.now()}.${ext}`;
+                                    const mediaDir = path.join(__dirname, 'media');
+                                    if (!fs.existsSync(mediaDir)) fs.mkdirSync(mediaDir, { recursive: true });
+                                    const localFilePath = path.join(mediaDir, fileName);
+
+                                    const fileRes = await axios.get(publicUrl, { responseType: 'arraybuffer', timeout: 30000 });
+                                    fs.writeFileSync(localFilePath, Buffer.from(fileRes.data));
+                                    savedMediaPath = `media/${fileName}`;
+                                    console.log(`✅ Média sauvegardé : ${savedMediaPath}`);
+                                } else {
+                                    console.warn(`⚠️ Pas d'URL publique retournée pour ${messageId}`);
+                                }
                             }
                         } catch (mediaErr) {
-                            console.error("❌ Erreur de téléchargement du média Wasender:", mediaErr.message);
+                            console.error(`❌ Erreur média Wasender (${messageId}):`, mediaErr.response?.data || mediaErr.message);
                         }
                     }
 
