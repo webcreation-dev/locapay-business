@@ -50,7 +50,7 @@ app.get(/^\/(?!api).*/, (req, res) => {
 });
 
 // État global du bot pour le frontend
-let botStatus = 'LOADING'; // LOADING, QR, CONNECTED, DISCONNECTED
+let botStatus = 'CONNECTED'; // LOADING, QR, CONNECTED, DISCONNECTED
 let currentQR = null;
 
 app.listen(3000, () => {
@@ -2007,13 +2007,45 @@ Texte à analyser : "${description}"
                 res.json({ qr: currentQR });
             });
 
-            // ROUTE POUR ENVOYER UN MESSAGE TEXTE
+            // ROUTE POUR ENVOYER UN MESSAGE TEXTE VIA WASENDERAPI
             app.post('/api/send-message', async (req, res) => {
                 try {
                     const { phoneNumber, message } = req.body;
 
                     if (!phoneNumber || !message) {
                         return res.status(400).json({ error: "Les champs phoneNumber et message sont requis." });
+                    }
+
+                    const cleanNumber = phoneNumber.toString().replace(/^\+/, '');
+                    
+                    const wasenderApiKey = process.env.WASENDER_API_TOKEN;
+                    if (!wasenderApiKey) {
+                        return res.status(500).json({ error: "WASENDER_API_TOKEN n'est pas configuré dans le .env" });
+                    }
+
+                    const response = await axios.post('https://api.wasenderapi.com/v1/messages/send', {
+                        to: cleanNumber,
+                        type: 'text',
+                        text: {
+                            body: message
+                        }
+                    }, {
+                        headers: {
+                            'Authorization': `Bearer ${wasenderApiKey}`,
+                            'Content-Type': 'application/json'
+                        }
+                    });
+
+                    res.json({
+                        success: true,
+                        message: "Message envoyé avec succès.",
+                        messageId: response.data?.data?.id || 'unknown'
+                    });
+                } catch (error) {
+                    console.error("❌ Erreur lors de l'envoi du message Wasender:", error.response?.data || error.message);
+                    res.status(500).json({ error: error.message });
+                }
+            });
                     }
 
                     let currentState = botStatus;
@@ -2246,160 +2278,175 @@ client.on('disconnected', () => {
     sendErrorAlert("Bot DISCONNECTED", "Le bot a été déconnecté de WhatsApp. Il faut probablement rescanner le QR Code.");
 });
 
-client.on('message_create', async msg => {
-    // Mise à jour du watchdog à chaque nouveau message
-    lastMessageReceivedAt = Date.now();
-    inactivityAlertSent = false;
+// NOUVEAU WEBHOOK WASENDERAPI
+            app.post('/api/webhook/wasender', async (req, res) => {
+                // On répond tout de suite 200 OK pour WasenderAPI
+                res.status(200).send('OK');
 
-    try {
-        let chat = null;
-        let contact = null;
-        try {
-            chat = await msg.getChat();
-            contact = await msg.getContact();
-        } catch (e) {
-            console.log(`⚠️ Impossible de parser l'objet Chat ou Contact (très probablement un message de "Chaîne/Newsletter" WhatsApp). Extraction en mode dégradé.`);
-        }
-
-        // Téléchargement des médias associés au message s'il y en a un
-        let savedMediaPath = null;
-        let savedMediaMimeType = null;
-
-        if (msg.hasMedia) {
-            try {
-                const media = await msg.downloadMedia();
-                if (media) {
-                    const ext = media.mimetype.split('/')[1]?.split(';')[0] || 'bin';
-                    const filename = `media_${msg.id.id}_${msg.timestamp}.${ext}`;
-                    const dirPath = './media';
-
-                    if (!fs.existsSync(dirPath)) fs.mkdirSync(dirPath, { recursive: true });
-
-                    savedMediaPath = `${dirPath}/${filename}`;
-                    savedMediaMimeType = media.mimetype;
-
-                    fs.writeFileSync(savedMediaPath, Buffer.from(media.data, 'base64'));
-                    console.log(`📸 Média sauvegardé avec succès: ${savedMediaPath}`);
+                const payload = req.body;
+                
+                // Gérer le statut de la session
+                if (payload.event === 'session.status') {
+                    botStatus = payload.data?.status === 'connected' ? 'CONNECTED' : 'DISCONNECTED';
+                    console.log(`📡 Statut session WasenderAPI : ${botStatus}`);
+                    return;
                 }
-            } catch (err) {
-                console.error("❌ Impossible de télécharger le média:", err);
-            }
-        }
 
-        const messageData = {
-            messageId: msg.id._serialized,
-            body: msg.body,
-            timestamp: msg.timestamp,
-            isFromMe: msg.fromMe,
-            isGroup: chat ? chat.isGroup : false,
-            chatId: chat ? chat.id._serialized : (msg.fromMe ? msg.to : msg.from),
-            chatName: chat ? chat.name : "Chaîne/Inconnu",
-            senderId: msg.author || msg.from,
-            senderName: contact ? (contact.name || contact.pushname || "Inconnu") : "Chaîne/Inconnu",
-            senderNumber: contact ? contact.number : msg.from.split('@')[0],
-            receiverId: msg.to,
-            hasMedia: msg.hasMedia,
-            mediaPath: savedMediaPath,
-            mediaMimeType: savedMediaMimeType,
-            messageType: msg.type,
-            deviceType: msg.deviceType,
-            rawData: msg._data || msg.rawData || {}
-        };
+                // Filtrer pour ne garder que les messages entrants
+                if (payload.event !== 'messages.upsert' && payload.event !== 'messages.received') {
+                    return;
+                }
 
-        if (messageData.chatId === 'status@broadcast') return;
+                // Mise à jour du watchdog
+                lastMessageReceivedAt = Date.now();
+                inactivityAlertSent = false;
 
-        // 4. Création ou Mise à jour de la liste de conversation ('chats') 
-        // Ainsi l'application web finale n'a pas à fouiller dans 100 000 messages pour faire un menu
-        const chatQuery = `
-            INSERT INTO chats (whatsapp_chat_id, chat_name, is_group, last_message_timestamp)
-            VALUES ($1, $2, $3, $4)
-            ON CONFLICT (whatsapp_chat_id) 
-            DO UPDATE SET 
-                chat_name = EXCLUDED.chat_name,
-                last_message_timestamp = EXCLUDED.last_message_timestamp,
-                updated_at = CURRENT_TIMESTAMP;
-        `;
-        await db.query(chatQuery, [messageData.chatId, messageData.chatName, messageData.isGroup, messageData.timestamp]);
+                try {
+                    const messageDataPayload = payload.data?.message || payload.data || {};
+                    const messageKey = payload.data?.key || {};
 
-        // 5. Insertion effective du message individuel dans 'messages'
-        const query = `
-            INSERT INTO messages (
-                message_id, body, timestamp, is_from_me, is_group, chat_id, chat_name,
-                sender_id, sender_name, sender_number, receiver_id, has_media, message_type, device_type,
-                media_path, media_mime_type, raw_data
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
-            ON CONFLICT (message_id) DO UPDATE SET message_id = EXCLUDED.message_id RETURNING id;
-        `;
+                    if (messageKey.fromMe) return;
 
-        const values = [
-            messageData.messageId, messageData.body, messageData.timestamp, messageData.isFromMe,
-            messageData.isGroup, messageData.chatId, messageData.chatName, messageData.senderId,
-            messageData.senderName, messageData.senderNumber, messageData.receiverId,
-            messageData.hasMedia, messageData.messageType, messageData.deviceType,
-            messageData.mediaPath, messageData.mediaMimeType, messageData.rawData
-        ];
+                    const remoteJid = messageKey.remoteJid || messageDataPayload.from || "";
+                    if (remoteJid === 'status@broadcast') return;
 
-        const resInsert = await db.query(query, values);
-        const currId = resInsert.rows[0]?.id;
-        console.log(`💾 Message archivé dans PostgreSQL avec succès (ID: ${currId}) ! ✅`);
+                    const isGroup = remoteJid.endsWith('@g.us');
+                    const senderId = remoteJid;
+                    const senderNumber = remoteJid.split('@')[0];
+                    const senderName = messageDataPayload.pushName || (isGroup ? "Groupe Wasender" : "Inconnu");
+                    
+                    const messageId = messageKey.id || `wasender_${Date.now()}`;
+                    const timestamp = messageDataPayload.messageTimestamp || Math.floor(Date.now() / 1000);
+                    
+                    let body = '';
+                    if (messageDataPayload.conversation) body = messageDataPayload.conversation;
+                    else if (messageDataPayload.extendedTextMessage?.text) body = messageDataPayload.extendedTextMessage.text;
+                    else if (messageDataPayload.imageMessage?.caption) body = messageDataPayload.imageMessage.caption;
+                    else if (messageDataPayload.videoMessage?.caption) body = messageDataPayload.videoMessage.caption;
 
-        // 🤖 NOUVELLE RÈGLE : Message complet (texte > 100 chars + média image/vidéo) → groupe autonome
-        if (messageData.hasMedia && messageData.body && messageData.body.length > 100 &&
-            (messageData.mediaMimeType?.startsWith('image/') || messageData.mediaMimeType?.startsWith('video/')) &&
-            !messageData.isFromMe && currId) {
-            const groupId = `auto_prop_self_${currId}`;
-            await db.query("UPDATE messages SET property_group_id = $1 WHERE id = $2", [groupId, currId]);
-            console.log(`📎 Message complet auto-groupé : ${groupId}`);
-        }
+                    const hasMedia = !!(messageDataPayload.imageMessage || messageDataPayload.videoMessage || messageDataPayload.documentMessage);
+                    let mediaType = 'text';
+                    let mediaMimeType = '';
+                    if (messageDataPayload.imageMessage) { mediaType = 'image'; mediaMimeType = messageDataPayload.imageMessage.mimetype || 'image/jpeg'; }
+                    else if (messageDataPayload.videoMessage) { mediaType = 'video'; mediaMimeType = messageDataPayload.videoMessage.mimetype || 'video/mp4'; }
 
-        // 🤖 HEURISTIQUE DE GROUPEMENT AUTOMATIQUE (Simplification demandée par le USER)
-        // Règle : Si un texte > 100 chars (SANS média) est suivi par un média du même expéditeur, on groupe.
-        // ✅ ACTIVÉ : Auto-groupement en temps réel
-        else if (messageData.hasMedia && !messageData.isFromMe) {
-            try {
-                const prevMsgQuery = `
-                    SELECT id, body, property_group_id, timestamp, has_media, real_property_id
-                    FROM messages
-                    WHERE chat_id = $1 AND sender_id = $2 AND id < $3
-                    ORDER BY timestamp DESC, id DESC LIMIT 1
-                `;
-                const { rows: prevRows } = await db.query(prevMsgQuery, [messageData.chatId, messageData.senderId, currId]);
-
-                if (prevRows.length > 0) {
-                    const prevMsg = prevRows[0];
-                    const timeDiff = messageData.timestamp - prevMsg.timestamp;
-
-                    if (currId) {
-
-                        // Parent : Texte long seul
-                        const prevIsStrictParent = prevMsg.body && prevMsg.body.length > 100 && !prevMsg.has_media;
-                        // Enfant : IMAGE ou VIDÉO seule (ou légende minuscule)
-                        const currIsStrictChild = messageData.hasMedia && (messageData.mediaMimeType?.startsWith('image/') || messageData.mediaMimeType?.startsWith('video/')) && (!messageData.body || messageData.body.length < 40);
-
-                        if (currIsStrictChild && prevIsStrictParent && timeDiff < 420 && !prevMsg.real_property_id) {
-                            const groupId = prevMsg.property_group_id || `auto_prop_parent_${prevMsg.id}`;
-                            await db.query("UPDATE messages SET property_group_id = $1 WHERE id IN ($2, $3)", [groupId, prevMsg.id, currId]);
-                            console.log(`📎 Heuristique ULTRA-STRICTE : ${groupId}`);
-                        }
-                        else if (messageData.hasMedia && (messageData.mediaMimeType?.startsWith('image/') || messageData.mediaMimeType?.startsWith('video/')) && prevMsg.property_group_id && prevMsg.property_group_id.startsWith('auto_prop_parent_') && timeDiff < 420 && !prevMsg.real_property_id) {
-                            // Extension d'un groupe existant (pour les albums)
-                            // On vérifie aussi que ce média n'a pas une description trop longue pour être un "enfant"
-                            if (!messageData.body || messageData.body.length < 40) {
-                                await db.query("UPDATE messages SET property_group_id = $1 WHERE id = $2", [prevMsg.property_group_id, currId]);
-                                console.log(`📎 Extension Heuristique ULTRA-STRICTE : ${currId}`);
+                    // Téléchargement des médias depuis WasenderAPI (si applicable)
+                    let savedMediaPath = null;
+                    if (hasMedia) {
+                        try {
+                            const wasenderApiKey = process.env.WASENDER_API_TOKEN;
+                            if (wasenderApiKey) {
+                                console.log(`📥 Tentative de téléchargement média depuis WasenderAPI pour le message ${messageId}...`);
+                                // La documentation exacte pour dl le média sur Wasender n'est pas précisée, 
+                                // Mais typiquement on fait un GET sur une URL de média
+                                // Pour l'instant on skip car ça nécessite l'URL du media dans le payload
+                                // On peut loguer le payload complet pour observer
+                                console.log('Média détecté, payload:', JSON.stringify(payload.data).substring(0, 500));
                             }
+                        } catch (mediaErr) {
+                            console.error("❌ Erreur de téléchargement du média Wasender:", mediaErr.message);
                         }
                     }
-                }
-            } catch (groupErr) {
-                console.error("❌ Erreur auto-groupement:", groupErr);
-            }
-        }
 
-    } catch (error) {
-        console.error("❌ Erreur lors de l'extraction du message :", error);
-    }
-});
+                    const messageData = {
+                        messageId: messageId,
+                        body: body || "",
+                        timestamp: timestamp,
+                        isFromMe: false,
+                        isGroup: isGroup,
+                        chatId: remoteJid,
+                        chatName: senderName,
+                        senderId: senderId,
+                        senderName: senderName,
+                        senderNumber: senderNumber,
+                        receiverId: "",
+                        hasMedia: hasMedia,
+                        mediaPath: savedMediaPath,
+                        mediaMimeType: mediaMimeType,
+                        messageType: mediaType,
+                        deviceType: "wasender",
+                        rawData: payload
+                    };
+
+                    const chatQuery = `
+                        INSERT INTO chats (whatsapp_chat_id, chat_name, is_group, last_message_timestamp)
+                        VALUES ($1, $2, $3, $4)
+                        ON CONFLICT (whatsapp_chat_id) 
+                        DO UPDATE SET 
+                            chat_name = EXCLUDED.chat_name,
+                            last_message_timestamp = EXCLUDED.last_message_timestamp,
+                            updated_at = CURRENT_TIMESTAMP;
+                    `;
+                    await db.query(chatQuery, [messageData.chatId, messageData.chatName, messageData.isGroup, messageData.timestamp]);
+
+                    const query = `
+                        INSERT INTO messages (
+                            message_id, body, timestamp, is_from_me, is_group, chat_id, chat_name,
+                            sender_id, sender_name, sender_number, receiver_id, has_media, message_type, device_type,
+                            media_path, media_mime_type, raw_data
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+                        ON CONFLICT (message_id) DO UPDATE SET message_id = EXCLUDED.message_id RETURNING id;
+                    `;
+
+                    const values = [
+                        messageData.messageId, messageData.body, messageData.timestamp, messageData.isFromMe,
+                        messageData.isGroup, messageData.chatId, messageData.chatName, messageData.senderId,
+                        messageData.senderName, messageData.senderNumber, messageData.receiverId,
+                        messageData.hasMedia, messageData.messageType, messageData.deviceType,
+                        messageData.mediaPath, messageData.mediaMimeType, messageData.rawData
+                    ];
+
+                    const resInsert = await db.query(query, values);
+                    const currId = resInsert.rows[0]?.id;
+                    console.log(`💾 Message archivé dans PostgreSQL avec succès (ID: ${currId}) ! ✅`);
+
+                    if (messageData.hasMedia && messageData.body && messageData.body.length > 100 &&
+                        (messageData.mediaMimeType?.startsWith('image/') || messageData.mediaMimeType?.startsWith('video/')) &&
+                        !messageData.isFromMe && currId) {
+                        const groupId = `auto_prop_self_${currId}`;
+                        await db.query("UPDATE messages SET property_group_id = $1 WHERE id = $2", [groupId, currId]);
+                        console.log(`📎 Message complet auto-groupé : ${groupId}`);
+                    }
+                    else if (messageData.hasMedia && !messageData.isFromMe) {
+                        try {
+                            const prevMsgQuery = `
+                                SELECT id, body, property_group_id, timestamp, has_media, real_property_id
+                                FROM messages
+                                WHERE chat_id = $1 AND sender_id = $2 AND id < $3
+                                ORDER BY timestamp DESC, id DESC LIMIT 1
+                            `;
+                            const { rows: prevRows } = await db.query(prevMsgQuery, [messageData.chatId, messageData.senderId, currId]);
+
+                            if (prevRows.length > 0) {
+                                const prevMsg = prevRows[0];
+                                const timeDiff = messageData.timestamp - prevMsg.timestamp;
+
+                                if (currId) {
+                                    const prevIsStrictParent = prevMsg.body && prevMsg.body.length > 100 && !prevMsg.has_media;
+                                    const currIsStrictChild = messageData.hasMedia && (messageData.mediaMimeType?.startsWith('image/') || messageData.mediaMimeType?.startsWith('video/')) && (!messageData.body || messageData.body.length < 40);
+
+                                    if (currIsStrictChild && prevIsStrictParent && timeDiff < 420 && !prevMsg.real_property_id) {
+                                        const groupId = prevMsg.property_group_id || `auto_prop_parent_${prevMsg.id}`;
+                                        await db.query("UPDATE messages SET property_group_id = $1 WHERE id IN ($2, $3)", [groupId, prevMsg.id, currId]);
+                                        console.log(`📎 Heuristique ULTRA-STRICTE : ${groupId}`);
+                                    }
+                                    else if (messageData.hasMedia && (messageData.mediaMimeType?.startsWith('image/') || messageData.mediaMimeType?.startsWith('video/')) && prevMsg.property_group_id && prevMsg.property_group_id.startsWith('auto_prop_parent_') && timeDiff < 420 && !prevMsg.real_property_id) {
+                                        if (!messageData.body || messageData.body.length < 40) {
+                                            await db.query("UPDATE messages SET property_group_id = $1 WHERE id = $2", [prevMsg.property_group_id, currId]);
+                                            console.log(`📎 Extension Heuristique ULTRA-STRICTE : ${currId}`);
+                                        }
+                                    }
+                                }
+                            }
+                        } catch (groupErr) {
+                            console.error("❌ Erreur auto-groupement:", groupErr);
+                        }
+                    }
+
+                } catch (error) {
+                    console.error("❌ Erreur lors de l'extraction du message Webhook :", error);
+                }
+            });
 
 
 (async () => {
@@ -2438,7 +2485,7 @@ client.on('message_create', async msg => {
             cleanChromeLocks();
 
             console.log(`🔄 Tentative d'initialisation WhatsApp (${attempt}/${maxRetries})...`);
-            await client.initialize();
+            // await client.initialize(); // DÉSACTIVÉ POUR WASENDERAPI
             break; // succès → on sort de la boucle
         } catch (err) {
             console.error(`❌ Echec tentative ${attempt}: ${err.message}`);
