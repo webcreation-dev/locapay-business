@@ -2216,38 +2216,41 @@ client.on('disconnected', () => {
                     return;
                 }
 
-                // Mise à jour du watchdog
-                lastMessageReceivedAt = Date.now();
-                inactivityAlertSent = false;
+                // Mise à jour du timestamp de dernier message (simple variable locale)
+                const receivedAt = Date.now();
 
                 try {
-                    const messageDataPayload = payload.data?.message || payload.data || {};
-                    const messageKey = payload.data?.key || {};
+                    // CORRECTION : WasenderAPI envoie les données dans payload.data.messages (pluriel)
+                    const msgObj = payload.data?.messages || payload.data?.message || payload.data || {};
+                    const messageKey = msgObj.key || {};
 
                     if (messageKey.fromMe) return;
 
-                    const remoteJid = messageKey.remoteJid || messageDataPayload.from || "";
-                    if (remoteJid === 'status@broadcast') return;
+                    // remoteJid est disponible dans la clé ET directement dans l'objet message
+                    const remoteJid = messageKey.remoteJid || msgObj.remoteJid || "";
+                    if (!remoteJid || remoteJid === 'status@broadcast') return;
 
                     const isGroup = remoteJid.endsWith('@g.us');
                     const senderId = remoteJid;
                     const senderNumber = remoteJid.split('@')[0];
-                    const senderName = messageDataPayload.pushName || (isGroup ? "Groupe Wasender" : "Inconnu");
-                    
-                    const messageId = messageKey.id || `wasender_${Date.now()}`;
-                    const timestamp = messageDataPayload.messageTimestamp || Math.floor(Date.now() / 1000);
-                    
-                    let body = '';
-                    if (messageDataPayload.conversation) body = messageDataPayload.conversation;
-                    else if (messageDataPayload.extendedTextMessage?.text) body = messageDataPayload.extendedTextMessage.text;
-                    else if (messageDataPayload.imageMessage?.caption) body = messageDataPayload.imageMessage.caption;
-                    else if (messageDataPayload.videoMessage?.caption) body = messageDataPayload.videoMessage.caption;
+                    const senderName = msgObj.pushName || (isGroup ? "Groupe Wasender" : "Inconnu");
 
-                    const hasMedia = !!(messageDataPayload.imageMessage || messageDataPayload.videoMessage || messageDataPayload.documentMessage);
+                    const messageId = messageKey.id || msgObj.id || `wasender_${Date.now()}`;
+                    const timestamp = msgObj.messageTimestamp || Math.floor(Date.now() / 1000);
+
+                    // Le contenu texte est dans msgObj.message (sous-objet)
+                    const msgContent = msgObj.message || {};
+                    let body = '';
+                    if (msgContent.conversation) body = msgContent.conversation;
+                    else if (msgContent.extendedTextMessage?.text) body = msgContent.extendedTextMessage.text;
+                    else if (msgContent.imageMessage?.caption) body = msgContent.imageMessage.caption;
+                    else if (msgContent.videoMessage?.caption) body = msgContent.videoMessage.caption;
+
+                    const hasMedia = !!(msgContent.imageMessage || msgContent.videoMessage || msgContent.documentMessage);
                     let mediaType = 'text';
                     let mediaMimeType = '';
-                    if (messageDataPayload.imageMessage) { mediaType = 'image'; mediaMimeType = messageDataPayload.imageMessage.mimetype || 'image/jpeg'; }
-                    else if (messageDataPayload.videoMessage) { mediaType = 'video'; mediaMimeType = messageDataPayload.videoMessage.mimetype || 'video/mp4'; }
+                    if (msgContent.imageMessage) { mediaType = 'image'; mediaMimeType = msgContent.imageMessage.mimetype || 'image/jpeg'; }
+                    else if (msgContent.videoMessage) { mediaType = 'video'; mediaMimeType = msgContent.videoMessage.mimetype || 'video/mp4'; }
 
                     // Téléchargement des médias depuis WasenderAPI (si applicable)
                     let savedMediaPath = null;
