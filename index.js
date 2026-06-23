@@ -2224,8 +2224,11 @@ client.on('disconnected', () => {
                 const receivedAt = Date.now();
 
                 try {
-                    // CORRECTION : WasenderAPI envoie les données dans payload.data.messages (pluriel)
-                    const msgObj = payload.data?.messages || payload.data?.message || payload.data || {};
+                    // CORRECTION : WasenderAPI envoie les données dans payload.data.messages (pluriel) qui est un tableau
+                    let msgObj = payload.data?.messages || payload.data?.message || payload.data || {};
+                    if (Array.isArray(msgObj) && msgObj.length > 0) {
+                        msgObj = msgObj[0];
+                    }
                     const messageKey = msgObj.key || {};
 
                     if (messageKey.fromMe) return;
