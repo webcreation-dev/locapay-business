@@ -1455,9 +1455,10 @@ Texte à analyser : "${description}"
                 try {
                     const query = `
                         SELECT c.*, 
-                               (SELECT COUNT(*) FROM messages WHERE chat_id = c.whatsapp_chat_id) as unread_count
+                               (SELECT COUNT(*) FROM messages WHERE chat_id = c.whatsapp_chat_id AND timestamp >= 1781913600) as unread_count
                         FROM chats c
                         WHERE c.whatsapp_chat_id != 'status@broadcast'
+                        AND EXISTS (SELECT 1 FROM messages WHERE chat_id = c.whatsapp_chat_id AND timestamp >= 1781913600)
                         ORDER BY c.updated_at DESC
                     `;
                     const { rows } = await db.query(query);
@@ -1479,7 +1480,7 @@ Texte à analyser : "${description}"
                             SELECT * FROM (
                                 SELECT id, message_id, body, timestamp, is_from_me, is_group, chat_id, sender_id, sender_name, has_media, media_path, media_mime_type, property_group_id, real_property_id, neighborhood, district, municipality, analysis_error, ia_property_id
                                 FROM messages 
-                                WHERE chat_id = $1 AND timestamp < $2
+                                WHERE chat_id = $1 AND timestamp < $2 AND timestamp >= 1781913600
                                 ORDER BY timestamp DESC 
                                 LIMIT $3
                             ) AS sub 
@@ -1491,7 +1492,7 @@ Texte à analyser : "${description}"
                             SELECT * FROM (
                                 SELECT id, message_id, body, timestamp, is_from_me, is_group, chat_id, sender_id, sender_name, has_media, media_path, media_mime_type, property_group_id, real_property_id, neighborhood, district, municipality, analysis_error, ia_property_id
                                 FROM messages 
-                                WHERE chat_id = $1
+                                WHERE chat_id = $1 AND timestamp >= 1781913600
                                 ORDER BY timestamp DESC 
                                 LIMIT $2
                             ) AS sub 
@@ -2147,45 +2148,7 @@ const client = new Client({
     puppeteer: puppeteerOptions
 });
 
-// --- SYSTÈME DE WATCHDOG AGRESSIF (ANTI-GEL) ---
-let lastMessageReceivedAt = Date.now();
-let inactivityAlertSent = false;
 
-// Vérification toutes les 5 minutes pour une réactivité maximale
-setInterval(async () => {
-    const minutesSinceLastMessage = (Date.now() - lastMessageReceivedAt) / (1000 * 60);
-    console.log(`⏱️ Watchdog : ${Math.round(minutesSinceLastMessage)} min depuis le dernier message.`);
-
-    if (botStatus !== 'CONNECTED') return;
-
-    // 1. TEST DE SANTÉ PROACTIF
-    // On demande son état au client. Si ça timeout ou crash, c'est que Puppeteer est gelé.
-    let isFrozen = false;
-    try {
-        const statePromise = client.getState();
-        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 15000));
-        await Promise.race([statePromise, timeoutPromise]);
-    } catch (e) {
-        console.error(`🚨 Le bot est gelé (Test de santé échoué) : ${e.message}`);
-        isFrozen = true;
-    }
-
-    // 2. REDÉMARRAGE AUTOMATIQUE (15 MIN OU GEL)
-    if (isFrozen || minutesSinceLastMessage >= 15) {
-        const reason = isFrozen ? "Bot Gelé (Protocol Error)" : `Inactivité détectée (15min+)`;
-        console.error(`🚨 CRITICAL: ${reason}. Tentative de redémarrage automatique...`);
-
-        await sendErrorAlert(
-            `Auto-Réparation : ${reason}`,
-            `Le bot ne recevait plus de messages ou était bloqué. Redémarrage lancé pour rétablir la connexion. (Dernière activité : ${Math.round(minutesSinceLastMessage)} min)`
-        );
-
-        // On attend 5s pour que le mail parte, puis on crash pour que Docker relance
-        setTimeout(() => {
-            process.exit(1);
-        }, 5000);
-    }
-}, 5 * 60 * 1000);
 
 client.on('qr', (qr) => {
     // Generate and display in terminal too
