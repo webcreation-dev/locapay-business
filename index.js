@@ -2047,52 +2047,7 @@ Texte à analyser : "${description}"
                     res.status(500).json({ error: error.message });
                 }
             });
-                    }
 
-                    let currentState = botStatus;
-                    try {
-                        if (client) {
-                            currentState = await client.getState();
-                        }
-                    } catch (e) {
-                        currentState = 'ERROR_GETTING_STATE';
-                    }
-
-                    if (currentState !== 'CONNECTED' || botStatus !== 'CONNECTED') {
-                        let details = `Statut variable: ${botStatus}, Statut client: ${currentState}`;
-                        if (botStatus === 'AUTHENTICATED' || currentState === 'AUTHENTICATED') {
-                            details = "Le bot est authentifié mais encore en phase de chargement (initialisation des scripts WhatsApp). Veuillez patienter quelques secondes.";
-                        }
-                        return res.status(503).json({
-                            error: "Le bot WhatsApp n'est pas encore prêt pour l'envoi.",
-                            details: details
-                        });
-                    }
-
-                    // Nettoyage : retirer le '+' initial s'il est présent
-                    const cleanNumber = phoneNumber.toString().replace(/^\\+/, '');
-
-                    // Format de l'ID WhatsApp requis par la librairie
-                    const chatId = `${cleanNumber}@c.us`;
-
-                    // Envoi du message via client (whatsapp-web.js)
-                    const response = await client.sendMessage(chatId, message);
-
-                    res.json({
-                        success: true,
-                        message: "Message envoyé avec succès.",
-                        messageId: response.id._serialized
-
-                    });
-                } catch (error) {
-                    console.error("❌ Erreur lors de l\\'envoi du message :", error);
-                    // Alert email only for critical Puppeteer/WWebJS errors
-                    if (error.message.includes('detached Frame') || error.message.includes('getChat') || error.message.includes('Execution context was destroyed')) {
-                        await sendErrorAlert("Échec d'envoi de message (Erreur Critique)", error);
-                    }
-                    res.status(500).json({ error: error.message });
-                }
-            });
 
             // ═══════════════════════════════════════════════════════════════
             // 🤖 CRON AUTO FACEBOOK : Vérification toutes les 2 minutes
