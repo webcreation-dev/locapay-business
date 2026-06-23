@@ -921,4 +921,5 @@ module.exports = {
   isNoiseBeforeAI,
   normalizeText,
   triggerNestPropertyBump,
+  extractPropertyDataDeterministic,
 };

@@ -13,6 +13,7 @@ const {
     importFacebookPosts,
     processFacebookBatch,
     processFacebookPost,
+    extractPropertyDataDeterministic
 } = require('./facebook-processor');
 
 // Multer : stockage en mémoire pour les uploads JSON Facebook (légers < 10MB)
@@ -1132,13 +1133,13 @@ Texte à analyser : "${description}"
                         return { success: false, error: `Ignoré: Moins de 3 images fournies (${imagesBase64.length})` };
                     }
 
-                    // 4. Normaliser les abréviations de prix et analyser avec l'IA
+                    // 4. Normaliser les abréviations de prix et analyser avec l'Algorithme Déterministe
                     const normalizedDescription = normalizePriceAbbreviations(finalDescription);
-                    console.log(`🤖 Analyse OpenRouter en cours pour ${texts.length} messages...`);
-                    const extractedData = await extractPropertyDataWithAI(normalizedDescription);
+                    console.log(`⚡ Analyse Regex (Déterministe) en cours pour ${texts.length} messages...`);
+                    const extractedData = extractPropertyDataDeterministic(normalizedDescription);
 
                     if (!extractedData) {
-                        const errMsg = "L'IA a échoué à analyser l'annonce.";
+                        const errMsg = "L'algorithme déterministe a échoué à analyser l'annonce.";
                         await db.query(`UPDATE messages SET submission_failed = TRUE, analysis_error = $1 WHERE id = ANY($2)`, [errMsg, messageIds]);
                         return { success: false, error: errMsg };
                     }
