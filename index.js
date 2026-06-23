@@ -2263,14 +2263,10 @@ client.on('disconnected', () => {
                                 console.log(`📥 Téléchargement média WasenderAPI pour ${messageId}...`);
 
                                 // Étape 1 : Déchiffrer le média via WasenderAPI
+                                // L'API attend l'objet message entier emballé dans { data: { messages: {...} } }
                                 const decryptRes = await axios.post(
                                     'https://api.wasenderapi.com/api/decrypt-media',
-                                    {
-                                        mediaKey: mediaMsg.mediaKey,
-                                        url: mediaMsg.url,
-                                        directPath: mediaMsg.directPath || '',
-                                        mediaType: mediaType,
-                                    },
+                                    { data: { messages: msgObj } },
                                     {
                                         headers: {
                                             'Authorization': `Bearer ${wasenderApiKey}`,
