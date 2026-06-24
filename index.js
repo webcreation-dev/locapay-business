@@ -1401,7 +1401,7 @@ Texte à analyser : "${description}"
 
             // 🔄 WORKFLOW AUTOMATISE (CRON)
             async function globalAutomatedWorkflow() {
-                console.log('🕒 --- DÉBUT DU WORKFLOW AUTOMATISÉ (30 min) ---');
+                console.log('🕒 --- DÉBUT DU WORKFLOW AUTOMATISÉ (2 min) ---');
                 try {
                     // 1. Purge
                     console.log('🕒 Étape 1/4 : Grande Purge...');
@@ -1944,52 +1944,44 @@ Texte à analyser : "${description}"
             app.get('/api/facebook/daily-analytics', async (req, res) => {
                 try {
                     const { rows } = await db.query(`
+                        WITH fb AS (
+                            SELECT 
+                                DATE(created_at) AS jour,
+                                COUNT(id) AS total_posts_recuperes,
+                                COUNT(id) FILTER (WHERE real_property_id IS NOT NULL AND analysis_error IS NULL) AS biens_crees_uniques,
+                                COUNT(id) FILTER (WHERE analysis_error IN ('Doublon post-IA (Historique)', 'Doublon ignoré avant IA')) AS doublons,
+                                COUNT(id) FILTER (
+                                    WHERE real_property_id IS NULL 
+                                    AND (analysis_error IN ('Bien de plus de 24h', 'Moins de 3 images attachées', 'Moins de 3 images accessibles', 'Recherche sans numéro de téléphone', 'Classé comme bruit avant IA (Vocabulaire manquant)') OR analysis_error LIKE 'Mot interdit:%')
+                                ) AS ecart_sans_analyse_ia,
+                                COUNT(id) FILTER (
+                                    WHERE real_property_id IS NULL 
+                                    AND NOT (analysis_error IN ('Bien de plus de 24h', 'Moins de 3 images attachées', 'Moins de 3 images accessibles', 'Recherche sans numéro de téléphone', 'Classé comme bruit avant IA (Vocabulaire manquant)', 'Doublon post-IA (Historique)', 'Doublon ignoré avant IA') OR analysis_error LIKE 'Mot interdit:%')
+                                    AND NOT (is_processed = FALSE AND is_noise = FALSE AND analysis_error IS NULL AND is_client_demand = FALSE)
+                                ) AS ecart_avec_analyse_ia,
+                                COUNT(id) FILTER (WHERE is_processed = FALSE AND is_noise = FALSE AND analysis_error IS NULL AND is_client_demand = FALSE) AS en_attente
+                            FROM facebook_posts
+                            GROUP BY DATE(created_at)
+                        ),
+                        wa AS (
+                            SELECT 
+                                DATE(TO_TIMESTAMP(timestamp)) as jour,
+                                COUNT(DISTINCT property_group_id) as whatsapp_groups
+                            FROM messages
+                            WHERE property_group_id IS NOT NULL AND property_group_id != 'noise' AND property_group_id NOT LIKE 'real_prop_%'
+                            GROUP BY DATE(TO_TIMESTAMP(timestamp))
+                        )
                         SELECT 
-                            DATE(created_at) AS jour,
-                            
-                            -- 1. Le nombre total de posts récupérés dans la journée
-                            COUNT(*) AS total_posts_recuperes,
-                            
-                            -- 2. Le nombre de biens UNIQUES réellement créés (On exclut les doublons)
-                            COUNT(*) FILTER (
-                                WHERE real_property_id IS NOT NULL 
-                                AND analysis_error IS NULL
-                            ) AS biens_crees_uniques,
-                            
-                            -- 3. NOUVEAU : Le nombre de doublons (Historiques rattrapés + Nouveaux bloqués avant l'IA)
-                            COUNT(*) FILTER (
-                                WHERE analysis_error IN ('Doublon post-IA (Historique)', 'Doublon ignoré avant IA')
-                            ) AS doublons,
-                            
-                            -- 4. Le nombre d'écarts SANS analyse IA (Filtres durs avant l'IA)
-                            COUNT(*) FILTER (
-                                WHERE real_property_id IS NULL 
-                                AND (
-                                    analysis_error IN ('Bien de plus de 24h', 'Moins de 3 images attachées', 'Moins de 3 images accessibles', 'Recherche sans numéro de téléphone', 'Classé comme bruit avant IA (Vocabulaire manquant)') 
-                                    OR analysis_error LIKE 'Mot interdit:%'
-                                )
-                            ) AS ecart_sans_analyse_ia,
-                            
-                            -- 5. Le nombre d'écarts AVEC analyse IA (Erreurs IA, Ventes, Bruit IA, etc.)
-                            COUNT(*) FILTER (
-                                WHERE real_property_id IS NULL 
-                                AND NOT (
-                                    analysis_error IN ('Bien de plus de 24h', 'Moins de 3 images attachées', 'Moins de 3 images accessibles', 'Recherche sans numéro de téléphone', 'Classé comme bruit avant IA (Vocabulaire manquant)', 'Doublon post-IA (Historique)', 'Doublon ignoré avant IA') 
-                                    OR analysis_error LIKE 'Mot interdit:%'
-                                )
-                                AND NOT (is_processed = FALSE AND is_noise = FALSE AND analysis_error IS NULL AND is_client_demand = FALSE)
-                            ) AS ecart_avec_analyse_ia,
-                            
-                            -- 6. Les posts en attente d'être traités par le scraper
-                            COUNT(*) FILTER (
-                                WHERE is_processed = FALSE 
-                                AND is_noise = FALSE 
-                                AND analysis_error IS NULL 
-                                AND is_client_demand = FALSE
-                            ) AS en_attente
-                        
-                        FROM facebook_posts
-                        GROUP BY DATE(created_at)
+                            COALESCE(fb.jour, wa.jour) AS jour,
+                            COALESCE(fb.total_posts_recuperes, 0) AS total_posts_recuperes,
+                            COALESCE(fb.biens_crees_uniques, 0) AS biens_crees_uniques,
+                            COALESCE(fb.doublons, 0) AS doublons,
+                            COALESCE(fb.ecart_sans_analyse_ia, 0) AS ecart_sans_analyse_ia,
+                            COALESCE(fb.ecart_avec_analyse_ia, 0) AS ecart_avec_analyse_ia,
+                            COALESCE(fb.en_attente, 0) AS en_attente,
+                            COALESCE(wa.whatsapp_groups, 0) AS whatsapp_groups
+                        FROM fb
+                        FULL OUTER JOIN wa ON fb.jour = wa.jour
                         ORDER BY jour DESC;
                     `);
                     res.json(rows);
@@ -2174,10 +2166,10 @@ client.on('ready', () => {
             globalWorkflow().catch(e => console.error("❌ Error initial workflow:", e));
         }, 60 * 1000);
 
-        // Puis toutes les 30 minutes
+        // Puis toutes les 2 minutes
         setInterval(() => {
             globalWorkflow().catch(err => console.error("❌ Erreur workflow automatisé:", err));
-        }, 30 * 60 * 1000);
+        }, 2 * 60 * 1000);
     }
 });
 

@@ -1636,9 +1636,8 @@ function App() {
                         <th style={{ padding: '16px', textAlign: 'left', color: '#475569', fontWeight: '700', textTransform: 'uppercase', fontSize: '12px' }}>Jour</th>
                         <th style={{ padding: '16px', textAlign: 'center', color: '#475569', fontWeight: '700', textTransform: 'uppercase', fontSize: '12px' }}>Total Récupérés</th>
                         <th style={{ padding: '16px', textAlign: 'center', color: '#16a34a', fontWeight: '700', textTransform: 'uppercase', fontSize: '12px' }}>Biens Créés</th>
-                        <th style={{ padding: '16px', textAlign: 'center', color: '#ea580c', fontWeight: '700', textTransform: 'uppercase', fontSize: '12px' }}>Doublons</th>
-                        <th style={{ padding: '16px', textAlign: 'center', color: '#64748b', fontWeight: '700', textTransform: 'uppercase', fontSize: '12px' }}>Écarts sans IA</th>
-                        <th style={{ padding: '16px', textAlign: 'center', color: '#dc2626', fontWeight: '700', textTransform: 'uppercase', fontSize: '12px' }}>Écarts avec IA</th>
+                        <th style={{ padding: '16px', textAlign: 'center', color: '#64748b', fontWeight: '700', textTransform: 'uppercase', fontSize: '12px' }}>Algo n°1</th>
+                        <th style={{ padding: '16px', textAlign: 'center', color: '#dc2626', fontWeight: '700', textTransform: 'uppercase', fontSize: '12px' }}>Algo n°2</th>
                         <th style={{ padding: '16px', textAlign: 'center', color: '#ca8a04', fontWeight: '700', textTransform: 'uppercase', fontSize: '12px' }}>En attente</th>
                       </tr>
                     </thead>
@@ -1648,9 +1647,11 @@ function App() {
                           <td style={{ padding: '16px', fontWeight: '600', color: '#1e293b' }}>
                             {new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }).format(new Date(row.jour))}
                           </td>
-                          <td style={{ padding: '16px', textAlign: 'center', fontWeight: '600' }}>{row.total_posts_recuperes}</td>
+                          <td style={{ padding: '16px', textAlign: 'center', fontWeight: '600', display: 'flex', justifyContent: 'center', gap: '10px', alignItems: 'center' }}>
+                            <span title="Posts Facebook">📘 {row.total_posts_recuperes}</span>
+                            <span title="Groupes WhatsApp Heuristiques">📱 {row.whatsapp_groups}</span>
+                          </td>
                           <td style={{ padding: '16px', textAlign: 'center', fontWeight: '700', color: '#16a34a' }}>{row.biens_crees_uniques}</td>
-                          <td style={{ padding: '16px', textAlign: 'center', fontWeight: '600', color: '#ea580c' }}>{row.doublons}</td>
                           <td style={{ padding: '16px', textAlign: 'center', color: '#64748b' }}>{row.ecart_sans_analyse_ia}</td>
                           <td style={{ padding: '16px', textAlign: 'center', color: '#dc2626', fontWeight: '600' }}>{row.ecart_avec_analyse_ia}</td>
                           <td style={{ padding: '16px', textAlign: 'center', color: '#ca8a04' }}>{row.en_attente}</td>
