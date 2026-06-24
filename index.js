@@ -2097,6 +2097,22 @@ Texte à analyser : "${description}"
             console.log('🤖 [Facebook Cron] Activé — vérification automatique toutes les 2 minutes.');
             // ═══════════════════════════════════════════════════════════════
 
+            // ═══════════════════════════════════════════════════════════════
+            // ✅ ACTIVÉ : Balayage automatique périodique WhatsApp (Purge + Groupement + Soumission)
+            // Déplacé ici pour fonctionner même avec WasenderAPI (WHATSAPP_ENABLED=false)
+            console.log('🤖 [WhatsApp Cron] Activation du workflow automatisé complet (toutes les 2 min)...');
+            const globalWorkflow = app.get('globalAutomatedWorkflow');
+            if (globalWorkflow) {
+                setTimeout(() => {
+                    globalWorkflow().catch(e => console.error("❌ Error initial workflow:", e));
+                }, 60 * 1000);
+
+                setInterval(() => {
+                    globalWorkflow().catch(err => console.error("❌ Erreur workflow automatisé:", err));
+                }, 2 * 60 * 1000);
+            }
+            // ═══════════════════════════════════════════════════════════════
+
             return;
         } catch (err) {
             console.log(`⚠️ En attente de PostgreSQL... Postgres est peut-être en train de démarrer (tentative ${i + 1}/${retries}).`);
@@ -2156,21 +2172,6 @@ client.on('ready', () => {
     console.log('✅ C\'est connecté ! Le client est prêt et écoute les messages !');
     botStatus = 'CONNECTED';
     currentQR = null;
-
-    // ✅ ACTIVÉ : Balayage automatique périodique (Workflow complet : Purge + Groupement + Soumission)
-    console.log('🤖 Activation du workflow automatisé complet (toutes les 30 min)...');
-    const globalWorkflow = app.get('globalAutomatedWorkflow');
-    if (globalWorkflow) {
-        // Premier lancement après 1 minute (laisser le temps au bot de se stabiliser)
-        setTimeout(() => {
-            globalWorkflow().catch(e => console.error("❌ Error initial workflow:", e));
-        }, 60 * 1000);
-
-        // Puis toutes les 2 minutes
-        setInterval(() => {
-            globalWorkflow().catch(err => console.error("❌ Erreur workflow automatisé:", err));
-        }, 2 * 60 * 1000);
-    }
 });
 
 client.on('authenticated', () => {
