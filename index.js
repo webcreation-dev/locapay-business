@@ -2231,9 +2231,17 @@ app.post('/api/webhook/wasender', async (req, res) => {
         if (!remoteJid || remoteJid === 'status@broadcast') return;
 
         const isGroup = remoteJid.endsWith('@g.us');
-        const senderId = remoteJid;
-        const senderNumber = remoteJid.split('@')[0];
-        const senderName = msgObj.pushName || (isGroup ? "Groupe Wasender" : "Inconnu");
+        
+        let actualSenderId = remoteJid;
+        if (isGroup) {
+            actualSenderId = messageKey.participantPn || messageKey.participant || remoteJid;
+            if (actualSenderId && !actualSenderId.includes('@')) actualSenderId += '@s.whatsapp.net';
+        }
+        
+        const senderId = actualSenderId;
+        const senderNumber = senderId.split('@')[0];
+        const senderName = msgObj.pushName || "Inconnu";
+        const chatName = isGroup ? "Groupe Wasender" : senderName;
 
         const messageId = messageKey.id || msgObj.id || `wasender_${Date.now()}`;
 
@@ -2315,7 +2323,7 @@ app.post('/api/webhook/wasender', async (req, res) => {
             isFromMe: false,
             isGroup: isGroup,
             chatId: remoteJid,
-            chatName: senderName,
+            chatName: chatName,
             senderId: senderId,
             senderName: senderName,
             senderNumber: senderNumber,
