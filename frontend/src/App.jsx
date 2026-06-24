@@ -1465,13 +1465,13 @@ function App() {
             >
               ⚠️
             </button> */}
-            <button
+            {/* <button
               className={`view-toggle ${viewMode === 'facebook' ? 'active' : ''}`}
               onClick={() => { setViewMode('facebook'); setSearchTerm(''); }}
               title="Pipeline Facebook"
             >
               📘
-            </button>
+            </button> */}
             <button
               className={`view-toggle ${viewMode === 'fb_analytics' ? 'active' : ''}`}
               onClick={() => { setViewMode('fb_analytics'); setSearchTerm(''); }}
@@ -1479,13 +1479,13 @@ function App() {
             >
               📈
             </button>
-            <button
+            {/* <button
               className={`view-toggle ${viewMode === 'full_access' ? 'active' : ''}`}
               onClick={() => { setViewMode('full_access'); setSearchTerm(''); }}
               title="Accès Total (Tout voir)"
             >
               🔓
-            </button>
+            </button> */}
           </div>
         </header>
 
@@ -1648,8 +1648,8 @@ function App() {
                             {new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }).format(new Date(row.jour))}
                           </td>
                           <td style={{ padding: '16px', textAlign: 'center', fontWeight: '600', display: 'flex', justifyContent: 'center', gap: '10px', alignItems: 'center' }}>
-                            <span title="Posts Facebook">📘 {row.total_posts_recuperes}</span>
-                            <span title="Groupes WhatsApp Heuristiques">📱 {row.whatsapp_groups}</span>
+                            <span title="Posts Facebook"><strong style={{ color: '#1877F2' }}>FB:</strong> {row.total_posts_recuperes}</span>
+                            <span title="Groupes WhatsApp Heuristiques"><strong style={{ color: '#25D366' }}>WA:</strong> {row.whatsapp_groups}</span>
                           </td>
                           <td style={{ padding: '16px', textAlign: 'center', fontWeight: '700', color: '#16a34a' }}>{row.biens_crees_uniques}</td>
                           <td style={{ padding: '16px', textAlign: 'center', color: '#64748b' }}>{row.ecart_sans_analyse_ia}</td>
