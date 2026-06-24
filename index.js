@@ -1952,7 +1952,7 @@ Texte à analyser : "${description}"
                                 COUNT(id) FILTER (WHERE analysis_error IN ('Doublon post-IA (Historique)', 'Doublon ignoré avant IA')) AS doublons,
                                 COUNT(id) FILTER (
                                     WHERE real_property_id IS NULL 
-                                    AND (analysis_error IN ('Bien de plus de 24h', 'Moins de 3 images attachées', 'Moins de 3 images accessibles', 'Recherche sans numéro de téléphone', 'Classé comme bruit avant IA (Vocabulaire manquant)') OR analysis_error LIKE 'Mot interdit:%')
+                                    AND (analysis_error IN ('Bien de plus de 24h', 'Moins de 3 images attachées', 'Moins de 3 images accessibles', 'Recherche sans numéro de téléphone', 'Classé comme bruit avant IA (Vocabulaire manquant)', 'Doublon post-IA (Historique)', 'Doublon ignoré avant IA') OR analysis_error LIKE 'Mot interdit:%')
                                 ) AS ecart_sans_analyse_ia,
                                 COUNT(id) FILTER (
                                     WHERE real_property_id IS NULL 
