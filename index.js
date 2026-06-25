@@ -1133,10 +1133,9 @@ Texte à analyser : "${description}"
                         return { success: false, error: `Ignoré: Moins de 3 images fournies (${imagesBase64.length})` };
                     }
 
-                    // 4. Normaliser les abréviations de prix et analyser avec l'Algorithme Déterministe
-                    const normalizedDescription = normalizePriceAbbreviations(finalDescription);
+                    // 4. Analyser avec l'Algorithme Déterministe
                     console.log(`⚡ Analyse Regex (Déterministe) en cours pour ${texts.length} messages...`);
-                    const extractedData = extractPropertyDataDeterministic(normalizedDescription);
+                    const extractedData = extractPropertyDataDeterministic(finalDescription);
 
                     if (!extractedData) {
                         const errMsg = "L'algorithme déterministe a échoué à analyser l'annonce.";
