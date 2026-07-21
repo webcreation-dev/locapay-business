@@ -564,7 +564,7 @@
         <div class="header-right">
             <div class="chip">🔵 Nouveaux <span class="val" id="stat-new">—</span></div>
             <div class="chip green">✅ Contactés <span class="val" id="stat-contacted">—</span></div>
-            <div class="chip" style="color:var(--text-muted);font-size:12px;">7 derniers jours</div>
+            <div class="chip" style="color:var(--text-muted);font-size:12px;">14 derniers jours</div>
         </div>
     </header>
 
@@ -602,10 +602,12 @@
     <script>
         // ── Message WhatsApp pré-rédigé ────────────────────────────────
         const WA_MESSAGE = encodeURIComponent(
-            "Bonjour à vous 👋\nJe suis un agent de LocaPay qui pourrait vous aider. " +
-            "J'ai vu votre recherche de bien sur Facebook.\n" +
-            "Nous avons des offres qui pourraient correspondre à votre besoin. " +
-            "Serait-il possible qu'on échange ?"
+            "Bonjour à vous.\n\n" +
+            "J'ai vu votre post sur Facebook de recherche de bien à louer.\n\n" +
+            "Je suis un agent de LocaPay, une application sur laquelle vous pouvez trouver plusieurs propositions de biens qui pourraient vous intéresser et visiter sans trop vous fatiguer sur Facebook.\n\n" +
+            "Vous pouvez installer notre application depuis ici, et faire votre recherche pour louer.\n" +
+            "https://mobile.locapay.app/\n\n" +
+            "Notre site web est ici : https://locapay.app/"
         );
         function buildWaLink(phone) { return `https://wa.me/${phone}?text=${WA_MESSAGE}`; }
 
@@ -690,7 +692,7 @@
 
         function updateLastRefreshLabel() {
             document.getElementById('last-refresh').textContent =
-                `Mis à jour à ${new Date().toLocaleTimeString('fr-FR')} — ${totalLeadsCount} leads sur 7j`;
+                `Mis à jour à ${new Date().toLocaleTimeString('fr-FR')} — ${totalLeadsCount} leads sur 14j`;
         }
 
         // ── Actions utilisateur ───────────────────────────────────────
@@ -871,7 +873,7 @@
                     container.innerHTML = `
                     <div class="empty-state">
                         <div class="icon">🎯</div>
-                        <h3>Aucun lead sur les 7 derniers jours</h3>
+                        <h3>Aucun lead sur les 14 derniers jours</h3>
                         <p>Revenez plus tard ou attendez le prochain cycle de scraping.</p>
                     </div>`;
                     return;
