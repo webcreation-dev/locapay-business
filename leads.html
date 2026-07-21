@@ -19,8 +19,8 @@
             --text-muted: #7a8299;
             --primary: #25D366;
             --primary-dk: #1aaa52;
-            --accent: #4361ee;
-            --accent-lt: #eef0fd;
+            --accent: #00B6C9;
+            --accent-lt: #e0f8fb;
             --danger: #e63946;
             --danger-lt: #fff0f1;
             --warning: #f4a261;
@@ -268,7 +268,7 @@
         .lead-avatar {
             width: 36px;
             height: 36px;
-            background: linear-gradient(135deg, var(--accent), #7b5ef8);
+            background: linear-gradient(135deg, var(--accent), #009cae);
             border-radius: 50%;
             display: flex;
             align-items: center;
@@ -817,7 +817,7 @@
 
         // ── Toast ──────────────────────────────────────────────────────
         function showToast(msg, type = 'success') {
-            const colors = { success: '#25D366', warning: '#f4a261', info: '#4361ee', error: '#e63946' };
+            const colors = { success: '#25D366', warning: '#f4a261', info: '#00B6C9', error: '#e63946' };
             const t = document.createElement('div');
             t.className = 'toast';
             t.style.borderLeftColor = colors[type] || colors.success;
