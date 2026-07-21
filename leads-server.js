@@ -164,12 +164,20 @@ app.post('/api/leads/action', async (req, res) => {
   try {
     if (action === 'ignored' && author) {
       // Ignorer TOUS les posts de cet auteur
-      // 1. On récupère tous les post_id de cet auteur dans facebook_posts
+      // 1. Mettre en NOISE uniquement les posts "demande client" de cet auteur
+      await pool.query(
+        `UPDATE facebook_posts 
+         SET is_noise = TRUE, is_client_demand = FALSE 
+         WHERE author = $1 AND is_client_demand = TRUE`, 
+         [author]
+      );
+
+      // 2. On récupère tous les post_id de cet auteur dans facebook_posts
       const postsOfAuthor = await pool.query(
         `SELECT post_id FROM facebook_posts WHERE author = $1`, [author]
       );
 
-      // 2. On insère une action ignored pour chacun (upsert)
+      // 3. On insère une action ignored pour chacun (upsert)
       for (const row of postsOfAuthor.rows) {
         await pool.query(`
           INSERT INTO lead_actions (post_id, author, action)
