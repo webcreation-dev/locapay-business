@@ -1,0 +1,732 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LocaPay — Leads Clients</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg:         #f4f6fa;
+            --surface:    #ffffff;
+            --surface-2:  #f0f2f7;
+            --border:     #e2e6f0;
+            --text:       #1a1e2e;
+            --text-muted: #7a8299;
+            --primary:    #25D366;
+            --primary-dk: #1aaa52;
+            --accent:     #4361ee;
+            --accent-lt:  #eef0fd;
+            --danger:     #e63946;
+            --danger-lt:  #fff0f1;
+            --warning:    #f4a261;
+            --warning-lt: #fff7f0;
+            --contacted-bg:  #f0faf4;
+            --contacted-bd:  #b7e4c7;
+            --radius:     14px;
+            --shadow:     0 2px 16px rgba(60,70,110,0.10);
+            --shadow-lg:  0 8px 32px rgba(60,70,110,0.13);
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+        }
+
+        /* ── Header ─────────────────────────────────────── */
+        header {
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            padding: 0 28px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            height: 68px;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: 0 1px 8px rgba(60,70,110,0.07);
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .logo-icon {
+            height: 48px;
+            display: flex; align-items: center; justify-content: center;
+            flex-shrink: 0;
+        }
+
+        .logo-icon img {
+            height: 100%;
+            width: auto;
+            object-fit: contain;
+        }
+
+        .live-dot {
+            width: 8px; height: 8px;
+            background: var(--primary);
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+            margin-left: 4px;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.5; transform: scale(1.4); }
+        }
+
+        .header-right { display: flex; gap: 12px; align-items: center; }
+
+        .chip {
+            background: var(--surface-2);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 5px 14px;
+            font-size: 13px;
+            font-weight: 500;
+            display: flex; align-items: center; gap: 6px;
+        }
+
+        .chip .val { font-weight: 700; color: var(--accent); }
+        .chip.green .val { color: var(--primary-dk); }
+
+        /* ── Progress bar ────────────────────────────────── */
+        .progress-bar-wrap {
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            padding: 10px 28px;
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            font-size: 13px;
+            color: var(--text-muted);
+        }
+
+        .progress-bar-outer {
+            flex: 1;
+            height: 8px;
+            background: var(--surface-2);
+            border-radius: 99px;
+            overflow: hidden;
+            border: 1px solid var(--border);
+        }
+
+        .progress-bar-inner {
+            height: 100%;
+            background: linear-gradient(90deg, var(--accent), var(--primary));
+            border-radius: 99px;
+            transition: width 0.4s ease;
+        }
+
+        .progress-label { font-weight: 600; color: var(--text); white-space: nowrap; }
+
+        /* ── Main ───────────────────────────────────────── */
+        main {
+            max-width: 860px;
+            margin: 0 auto;
+            padding: 28px 20px 100px;
+        }
+
+        .page-header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            margin-bottom: 22px;
+        }
+
+        .page-title { font-size: 22px; font-weight: 800; letter-spacing: -0.4px; }
+        .page-subtitle { color: var(--text-muted); font-size: 14px; margin-top: 3px; }
+
+        .refresh-btn {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            color: var(--text-muted);
+            border-radius: 9px;
+            padding: 9px 16px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            display: flex; align-items: center; gap: 7px;
+            transition: all 0.18s;
+            white-space: nowrap;
+            font-family: inherit;
+        }
+
+        .refresh-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-lt); }
+
+        /* ── Lead Card ──────────────────────────────────── */
+        .leads-list { display: flex; flex-direction: column; gap: 12px; }
+
+        .lead-card {
+            background: var(--surface);
+            border: 1.5px solid var(--border);
+            border-radius: var(--radius);
+            padding: 20px 22px;
+            transition: box-shadow 0.2s, border-color 0.2s, opacity 0.3s;
+            box-shadow: var(--shadow);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .lead-card:hover { box-shadow: var(--shadow-lg); }
+
+        .lead-card::before {
+            content: '';
+            position: absolute;
+            left: 0; top: 0; bottom: 0;
+            width: 4px;
+            background: var(--accent);
+            border-radius: 4px 0 0 4px;
+        }
+
+        .lead-card.contacted {
+            background: var(--contacted-bg);
+            border-color: var(--contacted-bd);
+            opacity: 0.75;
+        }
+
+        .lead-card.contacted::before { background: var(--primary); }
+
+        /* ── Card Meta ──────────────────────────────────── */
+        .lead-meta {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 12px;
+            flex-wrap: wrap;
+        }
+
+        .lead-avatar {
+            width: 36px; height: 36px;
+            background: linear-gradient(135deg, var(--accent), #7b5ef8);
+            border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 14px;
+            font-weight: 700;
+            color: white;
+            flex-shrink: 0;
+        }
+
+        .meta-info { flex: 1; min-width: 0; }
+        .lead-author { font-weight: 700; font-size: 14px; }
+        .lead-time { font-size: 12px; color: var(--text-muted); margin-top: 1px; }
+
+        .phone-badge {
+            background: #eaf7f0;
+            border: 1px solid #b7dfc9;
+            color: #1a7a45;
+            border-radius: 20px;
+            padding: 4px 11px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        /* ── Post Text ──────────────────────────────────── */
+        .lead-text {
+            font-size: 14px;
+            line-height: 1.75;
+            color: #2d3250;
+            white-space: pre-wrap;
+            word-break: break-word;
+            margin-bottom: 16px;
+        }
+
+        .lead-text.collapsed {
+            display: -webkit-box;
+            -webkit-line-clamp: 4;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        .read-more-btn {
+            background: none; border: none;
+            color: var(--accent);
+            font-size: 13px; font-weight: 500;
+            cursor: pointer; padding: 0;
+            margin-bottom: 14px;
+            display: block;
+            font-family: inherit;
+        }
+
+        /* ── Actions ────────────────────────────────────── */
+        .lead-actions {
+            display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+            padding-top: 14px;
+            border-top: 1px solid var(--border);
+        }
+
+        .btn {
+            display: inline-flex; align-items: center; gap: 7px;
+            padding: 9px 17px;
+            border-radius: 9px;
+            font-size: 13px; font-weight: 600;
+            cursor: pointer; border: none;
+            text-decoration: none;
+            transition: all 0.18s;
+            white-space: nowrap;
+            font-family: inherit;
+        }
+
+        .btn-whatsapp {
+            background: var(--primary);
+            color: #fff;
+            box-shadow: 0 2px 8px rgba(37,211,102,0.25);
+        }
+
+        .btn-whatsapp:hover { background: var(--primary-dk); transform: translateY(-1px); box-shadow: 0 4px 14px rgba(37,211,102,0.35); }
+
+        .btn-contacted {
+            background: var(--contacted-bg);
+            color: var(--primary-dk);
+            border: 1.5px solid var(--contacted-bd);
+        }
+
+        .btn-contacted:hover { background: #e0f5e9; }
+
+        .btn-ignore {
+            background: transparent;
+            color: var(--text-muted);
+            border: 1.5px solid var(--border);
+        }
+
+        .btn-ignore:hover { border-color: var(--danger); color: var(--danger); background: var(--danger-lt); }
+
+        .btn-view {
+            background: transparent;
+            color: var(--text-muted);
+            border: 1.5px solid var(--border);
+            font-size: 12px;
+            padding: 8px 13px;
+            margin-left: auto;
+        }
+
+        .btn-view:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-lt); }
+
+        .no-phone {
+            font-size: 12px; color: var(--warning);
+            background: var(--warning-lt);
+            border: 1px solid #f4c18d;
+            border-radius: 8px;
+            padding: 5px 11px;
+        }
+
+        /* ── Empty / Loading ────────────────────────────── */
+        .empty-state {
+            text-align: center;
+            padding: 80px 20px;
+            color: var(--text-muted);
+        }
+        .empty-state .icon { font-size: 54px; margin-bottom: 14px; }
+        .empty-state h3 { font-size: 18px; margin-bottom: 6px; color: var(--text); }
+
+        .loading {
+            display: flex; flex-direction: column; align-items: center;
+            gap: 14px; padding: 60px; color: var(--text-muted);
+        }
+
+        .spinner {
+            width: 36px; height: 36px;
+            border: 3px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* ── Pagination ─────────────────────────────────── */
+        .pagination {
+            display: flex; align-items: center; justify-content: center;
+            gap: 12px; margin-top: 36px;
+        }
+
+        .pag-btn {
+            background: var(--surface);
+            border: 1.5px solid var(--border);
+            color: var(--text);
+            border-radius: 9px;
+            padding: 10px 20px;
+            font-size: 14px; font-weight: 500;
+            cursor: pointer;
+            transition: all 0.18s;
+            font-family: inherit;
+        }
+
+        .pag-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); background: var(--accent-lt); }
+        .pag-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+        .pag-btn.locked { border-color: var(--warning); color: var(--warning); }
+        .pag-btn.locked:hover { background: var(--warning-lt); }
+
+        .pag-info { font-size: 14px; color: var(--text-muted); font-weight: 500; }
+
+        /* ── Toast ──────────────────────────────────────── */
+        .toast {
+            position: fixed;
+            bottom: 24px; right: 24px;
+            background: var(--surface);
+            border: 1.5px solid var(--border);
+            border-left: 4px solid var(--primary);
+            border-radius: 11px;
+            padding: 13px 20px;
+            font-size: 14px;
+            box-shadow: var(--shadow-lg);
+            animation: toastIn 0.3s ease;
+            z-index: 1000;
+        }
+
+        @keyframes toastIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: var(--bg); }
+        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    </style>
+</head>
+<body>
+
+<header>
+    <div class="logo">
+        <div class="logo-icon">
+            <img src="logo-locapay.png" alt="LocaPay" />
+        </div>
+        <div class="live-dot"></div>
+    </div>
+    <div class="header-right">
+        <div class="chip">🔵 Nouveaux <span class="val" id="stat-new">—</span></div>
+        <div class="chip green">✅ Contactés <span class="val" id="stat-contacted">—</span></div>
+        <div class="chip" style="color:var(--text-muted);font-size:12px;">72 dernières heures</div>
+    </div>
+</header>
+
+<!-- Barre de progression de la page en cours -->
+<div class="progress-bar-wrap" id="progress-wrap" style="display:none">
+    <span class="progress-label" id="progress-label">0 / 20 traités</span>
+    <div class="progress-bar-outer">
+        <div class="progress-bar-inner" id="progress-bar" style="width:0%"></div>
+    </div>
+    <span style="font-size:13px;" id="progress-pct">0%</span>
+</div>
+
+<main>
+    <div class="page-header">
+        <div>
+            <h1 class="page-title">🏠 Personnes en recherche de logement</h1>
+            <p class="page-subtitle" id="last-refresh">Chargement...</p>
+        </div>
+        <button class="refresh-btn" onclick="loadLeads()">↻ Actualiser</button>
+    </div>
+
+    <div id="leads-container">
+        <div class="loading"><div class="spinner"></div><span>Chargement des leads...</span></div>
+    </div>
+
+    <div class="pagination" id="pagination" style="display:none">
+        <button class="pag-btn" id="btn-prev" onclick="changePage(-1)">← Précédent</button>
+        <span class="pag-info" id="page-info"></span>
+        <button class="pag-btn" id="btn-next" onclick="tryNextPage()">Suivant →</button>
+    </div>
+</main>
+
+<script>
+    // ── Message WhatsApp pré-rédigé ────────────────────────────────
+    const WA_MESSAGE = encodeURIComponent(
+        "Bonjour à vous 👋\nJe suis un agent de LocaPay qui pourrait vous aider. " +
+        "J'ai vu votre recherche de bien sur Facebook.\n" +
+        "Nous avons des offres qui pourraient correspondre à votre besoin. " +
+        "Serait-il possible qu'on échange ?"
+    );
+    function buildWaLink(phone) { return `https://wa.me/${phone}?text=${WA_MESSAGE}`; }
+
+    // ── État pagination ────────────────────────────────────────────
+    let currentPage = 1;
+    const PAGE_SIZE  = 20;
+    let totalPages   = 1;
+    let currentLeads = []; // les leads de la page courante
+
+    // ── Compteur de progression par page ──────────────────────────
+    function getPageProgress() {
+        const total = currentLeads.length;
+        const treated = currentLeads.filter(l =>
+            document.querySelector(`[data-id="${l.post_id}"]`)?.dataset.status === 'contacted' ||
+            document.querySelector(`[data-id="${l.post_id}"]`)?.dataset.status === 'ignored'
+        ).length;
+        return { treated, total };
+    }
+
+    function updateProgressBar() {
+        const { treated, total } = getPageProgress();
+        const pct = total > 0 ? Math.round(treated / total * 100) : 0;
+        document.getElementById('progress-bar').style.width = pct + '%';
+        document.getElementById('progress-label').textContent = `${treated} / ${total} traités`;
+        document.getElementById('progress-pct').textContent = pct + '%';
+
+        const nextBtn = document.getElementById('btn-next');
+        if (treated < total && totalPages > 1) {
+            nextBtn.classList.add('locked');
+            nextBtn.title = `Traitez les ${total - treated} leads restants avant de continuer`;
+        } else {
+            nextBtn.classList.remove('locked');
+            nextBtn.title = '';
+        }
+    }
+
+    function tryNextPage() {
+        const { treated, total } = getPageProgress();
+        if (treated < total) {
+            showToast(`⚠️ Traitez les ${total - treated} leads restants d'abord !`, 'warning');
+            return;
+        }
+        changePage(1);
+    }
+
+    function changePage(delta) {
+        currentPage += delta;
+        loadLeads();
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    // ── Stats header ───────────────────────────────────────────────
+    function updateStatsHeader() {
+        const cards = document.querySelectorAll('.lead-card');
+        let newCount = 0, contactedCount = 0;
+        cards.forEach(c => {
+            if (c.dataset.status === 'contacted') contactedCount++;
+            else newCount++;
+        });
+        document.getElementById('stat-new').textContent = newCount;
+        document.getElementById('stat-contacted').textContent = contactedCount;
+    }
+
+    // ── API : enregistrer une action ──────────────────────────────
+    async function saveAction(post_id, author, action) {
+        try {
+            await fetch('/api/leads/action', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ post_id, author, action })
+            });
+        } catch (e) {
+            console.error('Erreur save action:', e);
+        }
+    }
+
+    // ── Actions utilisateur ───────────────────────────────────────
+    function markContacted(post_id, author, phone, btn) {
+        const card = document.querySelector(`[data-id="${post_id}"]`);
+        if (!card) return;
+
+        card.classList.add('contacted');
+        card.dataset.status = 'contacted';
+        btn.className = 'btn btn-contacted';
+        btn.innerHTML = '✅ Déjà contacté';
+
+        // Déplacer la carte en bas
+        document.getElementById('leads-container').querySelector('.leads-list').appendChild(card);
+
+        saveAction(post_id, author, 'contacted');
+        showToast('✅ Marqué comme contacté !', 'success');
+        updateStatsHeader();
+        updateProgressBar();
+    }
+
+    function markIgnored(post_id, author, btn) {
+        // Animer puis masquer TOUS les posts de cet auteur
+        const cards = document.querySelectorAll('.lead-card');
+        let count = 0;
+        cards.forEach(c => {
+            if (c.dataset.author === author) {
+                count++;
+                c.style.transition = 'all 0.3s ease';
+                c.style.opacity = '0';
+                c.style.transform = 'translateX(30px)';
+                c.dataset.status = 'ignored';
+                setTimeout(() => c.remove(), 300);
+            }
+        });
+
+        saveAction(post_id, author, 'ignored');
+
+        if (count > 1) {
+            showToast(`🚫 ${count} posts de « ${author} » ignorés`, 'info');
+        } else {
+            showToast('🚫 Post ignoré', 'info');
+        }
+
+        setTimeout(() => {
+            updateStatsHeader();
+            updateProgressBar();
+        }, 350);
+    }
+
+    // ── Rendu d'une carte ─────────────────────────────────────────
+    function renderCard(lead) {
+        const isContacted = lead.existing_action === 'contacted';
+
+        const card = document.createElement('div');
+        card.className = `lead-card${isContacted ? ' contacted' : ''}`;
+        card.dataset.id     = lead.post_id;
+        card.dataset.author = lead.author || '';
+        card.dataset.status = isContacted ? 'contacted' : 'new';
+
+        // Initiale de l'avatar
+        const initiale = (lead.author || '?').charAt(0).toUpperCase();
+
+        // Bouton WhatsApp
+        const waLink = lead.phone ? buildWaLink(lead.phone) : null;
+        const waBtn = lead.phone
+            ? `<a class="btn ${isContacted ? 'btn-contacted' : 'btn-whatsapp'}"
+                  href="${waLink}" target="_blank"
+                  onclick="markContacted('${esc(lead.post_id)}', '${esc(lead.author)}', '${lead.phone}', this)"
+                  id="wa-${esc(lead.post_id)}">
+                  ${isContacted ? '✅ Déjà contacté' : '📲 Contacter sur WhatsApp'}
+               </a>`
+            : `<span class="no-phone">⚠️ Numéro non détecté</span>`;
+
+        const fbBtn = lead.post_url
+            ? `<a class="btn btn-view" href="${lead.post_url}" target="_blank">👁 Voir le post</a>`
+            : '';
+
+        // Texte collapsible si long
+        const isLong = lead.text && lead.text.length > 280;
+        const textCls = isLong ? 'lead-text collapsed' : 'lead-text';
+        const readMoreBtn = isLong
+            ? `<button class="read-more-btn" onclick="toggleText('${esc(lead.post_id)}')">▼ Lire plus</button>`
+            : '';
+
+        card.innerHTML = `
+            <div class="lead-meta">
+                <div class="lead-avatar">${initiale}</div>
+                <div class="meta-info">
+                    <div class="lead-author">${escHtml(lead.author || 'Auteur inconnu')}</div>
+                    <div class="lead-time">🕐 ${lead.scraped_at_formatted}</div>
+                </div>
+                ${lead.phone ? `<span class="phone-badge">📞 +${lead.phone}</span>` : ''}
+            </div>
+            <div class="lead-text ${isLong ? 'collapsed' : ''}" id="txt-${esc(lead.post_id)}">${escHtml(lead.text || '')}</div>
+            ${readMoreBtn}
+            <div class="lead-actions">
+                ${waBtn}
+                <button class="btn btn-ignore" onclick="markIgnored('${esc(lead.post_id)}', '${esc(lead.author)}', this)">
+                    🚫 Ignorer
+                </button>
+                ${fbBtn}
+            </div>
+        `;
+
+        return card;
+    }
+
+    function toggleText(id) {
+        const el  = document.getElementById(`txt-${id}`);
+        const btn = el.nextElementSibling;
+        if (!el || !btn) return;
+        if (el.classList.contains('collapsed')) {
+            el.classList.remove('collapsed'); btn.textContent = '▲ Réduire';
+        } else {
+            el.classList.add('collapsed'); btn.textContent = '▼ Lire plus';
+        }
+    }
+
+    // ── Utilitaires ───────────────────────────────────────────────
+    function esc(s) { return String(s || '').replace(/'/g, "\\'"); }
+    function escHtml(s) {
+        return String(s || '')
+            .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    // ── Toast ──────────────────────────────────────────────────────
+    function showToast(msg, type = 'success') {
+        const colors = { success: '#25D366', warning: '#f4a261', info: '#4361ee', error: '#e63946' };
+        const t = document.createElement('div');
+        t.className = 'toast';
+        t.style.borderLeftColor = colors[type] || colors.success;
+        t.textContent = msg;
+        document.body.appendChild(t);
+        setTimeout(() => {
+            t.style.opacity = '0'; t.style.transition = 'opacity 0.3s';
+            setTimeout(() => t.remove(), 300);
+        }, 3000);
+    }
+
+    // ── Chargement ─────────────────────────────────────────────────
+    async function loadLeads() {
+        const container = document.getElementById('leads-container');
+        container.innerHTML = `<div class="loading"><div class="spinner"></div><span>Chargement...</span></div>`;
+        document.getElementById('pagination').style.display = 'none';
+        document.getElementById('progress-wrap').style.display = 'none';
+
+        try {
+            const res = await fetch(`/api/leads?page=${currentPage}&limit=${PAGE_SIZE}`);
+            if (!res.ok) throw new Error('Erreur serveur : ' + res.status);
+            const data = await res.json();
+
+            totalPages    = data.pagination.totalPages;
+            currentLeads  = data.leads;
+
+            if (!currentLeads || currentLeads.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <div class="icon">🎯</div>
+                        <h3>Aucun lead sur les 3 derniers jours</h3>
+                        <p>Revenez plus tard ou attendez le prochain cycle de scraping.</p>
+                    </div>`;
+                return;
+            }
+
+            // Contactés en bas, nouveaux en haut
+            const actives   = currentLeads.filter(l => l.existing_action !== 'contacted');
+            const contacted = currentLeads.filter(l => l.existing_action === 'contacted');
+            const ordered   = [...actives, ...contacted];
+
+            container.innerHTML = '';
+            const list = document.createElement('div');
+            list.className = 'leads-list';
+            ordered.forEach(l => list.appendChild(renderCard(l)));
+            container.appendChild(list);
+
+            // Pagination
+            if (totalPages > 1 || currentPage > 1) {
+                document.getElementById('pagination').style.display = 'flex';
+                document.getElementById('page-info').textContent =
+                    `Page ${currentPage} / ${totalPages}`;
+                document.getElementById('btn-prev').disabled = currentPage <= 1;
+                document.getElementById('btn-next').disabled = currentPage >= totalPages;
+            }
+
+            // Barre de progression
+            document.getElementById('progress-wrap').style.display = 'flex';
+            updateProgressBar();
+            updateStatsHeader();
+
+            document.getElementById('last-refresh').textContent =
+                `Mis à jour à ${new Date().toLocaleTimeString('fr-FR')} — ${data.pagination.total} leads sur 3j`;
+
+        } catch (err) {
+            container.innerHTML = `
+                <div class="empty-state">
+                    <div class="icon">⚠️</div>
+                    <h3>Impossible de charger les leads</h3>
+                    <p style="color:#e63946;margin-top:6px;">${err.message}</p>
+                    <p style="margin-top:10px;font-size:13px;color:var(--text-muted)">Vérifiez que le serveur tourne sur le port 3737</p>
+                </div>`;
+        }
+    }
+
+    // ── Init ───────────────────────────────────────────────────────
+    loadLeads();
+    setInterval(loadLeads, 5 * 60 * 1000);
+</script>
+</body>
+</html>
