@@ -613,6 +613,7 @@
         let currentPage = 1;
         const PAGE_SIZE = 20;
         let totalPages = 1;
+        let totalLeadsCount = 0; // Total des leads affiché
         let currentLeads = []; // les leads de la page courante
         let pageActions = {}; // { post_id: 'contacted' | 'ignored' } — suivi en mémoire
 
@@ -675,14 +676,21 @@
         // ── API : enregistrer une action ──────────────────────────────
         async function saveAction(post_id, author, action) {
             try {
-                await fetch('/api/leads/action', {
+                const res = await fetch('/api/leads/action', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ post_id, author, action })
                 });
+                return await res.json();
             } catch (e) {
                 console.error('Erreur save action:', e);
+                return null;
             }
+        }
+
+        function updateLastRefreshLabel() {
+            document.getElementById('last-refresh').textContent =
+                `Mis à jour à ${new Date().toLocaleTimeString('fr-FR')} — ${totalLeadsCount} leads sur 7j`;
         }
 
         // ── Actions utilisateur ───────────────────────────────────────
@@ -707,7 +715,7 @@
             updateProgressBar();
         }
 
-        function markIgnored(post_id, author, btn) {
+        async function markIgnored(post_id, author, btn) {
             // 1. Marquer EN MÉMOIRE tous les leads de cet auteur dans la page courante
             const authorLeads = currentLeads.filter(l => l.author === author);
             authorLeads.forEach(l => { pageActions[l.post_id] = 'ignored'; });
@@ -725,7 +733,15 @@
                 }
             });
 
-            saveAction(post_id, author, 'ignored');
+            const res = await saveAction(post_id, author, 'ignored');
+            if (res && res.ignored_count) {
+                totalLeadsCount -= res.ignored_count;
+                updateLastRefreshLabel();
+            } else if (res && res.success) {
+                // fallback
+                totalLeadsCount -= authorLeads.length;
+                updateLastRefreshLabel();
+            }
 
             const label = authorLeads.length > 1
                 ? `🚫 ${authorLeads.length} posts de « ${author} » ignorés`
@@ -842,6 +858,7 @@
                 const data = await res.json();
 
                 totalPages = data.pagination.totalPages;
+                totalLeadsCount = data.pagination.total;
                 currentLeads = data.leads;
                 pageActions = {}; // Réinitialiser le suivi des actions pour cette nouvelle page
 
@@ -885,8 +902,7 @@
                 updateProgressBar();
                 updateStatsHeader();
 
-                document.getElementById('last-refresh').textContent =
-                    `Mis à jour à ${new Date().toLocaleTimeString('fr-FR')} — ${data.pagination.total} leads sur 7j`;
+                updateLastRefreshLabel();
 
             } catch (err) {
                 container.innerHTML = `
