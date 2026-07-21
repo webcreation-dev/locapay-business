@@ -92,7 +92,7 @@ app.get('/api/leads', async (req, res) => {
       SELECT COUNT(*) 
       FROM facebook_posts fp
       WHERE fp.is_client_demand = TRUE
-        AND fp.scraped_at >= NOW() - INTERVAL '3 days'
+        AND fp.scraped_at >= NOW() - INTERVAL '7 days'
         AND NOT EXISTS (
           SELECT 1 FROM lead_actions la
           WHERE la.author = fp.author AND la.action = 'ignored'
@@ -115,7 +115,7 @@ app.get('/api/leads', async (req, res) => {
       FROM facebook_posts fp
       LEFT JOIN lead_actions la ON la.post_id = fp.post_id
       WHERE fp.is_client_demand = TRUE
-        AND fp.scraped_at >= NOW() - INTERVAL '3 days'
+        AND fp.scraped_at >= NOW() - INTERVAL '7 days'
         AND NOT EXISTS (
           SELECT 1 FROM lead_actions la2
           WHERE la2.author = fp.author AND la2.action = 'ignored'

@@ -406,7 +406,7 @@
     <div class="header-right">
         <div class="chip">🔵 Nouveaux <span class="val" id="stat-new">—</span></div>
         <div class="chip green">✅ Contactés <span class="val" id="stat-contacted">—</span></div>
-        <div class="chip" style="color:var(--text-muted);font-size:12px;">72 dernières heures</div>
+        <div class="chip" style="color:var(--text-muted);font-size:12px;">7 derniers jours</div>
     </div>
 </header>
 
@@ -679,7 +679,7 @@
                 container.innerHTML = `
                     <div class="empty-state">
                         <div class="icon">🎯</div>
-                        <h3>Aucun lead sur les 3 derniers jours</h3>
+                        <h3>Aucun lead sur les 7 derniers jours</h3>
                         <p>Revenez plus tard ou attendez le prochain cycle de scraping.</p>
                     </div>`;
                 return;
@@ -711,7 +711,7 @@
             updateStatsHeader();
 
             document.getElementById('last-refresh').textContent =
-                `Mis à jour à ${new Date().toLocaleTimeString('fr-FR')} — ${data.pagination.total} leads sur 3j`;
+                `Mis à jour à ${new Date().toLocaleTimeString('fr-FR')} — ${data.pagination.total} leads sur 7j`;
 
         } catch (err) {
             container.innerHTML = `
