@@ -23,6 +23,21 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
+  leads-dashboard:
+    build: .
+    container_name: leads-dashboard
+    restart: unless-stopped
+    env_file: .env
+    command: node leads-server.js
+    ports:
+      - "3737:3737"
+    networks:
+      - default
+      - locapay_dev_default
+      - locapay_prod_default
+    depends_on:
+      - db
+
   db:
     image: postgres:15-alpine
     container_name: whatsapp-db
