@@ -57,7 +57,45 @@ let currentQR = null;
 app.listen(3000, () => {
     console.log('✅ Frontend et API Web disponibles sur http://localhost:3000');
 });
+
+// ── Recalcul hebdomadaire des Tiers de scraping (cooldown_hours) ─────────────
+// Classe chaque groupe Facebook en Tier A (4h), Tier B (12h) ou Tier C (36h)
+// selon le nombre de biens réellement créés sur LocaPay dans les 30 derniers jours.
+// Tier A : > 300 biens/30j (mines d'or) → scrapé toutes les 4h
+// Tier B : 30 à 300 biens/30j (rentables) → scrapé toutes les 12h
+// Tier C : < 30 biens/30j (faible rendement) → scrapé toutes les 36h
+async function recalculateTiers(db) {
+    try {
+        const result = await db.query(`
+            WITH rendement AS (
+              SELECT
+                fp.group_id,
+                COUNT(fp.post_id) FILTER (WHERE fp.is_processed = TRUE AND fp.real_property_id IS NOT NULL) AS biens_30j
+              FROM facebook_posts fp
+              WHERE fp.scraped_at >= NOW() - INTERVAL '30 days'
+              GROUP BY fp.group_id
+            )
+            UPDATE facebook_groups fg
+            SET cooldown_hours = CASE
+              WHEN r.biens_30j > 300 THEN 4
+              WHEN r.biens_30j >= 30  THEN 12
+              ELSE 36
+            END
+            FROM rendement r
+            WHERE fg.group_id = r.group_id
+            RETURNING fg.group_id, fg.cooldown_hours
+        `);
+        const tierA = result.rows.filter(r => r.cooldown_hours === 4).length;
+        const tierB = result.rows.filter(r => r.cooldown_hours === 12).length;
+        const tierC = result.rows.filter(r => r.cooldown_hours === 36).length;
+        console.log(`✅ [Tiers] Recalcul terminé — Tier A: ${tierA} groupes (4h) | Tier B: ${tierB} groupes (12h) | Tier C: ${tierC} groupes (36h)`);
+    } catch (err) {
+        console.error('❌ [Tiers] Erreur lors du recalcul des cooldowns:', err.message);
+    }
+}
 // ------------------------------------------
+
+
 
 // --- CONFIGURATION ALERTE MAIL ---
 const transporter = nodemailer.createTransport({
@@ -242,6 +280,7 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
                     group_url TEXT,
                     group_name TEXT,
                     last_scraped_at TIMESTAMPTZ DEFAULT NOW(),
+                    most_recent_post_at TIMESTAMPTZ,
                     created_at TIMESTAMPTZ DEFAULT NOW()
                 );
             `);
@@ -1588,6 +1627,49 @@ Texte à analyser : "${description}"
             });
 
             /**
+             * GET /api/facebook/groups/:groupId/scrape-info
+             * Retourne les informations de continuation pour un groupe
+             * Utilisé par l'extension pour savoir où reprendre le scraping
+             */
+            app.get('/api/facebook/groups/:groupId/scrape-info', async (req, res) => {
+                try {
+                    const { groupId } = req.params;
+
+                    const result = await db.query(`
+                        SELECT
+                            group_id,
+                            group_name,
+                            last_scraped_at,
+                            most_recent_post_at,
+                            is_validated
+                        FROM facebook_groups
+                        WHERE group_id = $1
+                    `, [groupId]);
+
+                    if (result.rows.length === 0) {
+                        // Groupe jamais scrapé - retourner null pour lastScrapedAt
+                        return res.json({
+                            groupId,
+                            lastScrapedAt: null,
+                            isNewGroup: true
+                        });
+                    }
+
+                    const group = result.rows[0];
+                    res.json({
+                        groupId: group.group_id,
+                        groupName: group.group_name,
+                        lastScrapedAt: group.most_recent_post_at || group.last_scraped_at,  // Utiliser most_recent_post_at si disponible
+                        isValidated: group.is_validated,
+                        isNewGroup: false
+                    });
+                } catch (error) {
+                    console.error('[scrape-info] Error:', error);
+                    res.status(500).json({ error: 'Erreur serveur' });
+                }
+            });
+
+            /**
              * PATCH /api/facebook/groups/:groupId
              * Met à jour le nom et/ou le statut is_validated d'un groupe
              */
@@ -2111,6 +2193,18 @@ Texte à analyser : "${description}"
                 }, 2 * 60 * 1000);
             }
             // ═══════════════════════════════════════════════════════════════
+
+            // ── Recalcul initial des Tiers de scraping (au démarrage) ───────
+            // Puis recalcul automatique toutes les semaines (7 jours)
+            console.log('🔄 [Tiers] Recalcul initial des cooldowns de scraping...');
+            recalculateTiers(db).catch(e => console.error('❌ [Tiers] Erreur recalcul initial:', e));
+            setInterval(() => {
+                console.log('🔄 [Tiers] Recalcul hebdomadaire des cooldowns de scraping...');
+                recalculateTiers(db).catch(e => console.error('❌ [Tiers] Erreur recalcul hebdomadaire:', e));
+            }, 7 * 24 * 60 * 60 * 1000); // 7 jours
+            // ═══════════════════════════════════════════════════════════════
+
+
 
             return;
         } catch (err) {

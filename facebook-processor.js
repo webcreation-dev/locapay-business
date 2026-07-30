@@ -780,6 +780,15 @@ async function importFacebookPosts(posts, db, explicitGroupId = null) {
 
   let inserted = 0, duplicates = 0, noMediaNoise = 0;
 
+  // Calculer le timestamp du post le plus récent (pour mode continuation)
+  const postTimestamps = posts
+    .filter(p => p.postId && p.scrapedAt && p.timestamp)
+    .map(p => parseRelativeTimestamp(p.scrapedAt, p.timestamp));
+
+  const mostRecentPostTimestamp = postTimestamps.length > 0
+    ? new Date(Math.max(...postTimestamps.map(d => d.getTime())))
+    : null;
+
   for (const post of posts) {
     // Validation minimale
     if (!post.postId) continue;
@@ -792,10 +801,15 @@ async function importFacebookPosts(posts, db, explicitGroupId = null) {
     // Créer le groupe si inexistant. Si déjà présent, on ne touche pas au nom existant.
     if (groupId) {
       await db.query(`
-        INSERT INTO facebook_groups (group_id, group_url, group_name, last_scraped_at)
-        VALUES ($1, $2, $3, NOW())
-        ON CONFLICT (group_id) DO UPDATE SET last_scraped_at = NOW()
-      `, [groupId, groupUrl, autoGroupName]);
+        INSERT INTO facebook_groups (group_id, group_url, group_name, last_scraped_at, most_recent_post_at)
+        VALUES ($1, $2, $3, NOW(), $4)
+        ON CONFLICT (group_id) DO UPDATE SET
+          last_scraped_at = NOW(),
+          most_recent_post_at = GREATEST(
+            facebook_groups.most_recent_post_at,
+            EXCLUDED.most_recent_post_at
+          )
+      `, [groupId, groupUrl, autoGroupName, mostRecentPostTimestamp]);
     }
 
     const imageUrls = Array.isArray(post.imageUrls) ? post.imageUrls : [];
