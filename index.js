@@ -59,11 +59,11 @@ app.listen(3000, () => {
 });
 
 // ── Recalcul hebdomadaire des Tiers de scraping (cooldown_hours) ─────────────
-// Classe chaque groupe Facebook en Tier A (4h), Tier B (12h) ou Tier C (36h)
+// Classe chaque groupe Facebook en Tier A (2h), Tier B (4h) ou Tier C (6h)
 // selon le nombre de biens réellement créés sur LocaPay dans les 30 derniers jours.
-// Tier A : > 300 biens/30j (mines d'or) → scrapé toutes les 4h
-// Tier B : 30 à 300 biens/30j (rentables) → scrapé toutes les 12h
-// Tier C : < 30 biens/30j (faible rendement) → scrapé toutes les 36h
+// Tier A : > 300 biens/30j (mines d'or) → scrapé toutes les 2h
+// Tier B : 30 à 300 biens/30j (rentables) → scrapé toutes les 4h
+// Tier C : < 30 biens/30j (faible rendement) → scrapé toutes les 6h
 async function recalculateTiers(db) {
     try {
         const result = await db.query(`
@@ -77,18 +77,18 @@ async function recalculateTiers(db) {
             )
             UPDATE facebook_groups fg
             SET cooldown_hours = CASE
-              WHEN r.biens_30j > 300 THEN 4
-              WHEN r.biens_30j >= 30  THEN 12
-              ELSE 36
+              WHEN r.biens_30j > 300 THEN 2
+              WHEN r.biens_30j >= 30  THEN 4
+              ELSE 6
             END
             FROM rendement r
             WHERE fg.group_id = r.group_id
             RETURNING fg.group_id, fg.cooldown_hours
         `);
-        const tierA = result.rows.filter(r => r.cooldown_hours === 4).length;
-        const tierB = result.rows.filter(r => r.cooldown_hours === 12).length;
-        const tierC = result.rows.filter(r => r.cooldown_hours === 36).length;
-        console.log(`✅ [Tiers] Recalcul terminé — Tier A: ${tierA} groupes (4h) | Tier B: ${tierB} groupes (12h) | Tier C: ${tierC} groupes (36h)`);
+        const tierA = result.rows.filter(r => r.cooldown_hours === 2).length;
+        const tierB = result.rows.filter(r => r.cooldown_hours === 4).length;
+        const tierC = result.rows.filter(r => r.cooldown_hours === 6).length;
+        console.log(`✅ [Tiers] Recalcul terminé — Tier A: ${tierA} groupes (2h) | Tier B: ${tierB} groupes (4h) | Tier C: ${tierC} groupes (6h)`);
     } catch (err) {
         console.error('❌ [Tiers] Erreur lors du recalcul des cooldowns:', err.message);
     }
@@ -1990,6 +1990,111 @@ Texte à analyser : "${description}"
                     res.json({ ...rows[0], groups: parseInt(gRows[0].total) });
                 } catch (err) {
                     res.status(500).json({ error: err.message });
+                }
+            });
+
+            /**
+             * GET /api/facebook/groups/:groupId/scrape-info
+             * Retourne les informations de continuation pour un groupe
+             * Utilisé par l'extension Chrome pour savoir jusqu'où scraper
+             */
+            app.get('/api/facebook/groups/:groupId/scrape-info', async (req, res) => {
+                try {
+                    const { groupId } = req.params;
+
+                    const result = await db.query(`
+                        SELECT
+                            group_id,
+                            group_name,
+                            last_scraped_at,
+                            most_recent_post_at,
+                            cooldown_hours,
+                            is_validated
+                        FROM facebook_groups
+                        WHERE group_id = $1
+                    `, [groupId]);
+
+                    if (result.rows.length === 0) {
+                        // Groupe jamais scrapé - retourner null pour lastScrapedAt
+                        return res.json({
+                            groupId,
+                            lastScrapedAt: null,
+                            mostRecentPostAt: null,
+                            cooldownHours: 12,  // Par défaut
+                            isNewGroup: true
+                        });
+                    }
+
+                    const group = result.rows[0];
+                    res.json({
+                        groupId: group.group_id,
+                        groupName: group.group_name,
+                        lastScrapedAt: group.last_scraped_at,
+                        mostRecentPostAt: group.most_recent_post_at,  // Utilisé comme limite de continuation
+                        cooldownHours: group.cooldown_hours || 6,
+                        isValidated: group.is_validated,
+                        isNewGroup: false
+                    });
+                } catch (error) {
+                    console.error('[scrape-info] Error:', error);
+                    res.status(500).json({ error: 'Erreur serveur' });
+                }
+            });
+
+            /**
+             * POST /api/facebook/groups/scrape-info-by-url
+             * Alternative endpoint qui accepte une URL de groupe au lieu d'un ID
+             */
+            app.post('/api/facebook/groups/scrape-info-by-url', async (req, res) => {
+                try {
+                    const { groupUrl } = req.body;
+
+                    if (!groupUrl) {
+                        return res.status(400).json({ error: 'groupUrl requis' });
+                    }
+
+                    // Extraire group_id de l'URL
+                    const groupIdMatch = groupUrl.match(/groups\/([^/?]+)/);
+                    if (!groupIdMatch) {
+                        return res.status(400).json({ error: 'URL de groupe Facebook invalide' });
+                    }
+                    const groupId = groupIdMatch[1];
+
+                    const result = await db.query(`
+                        SELECT
+                            group_id,
+                            group_name,
+                            last_scraped_at,
+                            most_recent_post_at,
+                            cooldown_hours,
+                            is_validated
+                        FROM facebook_groups
+                        WHERE group_id = $1
+                    `, [groupId]);
+
+                    if (result.rows.length === 0) {
+                        return res.json({
+                            groupId,
+                            lastScrapedAt: null,
+                            mostRecentPostAt: null,
+                            cooldownHours: 12,
+                            isNewGroup: true
+                        });
+                    }
+
+                    const group = result.rows[0];
+                    res.json({
+                        groupId: group.group_id,
+                        groupName: group.group_name,
+                        lastScrapedAt: group.last_scraped_at,
+                        mostRecentPostAt: group.most_recent_post_at,
+                        cooldownHours: group.cooldown_hours || 6,
+                        isValidated: group.is_validated,
+                        isNewGroup: false
+                    });
+                } catch (error) {
+                    console.error('[scrape-info-by-url] Error:', error);
+                    res.status(500).json({ error: 'Erreur serveur' });
                 }
             });
 
