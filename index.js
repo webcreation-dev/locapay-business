@@ -1223,7 +1223,17 @@ Texte à analyser : "${description}"
                         }
                     }
 
+
+                    // ✅ VALIDATION : Numéro de téléphone obligatoire — jamais de fallback
+                    if (!senderPhone) {
+                        const errMsg = 'Numéro de téléphone de l\'expéditeur introuvable — post ignoré';
+                        await db.query(`UPDATE messages SET submission_failed = TRUE, analysis_error = $1 WHERE id = ANY($2)`, [errMsg, messageIds]);
+                        console.log(`🚫 [WhatsApp] Groupe ${messageIds} → ignoré (aucun numéro de téléphone extractible)`);
+                        return { success: false, error: errMsg };
+                    }
+
                     const nestUrl = process.env.NESTJS_API_URL || 'http://host.docker.internal:4000/properties/create-from-whatsapp';
+
 
                     try {
                         console.log(`📤 Envoi à NestJS: ${imagesBase64.length} images, groupe: ${whatsappGroupName} (${whatsappGroupId})...`);

@@ -667,6 +667,7 @@ async function processFacebookPost(post, db, groupInfo) {
         `UPDATE facebook_posts SET analysis_error = $1, updated_at = NOW() WHERE post_id = $2`,
         [errMsg, postId]
       );
+      console.warn(`❌ [Facebook] Refus NestJS pour post ${postId}: ${errMsg}`);
       return { success: false, error: errMsg };
     }
 
