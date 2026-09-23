@@ -316,6 +316,16 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
             await db.query('ALTER TABLE facebook_posts ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();');
             await db.query('ALTER TABLE facebook_posts ADD COLUMN IF NOT EXISTS is_client_demand BOOLEAN DEFAULT FALSE;');
             await db.query('ALTER TABLE facebook_groups ADD COLUMN IF NOT EXISTS is_validated BOOLEAN DEFAULT NULL;');
+            await db.query('ALTER TABLE facebook_groups ADD COLUMN IF NOT EXISTS cooldown_hours INTEGER NOT NULL DEFAULT 6;');
+            // État de couverture : ajouté sans modifier les posts ni le pipeline de modération.
+            await db.query('ALTER TABLE facebook_groups ADD COLUMN IF NOT EXISTS last_scrape_attempt_at TIMESTAMPTZ;');
+            await db.query('ALTER TABLE facebook_groups ADD COLUMN IF NOT EXISTS last_complete_oldest_post_at TIMESTAMPTZ;');
+            await db.query("ALTER TABLE facebook_groups ADD COLUMN IF NOT EXISTS last_scrape_status TEXT NOT NULL DEFAULT 'pending';");
+            await db.query('ALTER TABLE facebook_groups ADD COLUMN IF NOT EXISTS last_scrape_limit INTEGER;');
+            await db.query('ALTER TABLE facebook_groups ADD COLUMN IF NOT EXISTS last_scrape_count INTEGER;');
+            await db.query('ALTER TABLE facebook_groups ADD COLUMN IF NOT EXISTS consecutive_limit_hits INTEGER NOT NULL DEFAULT 0;');
+            await db.query('ALTER TABLE facebook_groups ADD COLUMN IF NOT EXISTS next_scrape_at TIMESTAMPTZ;');
+            await db.query('CREATE INDEX IF NOT EXISTS idx_fb_groups_next_scrape ON facebook_groups(next_scrape_at);');
 
             console.log('✅ Tables Facebook (facebook_groups, facebook_posts) prêtes.');
             // ────────────────────────────────────────────────────────────────
@@ -1596,6 +1606,63 @@ Texte à analyser : "${description}"
                     });
                 } catch (err) {
                     console.error('❌ [Facebook] Erreur upload:', err.message);
+                    res.status(500).json({ error: err.message });
+                }
+            });
+
+            /**
+             * POST /api/facebook/groups/:groupId/scrape-report
+             * Le scraper confirme ici si la fenêtre de posts est entièrement couverte.
+             * Un import partiel ne déclenche donc jamais le cooldown.
+             */
+            app.post('/api/facebook/groups/:groupId/scrape-report', async (req, res) => {
+                try {
+                    const { groupId } = req.params;
+                    const { status, limit, postCount, oldestPostAt, newestPostAt } = req.body || {};
+                    if (!['complete', 'incomplete'].includes(status)) {
+                        return res.status(400).json({ error: 'status doit être complete ou incomplete' });
+                    }
+                    const safeLimit = Number.isInteger(limit) && limit > 0 ? limit : null;
+                    const safePostCount = Number.isInteger(postCount) && postCount >= 0 ? postCount : 0;
+                    const oldest = oldestPostAt && !Number.isNaN(new Date(oldestPostAt).getTime()) ? new Date(oldestPostAt) : null;
+                    const newest = newestPostAt && !Number.isNaN(new Date(newestPostAt).getTime()) ? new Date(newestPostAt) : null;
+                    const completeQuery = [
+                        'UPDATE facebook_groups',
+                        'SET last_scraped_at = NOW(),',
+                        '    last_scrape_attempt_at = NOW(),',
+                        '    last_complete_oldest_post_at = $2,',
+                        '    most_recent_post_at = CASE',
+                        '      WHEN $3::timestamptz IS NULL THEN most_recent_post_at',
+                        '      WHEN most_recent_post_at IS NULL THEN $3::timestamptz',
+                        '      ELSE GREATEST(most_recent_post_at, $3::timestamptz)',
+                        '    END,',
+                        "    last_scrape_status = 'complete',",
+                        '    last_scrape_limit = $4,',
+                        '    last_scrape_count = $5,',
+                        '    consecutive_limit_hits = 0,',
+                        '    next_scrape_at = NOW() + make_interval(hours => COALESCE(cooldown_hours, 6))',
+                        'WHERE group_id = $1',
+                        'RETURNING *'
+                    ].join('\n');
+                    const incompleteQuery = [
+                        'UPDATE facebook_groups',
+                        'SET last_scrape_attempt_at = NOW(),',
+                        "    last_scrape_status = 'incomplete',",
+                        '    last_scrape_limit = $4,',
+                        '    last_scrape_count = $5,',
+                        '    consecutive_limit_hits = consecutive_limit_hits + 1,',
+                        '    next_scrape_at = NOW()',
+                        'WHERE group_id = $1',
+                        'RETURNING *'
+                    ].join('\n');
+                    const { rows } = await db.query(
+                        status === 'complete' ? completeQuery : incompleteQuery,
+                        [groupId, oldest, newest, safeLimit, safePostCount]
+                    );
+                    if (rows.length === 0) return res.status(404).json({ error: 'Groupe introuvable' });
+                    res.json({ success: true, group: rows[0] });
+                } catch (err) {
+                    console.error('❌ [Facebook] Erreur rapport de scraping:', err.message);
                     res.status(500).json({ error: err.message });
                 }
             });

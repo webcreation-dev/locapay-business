@@ -116,17 +116,23 @@ function extractPhone(text) {
  * Parse le timestamp relatif Facebook ("1m", "13m", "1h", "2h", "1d")
  * et retourne une date absolue à partir de scrapedAt
  */
-function parseRelativeTimestamp(scrapedAt, relative) {
+function parseRelativeTimestamp(scrapedAt, timestamp) {
   const base = new Date(scrapedAt);
-  if (!relative || typeof relative !== 'string') return base;
+  const fallback = Number.isNaN(base.getTime()) ? new Date() : base;
+  if (!timestamp || typeof timestamp !== 'string') return fallback;
 
-  const match = relative.trim().match(/^(\d+)\s*(m|h|d|s)$/i);
-  if (!match) return base;
+  const value = timestamp.trim();
+  const absolute = new Date(value);
+  // L'extension CRACKED renvoie souvent une date ISO/SQL, pas seulement \"2h\".
+  if (/^\d{4}-\d{2}-\d{2}/.test(value) && !Number.isNaN(absolute.getTime())) return absolute;
 
-  const val = parseInt(match[1]);
+  const match = value.match(/^(\d+)\s*(m|h|d|s)$/i);
+  if (!match) return fallback;
+
+  const val = parseInt(match[1], 10);
   const unit = match[2].toLowerCase();
   const msMap = { s: 1000, m: 60000, h: 3600000, d: 86400000 };
-  return new Date(base.getTime() - val * (msMap[unit] || 0));
+  return new Date(fallback.getTime() - val * (msMap[unit] || 0));
 }
 
 /**
@@ -758,14 +764,8 @@ async function importFacebookPosts(posts, db, explicitGroupId = null) {
 
   let inserted = 0, duplicates = 0, noMediaNoise = 0;
 
-  // Calculer le timestamp du post le plus récent (pour mode continuation)
-  const postTimestamps = posts
-    .filter(p => p.postId && p.scrapedAt && p.timestamp)
-    .map(p => parseRelativeTimestamp(p.scrapedAt, p.timestamp));
-
-  const mostRecentPostTimestamp = postTimestamps.length > 0
-    ? new Date(Math.max(...postTimestamps.map(d => d.getTime())))
-    : null;
+  // Le curseur de scraping est mis à jour uniquement par le rapport de passage
+  // reçu après l'import complet, jamais par un upload partiel.
 
   for (const post of posts) {
     // Validation minimale
@@ -780,14 +780,10 @@ async function importFacebookPosts(posts, db, explicitGroupId = null) {
     if (groupId) {
       await db.query(`
         INSERT INTO facebook_groups (group_id, group_url, group_name, last_scraped_at, most_recent_post_at)
-        VALUES ($1, $2, $3, NOW(), $4)
+        VALUES ($1, $2, $3, NULL, NULL)
         ON CONFLICT (group_id) DO UPDATE SET
-          last_scraped_at = NOW(),
-          most_recent_post_at = GREATEST(
-            facebook_groups.most_recent_post_at,
-            EXCLUDED.most_recent_post_at
-          )
-      `, [groupId, groupUrl, autoGroupName, mostRecentPostTimestamp]);
+          group_url = COALESCE(facebook_groups.group_url, EXCLUDED.group_url)
+      `, [groupId, groupUrl, autoGroupName]);
     }
 
     const imageUrls = Array.isArray(post.imageUrls) ? post.imageUrls : [];
