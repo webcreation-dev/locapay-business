@@ -15,6 +15,7 @@ const {
     processFacebookPost,
     extractPropertyDataDeterministic
 } = require('./facebook-processor');
+const { buildScrapeReportQuery } = require('./facebook-scrape-report-query');
 
 // Multer : stockage en mémoire pour les uploads JSON Facebook (légers < 10MB)
 const upload = multer({
@@ -1626,39 +1627,11 @@ Texte à analyser : "${description}"
                     const safePostCount = Number.isInteger(postCount) && postCount >= 0 ? postCount : 0;
                     const oldest = oldestPostAt && !Number.isNaN(new Date(oldestPostAt).getTime()) ? new Date(oldestPostAt) : null;
                     const newest = newestPostAt && !Number.isNaN(new Date(newestPostAt).getTime()) ? new Date(newestPostAt) : null;
-                    const completeQuery = [
-                        'UPDATE facebook_groups',
-                        'SET last_scraped_at = NOW(),',
-                        '    last_scrape_attempt_at = NOW(),',
-                        '    last_complete_oldest_post_at = $2,',
-                        '    most_recent_post_at = CASE',
-                        '      WHEN $3::timestamptz IS NULL THEN most_recent_post_at',
-                        '      WHEN most_recent_post_at IS NULL THEN $3::timestamptz',
-                        '      ELSE GREATEST(most_recent_post_at, $3::timestamptz)',
-                        '    END,',
-                        "    last_scrape_status = 'complete',",
-                        '    last_scrape_limit = $4,',
-                        '    last_scrape_count = $5,',
-                        '    consecutive_limit_hits = 0,',
-                        '    next_scrape_at = NOW() + make_interval(hours => COALESCE(cooldown_hours, 6))',
-                        'WHERE group_id = $1',
-                        'RETURNING *'
-                    ].join('\n');
-                    const incompleteQuery = [
-                        'UPDATE facebook_groups',
-                        'SET last_scrape_attempt_at = NOW(),',
-                        "    last_scrape_status = 'incomplete',",
-                        '    last_scrape_limit = $4,',
-                        '    last_scrape_count = $5,',
-                        '    consecutive_limit_hits = consecutive_limit_hits + 1,',
-                        '    next_scrape_at = NOW()',
-                        'WHERE group_id = $1',
-                        'RETURNING *'
-                    ].join('\n');
-                    const { rows } = await db.query(
-                        status === 'complete' ? completeQuery : incompleteQuery,
-                        [groupId, oldest, newest, safeLimit, safePostCount]
-                    );
+                    const query = buildScrapeReportQuery({
+                        status, groupId, oldest, newest,
+                        limit: safeLimit, postCount: safePostCount
+                    });
+                    const { rows } = await db.query(query.text, query.values);
                     if (rows.length === 0) return res.status(404).json({ error: 'Groupe introuvable' });
                     res.json({ success: true, group: rows[0] });
                 } catch (err) {
@@ -2749,4 +2722,3 @@ app.post('/api/webhook/wasender', async (req, res) => {
         }
     }
 })();
-
