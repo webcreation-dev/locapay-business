@@ -2238,7 +2238,7 @@ Texte à analyser : "${description}"
 
                     console.log(`📊 [Backfill Stats] Appel backend: ${nestUrl}`);
                     const backendResponse = await axios.get(nestUrl, { timeout: 30000 });
-                    const propertyIds = backendResponse.data?.property_ids || [];
+                    const propertyIds = backendResponse.data?.data?.property_ids || [];
 
                     console.log(`📊 [Backfill Stats] Backend a retourné ${propertyIds.length} biens ACTIFS Facebook sans vidéo`);
 
@@ -2310,7 +2310,7 @@ Texte à analyser : "${description}"
                     console.log(`🎬 [Backfill Videos] Appel backend: ${nestUrl}`);
 
                     const backendResponse = await axios.get(nestUrl, { timeout: 30000 });
-                    const propertyIds = backendResponse.data?.property_ids || [];
+                    const propertyIds = backendResponse.data?.data?.property_ids || [];
 
                     console.log(`🎬 [Backfill Videos] Backend a retourné ${propertyIds.length} biens ACTIFS Facebook sans vidéo`);
 
