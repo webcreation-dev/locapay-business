@@ -2226,6 +2226,184 @@ Texte à analyser : "${description}"
                 }
             });
 
+            /**
+             * GET /api/facebook/backfill-videos/stats
+             * Statistiques sur les vidéos Facebook à récupérer (avant de lancer le backfill)
+             */
+            app.get('/api/facebook/backfill-videos/stats', async (req, res) => {
+                try {
+                    // 1. Appeler le backend pour récupérer les IDs des biens sans vidéo
+                    const nestUrl = (process.env.NESTJS_FACEBOOK_URL || 'http://nestjs_app:8000/properties/create-from-facebook')
+                        .replace('/create-from-facebook', '/facebook-missing-videos');
+
+                    console.log(`📊 [Backfill Stats] Appel backend: ${nestUrl}`);
+                    const backendResponse = await axios.get(nestUrl, { timeout: 30000 });
+                    const propertyIds = backendResponse.data?.property_ids || [];
+
+                    if (propertyIds.length === 0) {
+                        return res.json({
+                            success: true,
+                            message: 'Aucun bien Facebook sans vidéo trouvé',
+                            stats: { total_biens_sans_video: 0, posts_avec_video: 0, posts_recuperables: [] }
+                        });
+                    }
+
+                    // 2. Croiser avec facebook_posts pour voir combien ont des vidéos
+                    const { rows } = await db.query(`
+                        SELECT
+                            fp.post_id,
+                            fp.real_property_id,
+                            fp.video_url,
+                            fp.text,
+                            fg.group_name
+                        FROM facebook_posts fp
+                        LEFT JOIN facebook_groups fg ON fp.group_id = fg.group_id
+                        WHERE fp.real_property_id = ANY($1::int[])
+                          AND fp.video_url IS NOT NULL
+                          AND fp.video_url != ''
+                    `, [propertyIds]);
+
+                    res.json({
+                        success: true,
+                        stats: {
+                            total_biens_sans_video: propertyIds.length,
+                            posts_avec_video: rows.length,
+                            posts_recuperables: rows.map(r => ({
+                                post_id: r.post_id,
+                                property_id: r.real_property_id,
+                                video_url: r.video_url,
+                                group_name: r.group_name,
+                                text_preview: r.text?.substring(0, 100) + '...'
+                            }))
+                        }
+                    });
+                } catch (err) {
+                    console.error(`❌ [Backfill Stats] Erreur:`, err.message);
+                    res.status(500).json({ success: false, error: err.message });
+                }
+            });
+
+            /**
+             * POST /api/facebook/backfill-videos
+             * Lance le backfill des vidéos Facebook pour les biens existants
+             * Utilise Server-Sent Events pour envoyer la progression en temps réel
+             */
+            app.post('/api/facebook/backfill-videos', async (req, res) => {
+                // Configuration SSE pour la progression
+                res.setHeader('Content-Type', 'text/event-stream');
+                res.setHeader('Cache-Control', 'no-cache');
+                res.setHeader('Connection', 'keep-alive');
+                res.flushHeaders();
+
+                const sendEvent = (data) => {
+                    res.write(`data: ${JSON.stringify(data)}\n\n`);
+                };
+
+                try {
+                    // 1. Appeler le backend pour récupérer les IDs des biens sans vidéo
+                    const nestUrl = (process.env.NESTJS_FACEBOOK_URL || 'http://nestjs_app:8000/properties/create-from-facebook')
+                        .replace('/create-from-facebook', '/facebook-missing-videos');
+
+                    sendEvent({ type: 'info', message: `Récupération des biens sans vidéo depuis le backend...` });
+
+                    const backendResponse = await axios.get(nestUrl, { timeout: 30000 });
+                    const propertyIds = backendResponse.data?.property_ids || [];
+
+                    if (propertyIds.length === 0) {
+                        sendEvent({ type: 'complete', message: 'Aucun bien Facebook sans vidéo trouvé', stats: { success: 0, errors: 0, total: 0 } });
+                        return res.end();
+                    }
+
+                    sendEvent({ type: 'info', message: `${propertyIds.length} biens sans vidéo trouvés` });
+
+                    // 2. Récupérer les posts Facebook correspondants avec vidéo
+                    const { rows: posts } = await db.query(`
+                        SELECT
+                            fp.post_id,
+                            fp.real_property_id,
+                            fp.video_url,
+                            fg.group_name
+                        FROM facebook_posts fp
+                        LEFT JOIN facebook_groups fg ON fp.group_id = fg.group_id
+                        WHERE fp.real_property_id = ANY($1::int[])
+                          AND fp.video_url IS NOT NULL
+                          AND fp.video_url != ''
+                    `, [propertyIds]);
+
+                    if (posts.length === 0) {
+                        sendEvent({ type: 'complete', message: 'Aucun post Facebook avec vidéo trouvé pour ces biens', stats: { success: 0, errors: 0, total: 0 } });
+                        return res.end();
+                    }
+
+                    sendEvent({ type: 'info', message: `${posts.length} posts avec vidéo à traiter` });
+
+                    // 3. Traiter chaque post
+                    let success = 0, errors = 0;
+                    const patchUrl = (process.env.NESTJS_FACEBOOK_URL || 'http://nestjs_app:8000/properties/create-from-facebook')
+                        .replace('/create-from-facebook', '');
+
+                    for (let i = 0; i < posts.length; i++) {
+                        const post = posts[i];
+                        sendEvent({
+                            type: 'progress',
+                            current: i + 1,
+                            total: posts.length,
+                            message: `Traitement du bien #${post.real_property_id}...`
+                        });
+
+                        try {
+                            // a. Télécharger et uploader la vidéo sur Bunny
+                            const { processVideoForBunny } = require('./facebook-processor');
+                            const videoResult = await processVideoForBunny(post.video_url, post.post_id);
+
+                            if (!videoResult) {
+                                sendEvent({ type: 'error', message: `Échec upload vidéo pour bien #${post.real_property_id}` });
+                                errors++;
+                                continue;
+                            }
+
+                            // b. Appeler PATCH /properties/:id/video
+                            const patchResponse = await axios.patch(
+                                `${patchUrl}/${post.real_property_id}/video`,
+                                { video_url: videoResult.url },
+                                { timeout: 30000 }
+                            );
+
+                            if (patchResponse.data?.success) {
+                                sendEvent({
+                                    type: 'success',
+                                    message: `✅ Bien #${post.real_property_id} mis à jour avec vidéo`,
+                                    property_id: post.real_property_id,
+                                    video_url: videoResult.url
+                                });
+                                success++;
+                            } else {
+                                sendEvent({ type: 'error', message: `Échec PATCH pour bien #${post.real_property_id}: ${patchResponse.data?.error}` });
+                                errors++;
+                            }
+                        } catch (err) {
+                            sendEvent({ type: 'error', message: `Erreur bien #${post.real_property_id}: ${err.message}` });
+                            errors++;
+                        }
+
+                        // Pause de 3s entre chaque pour ne pas surcharger
+                        await new Promise(r => setTimeout(r, 3000));
+                    }
+
+                    sendEvent({
+                        type: 'complete',
+                        message: `Backfill terminé: ${success} succès, ${errors} erreurs`,
+                        stats: { success, errors, total: posts.length }
+                    });
+                    res.end();
+
+                } catch (err) {
+                    console.error(`❌ [Backfill Videos] Erreur:`, err.message);
+                    sendEvent({ type: 'fatal', error: err.message });
+                    res.end();
+                }
+            });
+
             // ═══════════════════════════════════════════════════════════════
 
             // -- ROUTES STATUS BOT -test-

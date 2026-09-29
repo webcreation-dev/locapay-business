@@ -10,6 +10,13 @@ const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 const nodemailer = require('nodemailer');
+const { execSync } = require('child_process');
+const os = require('os');
+
+// ─── CONFIGURATION BUNNY STREAM (Vidéos) ────────────────────────────────────
+const BUNNY_STREAM_LIBRARY_ID = process.env.BUNNY_STREAM_LIBRARY_ID;
+const BUNNY_STREAM_API_KEY = process.env.BUNNY_STREAM_API_KEY;
+const BUNNY_STREAM_PULL_ZONE = process.env.BUNNY_STREAM_PULL_ZONE;
 
 // --- CONFIGURATION ALERTE MAIL FACEBOOK ---
 const transporter = nodemailer.createTransport({
@@ -167,6 +174,165 @@ async function downloadImageAsBase64(url, timeoutMs = 15000) {
   } catch (err) {
     console.warn(`⚠️ [Facebook] Échec téléchargement image: ${url.substring(0, 80)}... — ${err.message}`);
     return null;
+  }
+}
+
+/**
+ * Télécharge une vidéo Facebook/Reel via yt-dlp
+ * @param {string} videoUrl - URL Facebook de la vidéo/reel
+ * @returns {Promise<string|null>} - Chemin du fichier téléchargé ou null si échec
+ */
+async function downloadFacebookVideo(videoUrl) {
+  if (!videoUrl || !videoUrl.includes('facebook.com')) {
+    console.warn(`⚠️ [Facebook Video] URL invalide: ${videoUrl}`);
+    return null;
+  }
+
+  const tempDir = os.tmpdir();
+  const outputPath = path.join(tempDir, `fb_video_${Date.now()}.mp4`);
+
+  try {
+    console.log(`📹 [Facebook Video] Téléchargement de ${videoUrl.substring(0, 60)}...`);
+
+    // Utiliser yt-dlp pour télécharger la vidéo
+    // --quiet : pas de sortie verbose
+    // --no-warnings : pas de warnings
+    // -f best : meilleure qualité disponible
+    // --merge-output-format mp4 : forcer le format mp4
+    const cmd = `yt-dlp "${videoUrl}" -o "${outputPath}" --quiet --no-warnings -f "best[ext=mp4]/best" --merge-output-format mp4`;
+
+    execSync(cmd, {
+      timeout: 120000, // 2 minutes max
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+
+    // Vérifier que le fichier existe
+    if (fs.existsSync(outputPath)) {
+      const stats = fs.statSync(outputPath);
+      console.log(`✅ [Facebook Video] Téléchargé: ${(stats.size / (1024 * 1024)).toFixed(2)} MB`);
+      return outputPath;
+    }
+
+    console.warn(`⚠️ [Facebook Video] Fichier non trouvé après téléchargement`);
+    return null;
+  } catch (err) {
+    console.error(`❌ [Facebook Video] Erreur téléchargement: ${err.message}`);
+    // Nettoyer le fichier partiel si existant
+    if (fs.existsSync(outputPath)) {
+      fs.unlinkSync(outputPath);
+    }
+    return null;
+  }
+}
+
+/**
+ * Upload une vidéo sur Bunny Stream
+ * @param {Buffer} buffer - Contenu de la vidéo
+ * @param {string} title - Titre de la vidéo
+ * @returns {Promise<{videoId: string, videoUrl: string}|null>} - ID et URL de la vidéo ou null si échec
+ */
+async function uploadToBunnyStream(buffer, title) {
+  if (!BUNNY_STREAM_LIBRARY_ID || !BUNNY_STREAM_API_KEY) {
+    console.error('❌ [Bunny Stream] Credentials manquants dans .env');
+    return null;
+  }
+
+  try {
+    console.log(`📤 [Bunny Stream] Création de la vidéo "${title}"...`);
+
+    // 1. Créer la vidéo dans Bunny Stream
+    const createResponse = await axios.post(
+      `https://video.bunnycdn.com/library/${BUNNY_STREAM_LIBRARY_ID}/videos`,
+      { title },
+      {
+        headers: {
+          'AccessKey': BUNNY_STREAM_API_KEY,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        timeout: 30000,
+      }
+    );
+
+    const videoId = createResponse.data.guid;
+    console.log(`✅ [Bunny Stream] Vidéo créée avec ID: ${videoId}`);
+
+    // 2. Upload le contenu de la vidéo
+    console.log(`📤 [Bunny Stream] Upload du contenu (${(buffer.length / (1024 * 1024)).toFixed(2)} MB)...`);
+
+    await axios.put(
+      `https://video.bunnycdn.com/library/${BUNNY_STREAM_LIBRARY_ID}/videos/${videoId}`,
+      buffer,
+      {
+        headers: {
+          'AccessKey': BUNNY_STREAM_API_KEY,
+          'Content-Type': 'application/octet-stream',
+        },
+        timeout: 300000, // 5 minutes pour l'upload
+        maxContentLength: Infinity,
+        maxBodyLength: Infinity,
+      }
+    );
+
+    console.log(`✅ [Bunny Stream] Upload terminé pour ${videoId}`);
+
+    // 3. Construire l'URL de lecture
+    // Format: https://video.bunnycdn.com/play/{libraryId}/{videoId}
+    const videoUrl = `https://video.bunnycdn.com/play/${BUNNY_STREAM_LIBRARY_ID}/${videoId}`;
+
+    return { videoId, videoUrl };
+  } catch (err) {
+    console.error(`❌ [Bunny Stream] Erreur upload: ${err.response?.data?.message || err.message}`);
+    return null;
+  }
+}
+
+/**
+ * Télécharge une vidéo Facebook et l'upload sur Bunny Stream
+ * @param {string} videoUrl - URL Facebook de la vidéo/reel
+ * @param {string} postId - ID du post (pour le titre)
+ * @returns {Promise<{url: string, mimeType: string}|null>} - Objet media_url ou null
+ */
+async function processVideoForBunny(videoUrl, postId) {
+  let localPath = null;
+
+  try {
+    // 1. Télécharger la vidéo
+    localPath = await downloadFacebookVideo(videoUrl);
+    if (!localPath) {
+      return null;
+    }
+
+    // 2. Lire le fichier en buffer
+    const buffer = fs.readFileSync(localPath);
+
+    // 3. Upload sur Bunny Stream
+    const title = `Facebook_${postId}_${Date.now()}`;
+    const result = await uploadToBunnyStream(buffer, title);
+
+    if (!result) {
+      return null;
+    }
+
+    console.log(`✅ [Facebook→Bunny] Vidéo uploadée: ${result.videoUrl}`);
+
+    return {
+      url: result.videoUrl,
+      mimeType: 'video/mp4'
+    };
+  } catch (err) {
+    console.error(`❌ [Facebook→Bunny] Erreur: ${err.message}`);
+    return null;
+  } finally {
+    // Nettoyer le fichier local
+    if (localPath && fs.existsSync(localPath)) {
+      try {
+        fs.unlinkSync(localPath);
+        console.log(`🗑️ [Facebook Video] Fichier temporaire supprimé`);
+      } catch (e) {
+        console.warn(`⚠️ [Facebook Video] Impossible de supprimer ${localPath}`);
+      }
+    }
   }
 }
 
@@ -505,6 +671,19 @@ async function processFacebookPost(post, db, groupInfo) {
       console.log(`✅ [Facebook] ${imagesBase64.length}/${imageUrls.length} images téléchargées pour post ${postId}`);
     }
 
+    // ── 4.5 Téléchargement et upload de la vidéo sur Bunny Stream ────────────
+    const mediaUrls = [];
+    if (hasVideo) {
+      console.log(`🎬 [Facebook] Vidéo détectée pour post ${postId}: ${post.video_url.substring(0, 60)}...`);
+      const videoResult = await processVideoForBunny(post.video_url, postId);
+      if (videoResult) {
+        mediaUrls.push(videoResult);
+        console.log(`✅ [Facebook] Vidéo uploadée sur Bunny: ${videoResult.url}`);
+      } else {
+        console.warn(`⚠️ [Facebook] Échec upload vidéo pour post ${postId} — on continue sans la vidéo`);
+      }
+    }
+
     // ── 5. Analyse : IA (OpenRouter) ou Algorithme Déterministe (Regex) ───────
     const useAI = process.env.USE_AI_FACEBOOK_EXTRACTION === 'true';
     let extractedData;
@@ -631,12 +810,13 @@ async function processFacebookPost(post, db, groupInfo) {
       || process.env.NESTJS_API_URL?.replace('create-from-whatsapp', 'create-from-facebook')
       || 'http://nestjs_app:8000/properties/create-from-facebook';
 
-    console.log(`📤 [Facebook] Envoi à NestJS: ${imagesBase64.length} images, post ${postId}...`);
+    console.log(`📤 [Facebook] Envoi à NestJS: ${imagesBase64.length} images, ${mediaUrls.length} vidéo(s), post ${postId}...`);
 
     const nestResponse = await axios.post(nestUrl, {
       description: post.text,
       manager_phone: managerPhone,
       images_base64: imagesBase64,
+      media_urls: mediaUrls, // URLs Bunny CDN (vidéos)
       user_id: process.env.LOCAPAY_BOT_USER_ID || 1,
       extracted_data: extractedData,
       // Traçabilité Facebook
@@ -908,4 +1088,5 @@ module.exports = {
   normalizeText,
   triggerNestPropertyBump,
   extractPropertyDataDeterministic,
+  processVideoForBunny, // Pour le backfill des vidéos
 };
