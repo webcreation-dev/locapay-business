@@ -2240,10 +2240,12 @@ Texte à analyser : "${description}"
                     const backendResponse = await axios.get(nestUrl, { timeout: 30000 });
                     const propertyIds = backendResponse.data?.property_ids || [];
 
+                    console.log(`📊 [Backfill Stats] Backend a retourné ${propertyIds.length} biens ACTIFS Facebook sans vidéo`);
+
                     if (propertyIds.length === 0) {
                         return res.json({
                             success: true,
-                            message: 'Aucun bien Facebook sans vidéo trouvé',
+                            message: 'Aucun bien Facebook ACTIF sans vidéo trouvé',
                             stats: { total_biens_sans_video: 0, posts_avec_video: 0, posts_recuperables: [] }
                         });
                     }
@@ -2304,17 +2306,21 @@ Texte à analyser : "${description}"
                     const nestUrl = (process.env.NESTJS_FACEBOOK_URL || 'http://nestjs_app:8000/properties/create-from-facebook')
                         .replace('/create-from-facebook', '/facebook-missing-videos');
 
-                    sendEvent({ type: 'info', message: `Récupération des biens sans vidéo depuis le backend...` });
+                    sendEvent({ type: 'info', message: `Récupération des biens ACTIFS Facebook sans vidéo depuis le backend...` });
+                    console.log(`🎬 [Backfill Videos] Appel backend: ${nestUrl}`);
 
                     const backendResponse = await axios.get(nestUrl, { timeout: 30000 });
                     const propertyIds = backendResponse.data?.property_ids || [];
 
+                    console.log(`🎬 [Backfill Videos] Backend a retourné ${propertyIds.length} biens ACTIFS Facebook sans vidéo`);
+
                     if (propertyIds.length === 0) {
-                        sendEvent({ type: 'complete', message: 'Aucun bien Facebook sans vidéo trouvé', stats: { success: 0, errors: 0, total: 0 } });
+                        sendEvent({ type: 'complete', message: 'Aucun bien Facebook ACTIF sans vidéo trouvé', stats: { success: 0, errors: 0, total: 0 } });
+                        console.log(`🎬 [Backfill Videos] Terminé — aucun bien à traiter`);
                         return res.end();
                     }
 
-                    sendEvent({ type: 'info', message: `${propertyIds.length} biens sans vidéo trouvés` });
+                    sendEvent({ type: 'info', message: `${propertyIds.length} biens ACTIFS Facebook sans vidéo trouvés` });
 
                     // 2. Récupérer les posts Facebook correspondants avec vidéo
                     const { rows: posts } = await db.query(`
@@ -2331,11 +2337,13 @@ Texte à analyser : "${description}"
                     `, [propertyIds]);
 
                     if (posts.length === 0) {
-                        sendEvent({ type: 'complete', message: 'Aucun post Facebook avec vidéo trouvé pour ces biens', stats: { success: 0, errors: 0, total: 0 } });
+                        sendEvent({ type: 'complete', message: 'Aucun post Facebook avec vidéo trouvé pour ces biens ACTIFS', stats: { success: 0, errors: 0, total: 0 } });
+                        console.log(`🎬 [Backfill Videos] Terminé — aucun post avec vidéo trouvé dans la BDD scraper`);
                         return res.end();
                     }
 
-                    sendEvent({ type: 'info', message: `${posts.length} posts avec vidéo à traiter` });
+                    console.log(`🎬 [Backfill Videos] ${posts.length} posts avec vidéo trouvés, début du traitement...`);
+                    sendEvent({ type: 'info', message: `${posts.length} posts avec vidéo à traiter pour des biens ACTIFS` });
 
                     // 3. Traiter chaque post
                     let success = 0, errors = 0;
@@ -2344,25 +2352,29 @@ Texte à analyser : "${description}"
 
                     for (let i = 0; i < posts.length; i++) {
                         const post = posts[i];
+                        console.log(`🎬 [Backfill Videos] [${i + 1}/${posts.length}] Traitement bien #${post.real_property_id} (post ${post.post_id})...`);
                         sendEvent({
                             type: 'progress',
                             current: i + 1,
                             total: posts.length,
-                            message: `Traitement du bien #${post.real_property_id}...`
+                            message: `Traitement du bien ACTIF #${post.real_property_id}...`
                         });
 
                         try {
                             // a. Télécharger et uploader la vidéo sur Bunny
+                            console.log(`🎬 [Backfill Videos] [${i + 1}/${posts.length}] Téléchargement vidéo: ${post.video_url.substring(0, 60)}...`);
                             const { processVideoForBunny } = require('./facebook-processor');
                             const videoResult = await processVideoForBunny(post.video_url, post.post_id);
 
                             if (!videoResult) {
+                                console.log(`❌ [Backfill Videos] [${i + 1}/${posts.length}] Échec upload vidéo pour bien #${post.real_property_id}`);
                                 sendEvent({ type: 'error', message: `Échec upload vidéo pour bien #${post.real_property_id}` });
                                 errors++;
                                 continue;
                             }
 
                             // b. Appeler PATCH /properties/:id/video
+                            console.log(`🎬 [Backfill Videos] [${i + 1}/${posts.length}] PATCH ${patchUrl}/${post.real_property_id}/video`);
                             const patchResponse = await axios.patch(
                                 `${patchUrl}/${post.real_property_id}/video`,
                                 { video_url: videoResult.url },
@@ -2370,18 +2382,21 @@ Texte à analyser : "${description}"
                             );
 
                             if (patchResponse.data?.success) {
+                                console.log(`✅ [Backfill Videos] [${i + 1}/${posts.length}] Bien #${post.real_property_id} mis à jour avec vidéo`);
                                 sendEvent({
                                     type: 'success',
-                                    message: `✅ Bien #${post.real_property_id} mis à jour avec vidéo`,
+                                    message: `✅ Bien ACTIF #${post.real_property_id} mis à jour avec vidéo`,
                                     property_id: post.real_property_id,
                                     video_url: videoResult.url
                                 });
                                 success++;
                             } else {
+                                console.log(`❌ [Backfill Videos] [${i + 1}/${posts.length}] Échec PATCH pour bien #${post.real_property_id}: ${patchResponse.data?.error}`);
                                 sendEvent({ type: 'error', message: `Échec PATCH pour bien #${post.real_property_id}: ${patchResponse.data?.error}` });
                                 errors++;
                             }
                         } catch (err) {
+                            console.log(`❌ [Backfill Videos] [${i + 1}/${posts.length}] Erreur bien #${post.real_property_id}: ${err.message}`);
                             sendEvent({ type: 'error', message: `Erreur bien #${post.real_property_id}: ${err.message}` });
                             errors++;
                         }
@@ -2390,9 +2405,11 @@ Texte à analyser : "${description}"
                         await new Promise(r => setTimeout(r, 3000));
                     }
 
+                    console.log(`🎬 [Backfill Videos] ========== TERMINÉ ==========`);
+                    console.log(`🎬 [Backfill Videos] Succès: ${success} | Erreurs: ${errors} | Total: ${posts.length}`);
                     sendEvent({
                         type: 'complete',
-                        message: `Backfill terminé: ${success} succès, ${errors} erreurs`,
+                        message: `Backfill terminé: ${success} succès, ${errors} erreurs sur ${posts.length} biens ACTIFS`,
                         stats: { success, errors, total: posts.length }
                     });
                     res.end();
