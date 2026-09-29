@@ -2234,7 +2234,7 @@ Texte à analyser : "${description}"
                 try {
                     // 1. Appeler le backend pour récupérer les IDs des biens sans vidéo
                     const nestUrl = (process.env.NESTJS_FACEBOOK_URL || 'http://nestjs_app:8000/properties/create-from-facebook')
-                        .replace('/create-from-facebook', '/facebook-missing-videos');
+                        .replace('/create-from-facebook', '/scraper/facebook-missing-videos');
 
                     console.log(`📊 [Backfill Stats] Appel backend: ${nestUrl}`);
                     const backendResponse = await axios.get(nestUrl, { timeout: 30000 });
@@ -2304,7 +2304,7 @@ Texte à analyser : "${description}"
                 try {
                     // 1. Appeler le backend pour récupérer les IDs des biens sans vidéo
                     const nestUrl = (process.env.NESTJS_FACEBOOK_URL || 'http://nestjs_app:8000/properties/create-from-facebook')
-                        .replace('/create-from-facebook', '/facebook-missing-videos');
+                        .replace('/create-from-facebook', '/scraper/facebook-missing-videos');
 
                     sendEvent({ type: 'info', message: `Récupération des biens ACTIFS Facebook sans vidéo depuis le backend...` });
                     console.log(`🎬 [Backfill Videos] Appel backend: ${nestUrl}`);
@@ -2373,10 +2373,10 @@ Texte à analyser : "${description}"
                                 continue;
                             }
 
-                            // b. Appeler PATCH /properties/:id/video
-                            console.log(`🎬 [Backfill Videos] [${i + 1}/${posts.length}] PATCH ${patchUrl}/${post.real_property_id}/video`);
+                            // b. Appeler PATCH /properties/scraper/update-video/:id
+                            console.log(`🎬 [Backfill Videos] [${i + 1}/${posts.length}] PATCH ${patchUrl}/scraper/update-video/${post.real_property_id}`);
                             const patchResponse = await axios.patch(
-                                `${patchUrl}/${post.real_property_id}/video`,
+                                `${patchUrl}/scraper/update-video/${post.real_property_id}`,
                                 { video_url: videoResult.url },
                                 { timeout: 30000 }
                             );
