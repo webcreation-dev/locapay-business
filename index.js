@@ -1687,13 +1687,16 @@ Texte à analyser : "${description}"
 
                     const result = await db.query(`
                         SELECT
-                            group_id,
-                            group_name,
-                            last_scraped_at,
-                            most_recent_post_at,
-                            is_validated
-                        FROM facebook_groups
-                        WHERE group_id = $1
+                            fg.group_id,
+                            fg.group_name,
+                            fg.last_scraped_at,
+                            fg.most_recent_post_at,
+                            fg.is_validated,
+                            MAX(fp.scraped_at) AS computed_watermark
+                        FROM facebook_groups fg
+                        LEFT JOIN facebook_posts fp ON fp.group_id = fg.group_id
+                        WHERE fg.group_id = $1
+                        GROUP BY fg.id
                     `, [groupId]);
 
                     if (result.rows.length === 0) {
@@ -1701,15 +1704,19 @@ Texte à analyser : "${description}"
                         return res.json({
                             groupId,
                             lastScrapedAt: null,
+                            most_recent_post_at: null,
                             isNewGroup: true
                         });
                     }
 
                     const group = result.rows[0];
+                    // Utiliser computed_watermark (MAX scraped_at réel) au lieu de most_recent_post_at figé
+                    const watermark = group.computed_watermark || group.most_recent_post_at || group.last_scraped_at;
                     res.json({
                         groupId: group.group_id,
                         groupName: group.group_name,
-                        lastScrapedAt: group.most_recent_post_at || group.last_scraped_at,  // Utiliser most_recent_post_at si disponible
+                        lastScrapedAt: watermark,
+                        most_recent_post_at: watermark,  // Pour compatibilité avec le scraper
                         isValidated: group.is_validated,
                         isNewGroup: false
                     });
