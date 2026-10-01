@@ -1695,12 +1695,14 @@ Texte à analyser : "${description}"
                             fg.group_id,
                             fg.group_name,
                             fg.last_scraped_at,
-                            fg.most_recent_post_at,
+                            COALESCE(MAX(fp.scraped_at), fg.most_recent_post_at) AS most_recent_post_at,
                             fg.is_validated,
                             fg.cooldown_hours,
                             fg.most_recent_post_id
                         FROM facebook_groups fg
+                        LEFT JOIN facebook_posts fp ON fp.group_id = fg.group_id
                         WHERE fg.group_id = $1
+                        GROUP BY fg.group_id, fg.group_name, fg.last_scraped_at, fg.most_recent_post_at, fg.is_validated, fg.cooldown_hours, fg.most_recent_post_id
                     `, [groupId]);
 
                     if (result.rows.length === 0) {
@@ -2650,13 +2652,13 @@ app.post('/api/webhook/wasender', async (req, res) => {
         if (!remoteJid || remoteJid === 'status@broadcast') return;
 
         const isGroup = remoteJid.endsWith('@g.us');
-        
+
         let actualSenderId = remoteJid;
         if (isGroup) {
             actualSenderId = messageKey.participantPn || messageKey.participant || remoteJid;
             if (actualSenderId && !actualSenderId.includes('@')) actualSenderId += '@s.whatsapp.net';
         }
-        
+
         const senderId = actualSenderId;
         const senderNumber = senderId.split('@')[0];
         const senderName = msgObj.pushName || "Inconnu";
