@@ -8,15 +8,17 @@ function assertContiguousParameters(query) {
         query.values.map((_, index) => index + 1));
 }
 
-test('un rapport complet conserve les dates et cinq paramètres SQL', () => {
+test('un rapport complet conserve le checkpoint date + post_id et six paramètres SQL', () => {
     const oldest = new Date('2026-09-28T12:00:00Z');
     const newest = new Date('2026-09-29T00:00:00Z');
     const query = buildScrapeReportQuery({
-        status: 'complete', groupId: 'group-1', oldest, newest, limit: 100, postCount: 15
+        status: 'complete', groupId: 'group-1', oldest, newest,
+        newestPostId: 'post-15h', limit: 100, postCount: 15
     });
     assertContiguousParameters(query);
-    assert.deepEqual(query.values, ['group-1', oldest, newest, 100, 15]);
+    assert.deepEqual(query.values, ['group-1', oldest, newest, 'post-15h', 100, 15]);
     assert.match(query.text, /last_scrape_status = 'complete'/);
+    assert.match(query.text, /most_recent_post_id/);
 });
 
 test('un rapport incomplet ne laisse aucun paramètre SQL sans type', () => {

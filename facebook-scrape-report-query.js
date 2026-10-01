@@ -8,9 +8,14 @@ const completeQuery = [
     '      WHEN most_recent_post_at IS NULL THEN $3::timestamptz',
     '      ELSE GREATEST(most_recent_post_at, $3::timestamptz)',
     '    END,',
+    '    most_recent_post_id = CASE',
+    '      WHEN $3::timestamptz IS NULL THEN most_recent_post_id',
+    '      WHEN most_recent_post_at IS NULL OR $3::timestamptz >= most_recent_post_at THEN COALESCE($4, most_recent_post_id)',
+    '      ELSE most_recent_post_id',
+    '    END,',
     "    last_scrape_status = 'complete',",
-    '    last_scrape_limit = $4,',
-    '    last_scrape_count = $5,',
+    '    last_scrape_limit = $5,',
+    '    last_scrape_count = $6,',
     '    consecutive_limit_hits = 0,',
     '    next_scrape_at = NOW() + make_interval(hours => COALESCE(cooldown_hours, 6))',
     'WHERE group_id = $1',
@@ -29,9 +34,9 @@ const incompleteQuery = [
     'RETURNING *'
 ].join('\n');
 
-function buildScrapeReportQuery({ status, groupId, oldest, newest, limit, postCount }) {
+function buildScrapeReportQuery({ status, groupId, oldest, newest, newestPostId, limit, postCount }) {
     if (status === 'complete') {
-        return { text: completeQuery, values: [groupId, oldest, newest, limit, postCount] };
+        return { text: completeQuery, values: [groupId, oldest, newest, newestPostId || null, limit, postCount] };
     }
     if (status === 'incomplete') {
         return { text: incompleteQuery, values: [groupId, limit, postCount] };

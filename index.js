@@ -282,6 +282,7 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
                     group_name TEXT,
                     last_scraped_at TIMESTAMPTZ DEFAULT NOW(),
                     most_recent_post_at TIMESTAMPTZ,
+                    most_recent_post_id TEXT,
                     created_at TIMESTAMPTZ DEFAULT NOW()
                 );
             `);
@@ -326,6 +327,9 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
             await db.query('ALTER TABLE facebook_groups ADD COLUMN IF NOT EXISTS last_scrape_count INTEGER;');
             await db.query('ALTER TABLE facebook_groups ADD COLUMN IF NOT EXISTS consecutive_limit_hits INTEGER NOT NULL DEFAULT 0;');
             await db.query('ALTER TABLE facebook_groups ADD COLUMN IF NOT EXISTS next_scrape_at TIMESTAMPTZ;');
+            // Checkpoint exact de reprise. Il n'est modifié que par un rapport
+            // de couverture complet, jamais par les imports progressifs.
+            await db.query('ALTER TABLE facebook_groups ADD COLUMN IF NOT EXISTS most_recent_post_id TEXT;');
             await db.query('CREATE INDEX IF NOT EXISTS idx_fb_groups_next_scrape ON facebook_groups(next_scrape_at);');
 
             console.log('✅ Tables Facebook (facebook_groups, facebook_posts) prêtes.');
@@ -1619,7 +1623,7 @@ Texte à analyser : "${description}"
             app.post('/api/facebook/groups/:groupId/scrape-report', async (req, res) => {
                 try {
                     const { groupId } = req.params;
-                    const { status, limit, postCount, oldestPostAt, newestPostAt } = req.body || {};
+                    const { status, limit, postCount, oldestPostAt, newestPostAt, newestPostId } = req.body || {};
                     if (!['complete', 'incomplete'].includes(status)) {
                         return res.status(400).json({ error: 'status doit être complete ou incomplete' });
                     }
@@ -1629,6 +1633,7 @@ Texte à analyser : "${description}"
                     const newest = newestPostAt && !Number.isNaN(new Date(newestPostAt).getTime()) ? new Date(newestPostAt) : null;
                     const query = buildScrapeReportQuery({
                         status, groupId, oldest, newest,
+                        newestPostId: newestPostId ? String(newestPostId) : null,
                         limit: safeLimit, postCount: safePostCount
                     });
                     const { rows } = await db.query(query.text, query.values);
@@ -1692,11 +1697,10 @@ Texte à analyser : "${description}"
                             fg.last_scraped_at,
                             fg.most_recent_post_at,
                             fg.is_validated,
-                            MAX(fp.scraped_at) AS computed_watermark
+                            fg.cooldown_hours,
+                            fg.most_recent_post_id
                         FROM facebook_groups fg
-                        LEFT JOIN facebook_posts fp ON fp.group_id = fg.group_id
                         WHERE fg.group_id = $1
-                        GROUP BY fg.id
                     `, [groupId]);
 
                     if (result.rows.length === 0) {
@@ -1705,18 +1709,28 @@ Texte à analyser : "${description}"
                             groupId,
                             lastScrapedAt: null,
                             most_recent_post_at: null,
+                            most_recent_post_id: null,
+                            mostRecentPostAt: null,
+                            mostRecentPostId: null,
+                            cooldownHours: 6,
                             isNewGroup: true
                         });
                     }
 
                     const group = result.rows[0];
-                    // Utiliser computed_watermark (MAX scraped_at réel) au lieu de most_recent_post_at figé
-                    const watermark = group.computed_watermark || group.most_recent_post_at || group.last_scraped_at;
+                    // Ne jamais utiliser MAX(scraped_at) ici : un upload partiel
+                    // aurait alors le droit de déplacer le checkpoint. Le watermark
+                    // est celui du dernier rapport de couverture complet.
+                    const watermark = group.most_recent_post_at || null;
                     res.json({
                         groupId: group.group_id,
                         groupName: group.group_name,
                         lastScrapedAt: watermark,
-                        most_recent_post_at: watermark,  // Pour compatibilité avec le scraper
+                        most_recent_post_at: watermark,
+                        most_recent_post_id: group.most_recent_post_id || null,
+                        mostRecentPostAt: watermark,
+                        mostRecentPostId: group.most_recent_post_id || null,
+                        cooldownHours: group.cooldown_hours || 6,
                         isValidated: group.is_validated,
                         isNewGroup: false
                     });
@@ -2051,54 +2065,6 @@ Texte à analyser : "${description}"
             });
 
             /**
-             * GET /api/facebook/groups/:groupId/scrape-info
-             * Retourne les informations de continuation pour un groupe
-             * Utilisé par l'extension Chrome pour savoir jusqu'où scraper
-             */
-            app.get('/api/facebook/groups/:groupId/scrape-info', async (req, res) => {
-                try {
-                    const { groupId } = req.params;
-
-                    const result = await db.query(`
-                        SELECT
-                            group_id,
-                            group_name,
-                            last_scraped_at,
-                            most_recent_post_at,
-                            cooldown_hours,
-                            is_validated
-                        FROM facebook_groups
-                        WHERE group_id = $1
-                    `, [groupId]);
-
-                    if (result.rows.length === 0) {
-                        // Groupe jamais scrapé - retourner null pour lastScrapedAt
-                        return res.json({
-                            groupId,
-                            lastScrapedAt: null,
-                            mostRecentPostAt: null,
-                            cooldownHours: 12,  // Par défaut
-                            isNewGroup: true
-                        });
-                    }
-
-                    const group = result.rows[0];
-                    res.json({
-                        groupId: group.group_id,
-                        groupName: group.group_name,
-                        lastScrapedAt: group.last_scraped_at,
-                        mostRecentPostAt: group.most_recent_post_at,  // Utilisé comme limite de continuation
-                        cooldownHours: group.cooldown_hours || 6,
-                        isValidated: group.is_validated,
-                        isNewGroup: false
-                    });
-                } catch (error) {
-                    console.error('[scrape-info] Error:', error);
-                    res.status(500).json({ error: 'Erreur serveur' });
-                }
-            });
-
-            /**
              * POST /api/facebook/groups/scrape-info-by-url
              * Alternative endpoint qui accepte une URL de groupe au lieu d'un ID
              */
@@ -2123,6 +2089,7 @@ Texte à analyser : "${description}"
                             group_name,
                             last_scraped_at,
                             most_recent_post_at,
+                            most_recent_post_id,
                             cooldown_hours,
                             is_validated
                         FROM facebook_groups
@@ -2134,6 +2101,7 @@ Texte à analyser : "${description}"
                             groupId,
                             lastScrapedAt: null,
                             mostRecentPostAt: null,
+                            mostRecentPostId: null,
                             cooldownHours: 12,
                             isNewGroup: true
                         });
@@ -2145,6 +2113,7 @@ Texte à analyser : "${description}"
                         groupName: group.group_name,
                         lastScrapedAt: group.last_scraped_at,
                         mostRecentPostAt: group.most_recent_post_at,
+                        mostRecentPostId: group.most_recent_post_id || null,
                         cooldownHours: group.cooldown_hours || 6,
                         isValidated: group.is_validated,
                         isNewGroup: false
