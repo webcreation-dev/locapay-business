@@ -39,6 +39,21 @@ app.use(express.static(path.join(__dirname, 'frontend-dist')));
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/media', express.static(path.join(__dirname, 'media')));
 
+// Les routes internes de l'enrichisseur ne doivent jamais être accessibles au
+// navigateur. La même clé est configurée dans NestJS, le bot et le worker PM2.
+function requireFacebookMediaEnrichmentToken(req, res, next) {
+    const expected = process.env.FACEBOOK_MEDIA_ENRICHMENT_TOKEN;
+    const provided = req.get('x-facebook-media-token');
+    if (!expected) {
+        console.error('❌ FACEBOOK_MEDIA_ENRICHMENT_TOKEN est absent : route interne refusée.');
+        return res.status(503).json({ error: 'Service interne non configuré' });
+    }
+    if (!provided || provided !== expected) {
+        return res.status(401).json({ error: 'Accès interne non autorisé' });
+    }
+    next();
+}
+
 // Fallback SPA : renvoie index.html de React pour toute route non-API
 app.get(/^\/(?!api).*/, (req, res) => {
     const indexPath = path.join(__dirname, 'frontend-dist', 'index.html');
@@ -317,6 +332,31 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
             await db.query('ALTER TABLE facebook_posts ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();');
             await db.query('ALTER TABLE facebook_posts ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();');
             await db.query('ALTER TABLE facebook_posts ADD COLUMN IF NOT EXISTS is_client_demand BOOLEAN DEFAULT FALSE;');
+            // File durable : un seul enrichissement de galerie par bien validé.
+            // Elle vit ici car le bot est le seul à connaître le post Facebook
+            // (post_url) associé au real_property_id créé par NestJS.
+            await db.query(`
+                CREATE TABLE IF NOT EXISTS facebook_media_enrichment_jobs (
+                    id SERIAL PRIMARY KEY,
+                    property_id INTEGER UNIQUE NOT NULL,
+                    facebook_post_id TEXT REFERENCES facebook_posts(post_id),
+                    post_url TEXT NOT NULL,
+                    known_image_urls JSONB NOT NULL DEFAULT '[]',
+                    status TEXT NOT NULL DEFAULT 'pending'
+                        CHECK (status IN ('pending', 'processing', 'completed', 'failed')),
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    locked_at TIMESTAMPTZ,
+                    next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    completed_at TIMESTAMPTZ,
+                    last_error TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+            `);
+            await db.query(`CREATE INDEX IF NOT EXISTS idx_fb_media_jobs_pending
+                ON facebook_media_enrichment_jobs(status, next_attempt_at);`);
+            await db.query(`ALTER TABLE facebook_media_enrichment_jobs
+                ADD COLUMN IF NOT EXISTS known_image_urls JSONB NOT NULL DEFAULT '[]';`);
             await db.query('ALTER TABLE facebook_groups ADD COLUMN IF NOT EXISTS is_validated BOOLEAN DEFAULT NULL;');
             await db.query('ALTER TABLE facebook_groups ADD COLUMN IF NOT EXISTS cooldown_hours INTEGER NOT NULL DEFAULT 6;');
             // État de couverture : ajouté sans modifier les posts ni le pipeline de modération.
@@ -1641,6 +1681,154 @@ Texte à analyser : "${description}"
                     res.json({ success: true, group: rows[0] });
                 } catch (err) {
                     console.error('❌ [Facebook] Erreur rapport de scraping:', err.message);
+                    res.status(500).json({ error: err.message });
+                }
+            });
+
+            // ── File d'enrichissement des galeries Facebook ────────────────
+            // NestJS appelle enqueue après la validation admin. Le worker ne
+            // reçoit qu'un job à la fois et ne peut donc pas concurrencer les
+            // deux collecteurs de groupes ni partager leur profil Chrome.
+            app.post('/api/facebook/media-enrichment/enqueue', requireFacebookMediaEnrichmentToken, async (req, res) => {
+                try {
+                    const propertyId = Number(req.body?.propertyId);
+                    if (!Number.isInteger(propertyId) || propertyId <= 0) {
+                        return res.status(400).json({ error: 'propertyId entier positif requis' });
+                    }
+
+                    const { rows: posts } = await db.query(`
+                        SELECT post_id, post_url, image_urls
+                        FROM facebook_posts
+                        WHERE real_property_id = $1
+                          AND post_url IS NOT NULL
+                        ORDER BY updated_at DESC NULLS LAST, created_at DESC
+                        LIMIT 1
+                    `, [propertyId]);
+                    if (posts.length === 0) {
+                        return res.status(404).json({ error: 'Post Facebook source introuvable pour ce bien' });
+                    }
+
+                    const post = posts[0];
+                    const { rows } = await db.query(`
+                        INSERT INTO facebook_media_enrichment_jobs
+                          (property_id, facebook_post_id, post_url, known_image_urls, status, next_attempt_at, updated_at)
+                        VALUES ($1, $2, $3, $4, 'pending', NOW(), NOW())
+                        ON CONFLICT (property_id) DO UPDATE SET
+                          facebook_post_id = EXCLUDED.facebook_post_id,
+                          post_url = EXCLUDED.post_url,
+                          known_image_urls = EXCLUDED.known_image_urls,
+                          status = CASE
+                            WHEN facebook_media_enrichment_jobs.status = 'completed' THEN 'completed'
+                            ELSE 'pending'
+                          END,
+                          next_attempt_at = CASE
+                            WHEN facebook_media_enrichment_jobs.status = 'completed' THEN facebook_media_enrichment_jobs.next_attempt_at
+                            ELSE NOW()
+                          END,
+                          locked_at = CASE
+                            WHEN facebook_media_enrichment_jobs.status = 'completed' THEN facebook_media_enrichment_jobs.locked_at
+                            ELSE NULL
+                          END,
+                          last_error = CASE
+                            WHEN facebook_media_enrichment_jobs.status = 'completed' THEN facebook_media_enrichment_jobs.last_error
+                            ELSE NULL
+                          END,
+                          updated_at = NOW()
+                        RETURNING id, property_id, facebook_post_id, status, attempts
+                    `, [propertyId, post.post_id, post.post_url, JSON.stringify(post.image_urls || [])]);
+                    res.status(202).json({ success: true, job: rows[0] });
+                } catch (err) {
+                    console.error('❌ [Facebook media] Impossible d’enfiler le job:', err.message);
+                    res.status(500).json({ error: err.message });
+                }
+            });
+
+            app.post('/api/facebook/media-enrichment/claim', requireFacebookMediaEnrichmentToken, async (_req, res) => {
+                try {
+                    // Un crash du worker ne bloque pas la file éternellement.
+                    await db.query(`
+                        UPDATE facebook_media_enrichment_jobs
+                        SET status = 'pending', locked_at = NULL, next_attempt_at = NOW(),
+                            last_error = COALESCE(last_error, 'Worker interrompu avant la fin'), updated_at = NOW()
+                        WHERE status = 'processing' AND locked_at < NOW() - INTERVAL '30 minutes'
+                    `);
+                    const { rows } = await db.query(`
+                        WITH candidate AS (
+                          SELECT id
+                          FROM facebook_media_enrichment_jobs
+                          WHERE status = 'pending' AND next_attempt_at <= NOW()
+                          ORDER BY created_at ASC
+                          FOR UPDATE SKIP LOCKED
+                          LIMIT 1
+                        )
+                        UPDATE facebook_media_enrichment_jobs job
+                        SET status = 'processing', locked_at = NOW(), attempts = attempts + 1, updated_at = NOW()
+                        FROM candidate
+                        WHERE job.id = candidate.id
+                        RETURNING job.id, job.property_id, job.facebook_post_id, job.post_url,
+                                  job.known_image_urls, job.attempts
+                    `);
+                    res.json({ job: rows[0] || null });
+                } catch (err) {
+                    console.error('❌ [Facebook media] Impossible de réclamer un job:', err.message);
+                    res.status(500).json({ error: err.message });
+                }
+            });
+
+            app.post('/api/facebook/media-enrichment/jobs/:id/complete', requireFacebookMediaEnrichmentToken, async (req, res) => {
+                try {
+                    const jobId = Number(req.params.id);
+                    const imageUrls = [...new Set((req.body?.imageUrls || []).filter(url => typeof url === 'string' && /^https:\/\//i.test(url)))];
+                    if (!Number.isInteger(jobId) || jobId <= 0) {
+                        return res.status(400).json({ error: 'Job valide requis' });
+                    }
+                    const { rows } = await db.query(`
+                        SELECT * FROM facebook_media_enrichment_jobs WHERE id = $1 AND status = 'processing'
+                    `, [jobId]);
+                    if (rows.length === 0) return res.status(409).json({ error: 'Job absent ou non réclamé' });
+                    const job = rows[0];
+                    if (imageUrls.length > 0) {
+                        const nestBase = (process.env.NESTJS_FACEBOOK_URL || 'http://nestjs_app:8000/properties/create-from-facebook')
+                            .replace('/create-from-facebook', '');
+                        await axios.post(`${nestBase}/properties/${job.property_id}/facebook-enrichment-images`, {
+                            image_urls: imageUrls,
+                            facebook_post_id: job.facebook_post_id,
+                        }, {
+                            headers: { 'x-facebook-media-token': process.env.FACEBOOK_MEDIA_ENRICHMENT_TOKEN },
+                            timeout: 120000,
+                            maxContentLength: 100 * 1024 * 1024,
+                            maxBodyLength: 100 * 1024 * 1024,
+                        });
+                    }
+                    await db.query(`
+                        UPDATE facebook_media_enrichment_jobs
+                        SET status = 'completed', completed_at = NOW(), locked_at = NULL,
+                            last_error = NULL, updated_at = NOW()
+                        WHERE id = $1
+                    `, [jobId]);
+                    res.json({ success: true, imageCount: imageUrls.length });
+                } catch (err) {
+                    console.error('❌ [Facebook media] Finalisation impossible:', err.message);
+                    res.status(502).json({ error: err.response?.data?.message || err.message });
+                }
+            });
+
+            app.post('/api/facebook/media-enrichment/jobs/:id/fail', requireFacebookMediaEnrichmentToken, async (req, res) => {
+                try {
+                    const jobId = Number(req.params.id);
+                    const error = String(req.body?.error || 'Extraction de galerie impossible').slice(0, 1000);
+                    const { rows } = await db.query(`
+                        UPDATE facebook_media_enrichment_jobs
+                        SET status = CASE WHEN attempts >= 3 THEN 'failed' ELSE 'pending' END,
+                            locked_at = NULL,
+                            next_attempt_at = CASE WHEN attempts >= 3 THEN next_attempt_at ELSE NOW() + INTERVAL '15 minutes' END,
+                            last_error = $2, updated_at = NOW()
+                        WHERE id = $1 AND status = 'processing'
+                        RETURNING id, status, attempts
+                    `, [jobId, error]);
+                    if (rows.length === 0) return res.status(409).json({ error: 'Job absent ou non réclamé' });
+                    res.json({ success: true, job: rows[0] });
+                } catch (err) {
                     res.status(500).json({ error: err.message });
                 }
             });
