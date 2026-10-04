@@ -1788,8 +1788,11 @@ Texte à analyser : "${description}"
                     if (rows.length === 0) return res.status(409).json({ error: 'Job absent ou non réclamé' });
                     const job = rows[0];
                     if (imageUrls.length > 0) {
+                        // NESTJS_FACEBOOK_URL contient déjà `/properties`.
+                        // Retirer seulement la route de création, sinon on
+                        // construirait `/properties/properties/:id` (404).
                         const nestBase = (process.env.NESTJS_FACEBOOK_URL || 'http://nestjs_app:8000/properties/create-from-facebook')
-                            .replace('/create-from-facebook', '');
+                            .replace(/\/properties\/create-from-facebook\/?$/, '');
                         await axios.post(`${nestBase}/properties/${job.property_id}/facebook-enrichment-images`, {
                             image_urls: imageUrls,
                             facebook_post_id: job.facebook_post_id,
