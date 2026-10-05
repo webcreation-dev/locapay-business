@@ -1823,15 +1823,17 @@ Texte à analyser : "${description}"
                 try {
                     const jobId = Number(req.params.id);
                     const error = String(req.body?.error || 'Extraction de galerie impossible').slice(0, 1000);
+                    const browserUnavailable = req.body?.browserUnavailable === true;
                     const { rows } = await db.query(`
                         UPDATE facebook_media_enrichment_jobs
-                        SET status = CASE WHEN attempts >= 3 THEN 'failed' ELSE 'pending' END,
+                        SET status = CASE WHEN $3::boolean THEN 'pending' WHEN attempts >= 3 THEN 'failed' ELSE 'pending' END,
+                            attempts = CASE WHEN $3::boolean THEN GREATEST(attempts - 1, 0) ELSE attempts END,
                             locked_at = NULL,
-                            next_attempt_at = CASE WHEN attempts >= 3 THEN next_attempt_at ELSE NOW() + INTERVAL '15 minutes' END,
+                            next_attempt_at = CASE WHEN $3::boolean THEN NOW() + INTERVAL '15 seconds' WHEN attempts >= 3 THEN next_attempt_at ELSE NOW() + INTERVAL '15 minutes' END,
                             last_error = $2, updated_at = NOW()
                         WHERE id = $1 AND status = 'processing'
                         RETURNING id, status, attempts
-                    `, [jobId, error]);
+                    `, [jobId, error, browserUnavailable]);
                     if (rows.length === 0) return res.status(409).json({ error: 'Job absent ou non réclamé' });
                     res.json({ success: true, job: rows[0] });
                 } catch (err) {
