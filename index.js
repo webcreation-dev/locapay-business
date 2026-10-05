@@ -1733,10 +1733,13 @@ Texte à analyser : "${description}"
                             WHEN facebook_media_enrichment_jobs.status = 'completed' THEN facebook_media_enrichment_jobs.last_error
                             ELSE NULL
                           END,
+                          attempts = 0,
                           updated_at = NOW()
+                        WHERE facebook_media_enrichment_jobs.status = 'failed'
+                          AND $5::boolean
                         RETURNING id, property_id, facebook_post_id, status, attempts
-                    `, [propertyId, post.post_id, post.post_url, JSON.stringify(post.image_urls || [])]);
-                    res.status(202).json({ success: true, job: rows[0] });
+                    `, [propertyId, post.post_id, post.post_url, JSON.stringify(post.image_urls || []), req.body?.retryFailed === true]);
+                    res.status(202).json({ success: true, skipped: rows.length === 0, job: rows[0] || null });
                 } catch (err) {
                     console.error('❌ [Facebook media] Impossible d’enfiler le job:', err.message);
                     res.status(500).json({ error: err.message });
