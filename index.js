@@ -74,6 +74,10 @@ app.get(/^\/(?!api).*/, (req, res) => {
 let botStatus = 'STARTING'; // STARTING, QR, AUTHENTICATED, CONNECTED, DISCONNECTED, ERROR
 let currentQR = null;
 const realtimeClients = new Set();
+// Minuit du jour courant à Porto-Novo, exprimé en timestamp Unix. Les messages
+// WhatsApp sont enregistrés avec un timestamp Unix, donc ce filtre reste exact
+// même si le serveur Docker tourne en UTC.
+const TODAY_START_PORTO_NOVO_SQL = "EXTRACT(EPOCH FROM date_trunc('day', CURRENT_TIMESTAMP AT TIME ZONE 'Africa/Porto-Novo') AT TIME ZONE 'Africa/Porto-Novo')::BIGINT";
 
 function broadcastRealtimeEvent(type, payload = {}) {
     const message = `event: ${type}\ndata: ${JSON.stringify(payload)}\n\n`;
@@ -983,6 +987,7 @@ Texte à analyser : "${description}"
                             AND m.property_group_id IS NULL -- Ne jamais compter ceux assignés à un groupe
                             AND m.is_analyzed = FALSE
                             AND m.is_from_me = FALSE
+                            AND m.timestamp >= ${TODAY_START_PORTO_NOVO_SQL}
                             AND bg.property_group_id IS NULL -- Exclure les membres d'un groupe interdit
                             AND COALESCE(m.message_type, '') NOT IN ('audio', 'ptt', 'sticker')
                             AND (m.body IS NULL OR m.body !~* 'vendre|vente|parcelle|terrain|titre foncier| tf|domaine|pièces à jour|pieces a jour|état boutique|etat boutique|guéridon|gueridon|matelas|galet|toyota|honda|ford')
@@ -1016,6 +1021,11 @@ Texte à analyser : "${description}"
                             is_group
                         FROM chats
                         WHERE whatsapp_chat_id != 'status@broadcast'
+                        AND EXISTS (
+                            SELECT 1 FROM messages
+                            WHERE chat_id = chats.whatsapp_chat_id
+                            AND timestamp >= ${TODAY_START_PORTO_NOVO_SQL}
+                        )
                         ORDER BY is_group DESC, updated_at DESC
                     `;
                     const { rows } = await db.query(query);
@@ -1609,10 +1619,10 @@ Texte à analyser : "${description}"
                 try {
                     const query = `
                         SELECT c.*, 
-                               (SELECT COUNT(*) FROM messages WHERE chat_id = c.whatsapp_chat_id AND timestamp >= 1781913600) as unread_count
+                               (SELECT COUNT(*) FROM messages WHERE chat_id = c.whatsapp_chat_id AND timestamp >= ${TODAY_START_PORTO_NOVO_SQL}) as unread_count
                         FROM chats c
                         WHERE c.whatsapp_chat_id != 'status@broadcast'
-                        AND EXISTS (SELECT 1 FROM messages WHERE chat_id = c.whatsapp_chat_id AND timestamp >= 1781913600)
+                        AND EXISTS (SELECT 1 FROM messages WHERE chat_id = c.whatsapp_chat_id AND timestamp >= ${TODAY_START_PORTO_NOVO_SQL})
                         ORDER BY c.updated_at DESC
                     `;
                     const { rows } = await db.query(query);
