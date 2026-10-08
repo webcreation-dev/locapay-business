@@ -3021,18 +3021,27 @@ async function syncRecentWhatsAppHistory() {
     whatsappHistorySyncInProgress = true;
     try {
         const todayStart = portoNovoTodayStartUnix();
-        const chats = await client.getChats();
-        const activeChats = chats.filter(chat => {
-            const chatId = chat.id?._serialized;
+        // Ne pas appeler client.getChats() ici : la sérialisation complète d'un
+        // seul groupe défectueux peut faire échouer toutes les conversations.
+        const chatSummaries = await client.pupPage.evaluate(() => {
+            return window.require('WAWebCollections').Chat.getModelsArray().map(chat => ({
+                id: chat.id?._serialized,
+                timestamp: Number(chat.t || chat.timestamp || 0)
+            }));
+        });
+        const activeChats = chatSummaries.filter(chat => {
+            const chatId = chat.id;
             const timestamp = Number(chat.timestamp) || 0;
             const previousTimestamp = syncedWhatsAppChatTimestamps.get(chatId);
             return chatId && timestamp >= todayStart && (previousTimestamp === undefined || timestamp > previousTimestamp);
         });
 
-        for (const chat of activeChats) {
-            const chatId = chat.id._serialized;
-            const timestamp = Number(chat.timestamp) || 0;
+        for (const chatSummary of activeChats) {
+            const chatId = chatSummary.id;
+            const timestamp = Number(chatSummary.timestamp) || 0;
             try {
+                const chat = await client.getChatById(chatId);
+                if (!chat) continue;
                 const recentMessages = await chat.fetchMessages({ limit: 50 });
                 for (const message of recentMessages) {
                     if ((Number(message.timestamp) || 0) >= todayStart) {
@@ -3049,7 +3058,7 @@ async function syncRecentWhatsAppHistory() {
             console.log(`🔄 [WhatsApp] Synchronisation de secours : ${activeChats.length} conversation(s) active(s).`);
         }
     } catch (error) {
-        console.error(`⚠️ Synchronisation WhatsApp impossible: ${error.message}`);
+        console.error('⚠️ Synchronisation WhatsApp impossible:', error?.stack || error?.message || error);
     } finally {
         whatsappHistorySyncInProgress = false;
     }
