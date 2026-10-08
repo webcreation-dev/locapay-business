@@ -1088,5 +1088,6 @@ module.exports = {
   normalizeText,
   triggerNestPropertyBump,
   extractPropertyDataDeterministic,
+  uploadToBunnyStream,
   processVideoForBunny, // Pour le backfill des vidéos
 };

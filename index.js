@@ -13,7 +13,8 @@ const {
     importFacebookPosts,
     processFacebookBatch,
     processFacebookPost,
-    extractPropertyDataDeterministic
+    extractPropertyDataDeterministic,
+    uploadToBunnyStream
 } = require('./facebook-processor');
 const { buildScrapeReportQuery } = require('./facebook-scrape-report-query');
 
@@ -77,6 +78,7 @@ const realtimeClients = new Set();
 const syncedWhatsAppChatTimestamps = new Map();
 let whatsappHistorySyncTimer = null;
 let whatsappHistorySyncInProgress = false;
+let autoPropertyWorkflowInProgress = false;
 // Minuit du jour courant à Porto-Novo, exprimé en timestamp Unix. Les messages
 // WhatsApp sont enregistrés avec un timestamp Unix, donc ce filtre reste exact
 // même si le serveur Docker tourne en UTC.
@@ -703,42 +705,44 @@ Texte à analyser : "${description}"
             });
 
             // 🤖 FONCTION DE BALAYAGE AUTO (HEURISTIQUE)
-            const runAutoGroupHeuristicAllChats = async () => {
+            const runAutoGroupHeuristicAllChats = async ({ todayOnly = false } = {}) => {
                 try {
-                    const { rows: chats } = await db.query("SELECT DISTINCT chat_id FROM messages");
+                    const dateFilter = todayOnly ? ` WHERE timestamp >= ${TODAY_START_PORTO_NOVO_SQL}` : '';
+                    const { rows: chats } = await db.query(`SELECT DISTINCT chat_id FROM messages${dateFilter}`);
                     console.log(`🧹 Balayage heuristique sur ${chats.length} conversations...`);
                     for (let chat of chats) {
-                        await internalAnalyzeChat(chat.chat_id);
+                        await internalAnalyzeChat(chat.chat_id, { todayOnly });
                     }
                 } catch (e) { console.error("❌ Error runAutoGroupHeuristicAllChats:", e); }
             };
 
-            const internalAnalyzeChat = async (chatId) => {
+            const internalAnalyzeChat = async (chatId, { todayOnly = false } = {}) => {
                 // Mots interdits (ventes, terrains, recherches, etc.)
                 const FORBIDDEN_REGEX = 'vendre|vente|parcelle|terrain|titre\\sfoncier|\\stf\\s|\\stf\n|domaine|\\stf$|opportunite|recherche|pièces\\sà\\sjour|pieces\\sa\\sjour|état\\sboutique|etat\\sboutique|guéridon|gueridon|matelas|galet|toyota|honda|ford';
                 const forbiddenPattern = new RegExp(FORBIDDEN_REGEX.replace(/\\/g, '\\'), 'i');
+                const dateFilter = todayOnly ? ` AND timestamp >= ${TODAY_START_PORTO_NOVO_SQL}` : '';
 
                 await db.query(
-                    `UPDATE messages SET property_group_id = 'noise', analysis_error = NULL WHERE chat_id = $1 AND property_group_id IS DISTINCT FROM 'noise' AND real_property_id IS NULL AND body ~* $2`,
+                    `UPDATE messages SET property_group_id = 'noise', analysis_error = NULL WHERE chat_id = $1 AND property_group_id IS DISTINCT FROM 'noise' AND real_property_id IS NULL AND body ~* $2${dateFilter}`,
                     [chatId, FORBIDDEN_REGEX]
                 );
 
                 // 1.1 Marquer comme noise les messages très courts sans média (< 20 caractères)
                 await db.query(
-                    `UPDATE messages SET property_group_id = 'noise' WHERE chat_id = $1 AND property_group_id IS NULL AND real_property_id IS NULL AND has_media = FALSE AND LENGTH(COALESCE(body, '')) < 20`,
+                    `UPDATE messages SET property_group_id = 'noise' WHERE chat_id = $1 AND property_group_id IS NULL AND real_property_id IS NULL AND has_media = FALSE AND LENGTH(COALESCE(body, '')) < 20${dateFilter}`,
                     [chatId]
                 );
 
                 // 2. On commence par NETTOYER tous les anciens groupements automatiques (non validés)
                 // pour ce chat, afin de repartir sur une base saine.
                 await db.query(
-                    "UPDATE messages SET property_group_id = NULL WHERE chat_id = $1 AND property_group_id LIKE 'auto_prop_%' AND real_property_id IS NULL",
+                    `UPDATE messages SET property_group_id = NULL WHERE chat_id = $1 AND property_group_id LIKE 'auto_prop_%' AND real_property_id IS NULL${dateFilter}`,
                     [chatId]
                 );
 
                 // 3. On récupère les messages triés strictement (exclure noise et ceux déjà associés à un bien)
                 const { rows: msgs } = await db.query(
-                    "SELECT id, body, has_media, media_mime_type, property_group_id, sender_id, timestamp, real_property_id FROM messages WHERE chat_id = $1 AND real_property_id IS NULL AND (property_group_id IS NULL OR property_group_id NOT IN ('noise')) ORDER BY timestamp ASC, id ASC",
+                    `SELECT id, body, has_media, media_mime_type, property_group_id, sender_id, timestamp, real_property_id FROM messages WHERE chat_id = $1 AND real_property_id IS NULL AND (property_group_id IS NULL OR property_group_id NOT IN ('noise'))${dateFilter} ORDER BY timestamp ASC, id ASC`,
                     [chatId]
                 );
 
@@ -768,8 +772,13 @@ Texte à analyser : "${description}"
                         continue; // Ce message est autonome, on passe au suivant
                     }
 
-                    // Condition 1: Texte long TOUT SEUL (Parent)
+                    // Condition 1: Texte long complet sans média. Il peut désormais
+                    // créer un bien seul : le backend valide ensuite tous les champs.
                     if (msg.body && msg.body.length > 100 && !msg.has_media) {
+                        const groupId = msg.property_group_id || `auto_prop_text_${msg.id}`;
+                        await db.query("UPDATE messages SET property_group_id = $1 WHERE id = $2", [groupId, msg.id]);
+                        msg.property_group_id = groupId;
+                        uniqueGroups.add(groupId);
                         parentMsgBySender[sender] = msg;
                         inGroupingModeBySender[sender] = true;
                     }
@@ -806,6 +815,7 @@ Texte à analyser : "${description}"
                     AND real_property_id IS NULL 
                     AND has_media = FALSE 
                     AND timestamp < (EXTRACT(EPOCH FROM NOW()) - 3600)
+                    ${dateFilter}
                 `, [chatId]);
 
                 return uniqueGroups.size;
@@ -1226,9 +1236,12 @@ Texte à analyser : "${description}"
 
                     if (fetchedMessages.length === 0) return { success: false, error: "Messages introuvables" };
 
-                    // 2. Fusionner les textes et collecter les images EN BASE64
+                    // 2. Fusionner les textes, envoyer les vidéos sur Bunny Stream et
+                    // transmettre les photos au backend. Une annonce complète sans média
+                    // reste valide : la validation métier porte sur les informations du bien.
                     const texts = [];
                     const imagesBase64 = [];
+                    const mediaUrls = [];
                     let senderPhone = "";
 
                     // ✅ TRAÇABILITÉ WHATSAPP : Extraire chat_id, chat_name et premier timestamp du groupe
@@ -1246,28 +1259,43 @@ Texte à analyser : "${description}"
                         if (senderPhone && !senderPhone.startsWith('+')) senderPhone = '+' + senderPhone;
                     }
 
-                    fetchedMessages.forEach(msg => {
+                    for (const msg of fetchedMessages) {
                         if (msg.body && msg.body.trim()) {
                             texts.push(msg.body.trim());
                         }
-                        const isImageOrVideo = msg.media_mime_type?.startsWith('image/') || msg.media_mime_type?.startsWith('video/');
-                        if (msg.has_media && msg.media_path && isImageOrVideo) {
+                        const isImage = msg.media_mime_type?.startsWith('image/');
+                        const isVideo = msg.media_mime_type?.startsWith('video/');
+                        if (msg.has_media && msg.media_path && (isImage || isVideo)) {
                             const localPath = msg.media_path.startsWith('./') ? msg.media_path : `./${msg.media_path}`;
                             if (fs.existsSync(localPath)) {
                                 try {
-                                    const imageBuffer = fs.readFileSync(localPath);
-                                    const base64Data = imageBuffer.toString('base64');
-                                    imagesBase64.push({
-                                        data: base64Data,
-                                        mimeType: msg.media_mime_type || 'image/jpeg',
-                                        extension: localPath.split('.').pop() || 'jpg'
-                                    });
+                                    const mediaBuffer = fs.readFileSync(localPath);
+                                    if (isVideo) {
+                                        const bunnyVideo = await uploadToBunnyStream(
+                                            mediaBuffer,
+                                            `WhatsApp_${msg.id}_${msg.timestamp || Date.now()}`
+                                        );
+                                        if (bunnyVideo?.videoUrl) {
+                                            mediaUrls.push({
+                                                url: bunnyVideo.videoUrl,
+                                                mimeType: msg.media_mime_type || 'video/mp4'
+                                            });
+                                        } else {
+                                            console.warn(`⚠️ [WhatsApp→Bunny] Vidéo ignorée pour le message ${msg.id}; le bien peut tout de même être créé.`);
+                                        }
+                                    } else {
+                                        imagesBase64.push({
+                                            data: mediaBuffer.toString('base64'),
+                                            mimeType: msg.media_mime_type || 'image/jpeg',
+                                            extension: localPath.split('.').pop() || 'jpg'
+                                        });
+                                    }
                                 } catch (readErr) {
                                     console.warn(`⚠️ Erreur lecture média: ${localPath} - ${readErr.message}`);
                                 }
                             }
                         }
-                    });
+                    }
 
                     const finalDescription = texts.join('\n\n').trim() || '(Annonce immobilière WhatsApp - Sans texte)';
 
@@ -1282,13 +1310,6 @@ Texte à analyser : "${description}"
                         // Suppression auto du média car c'est du bruit (Vente/Terrain)
                         await deleteMediaFiles(messageIds);
                         return { success: false, error: `Ignoré (Vente/Terrain): "${foundKeyword}"` };
-                    }
-
-                    const hasVideo = imagesBase64.some(media => media.mimeType.startsWith('video/'));
-                    if (!hasVideo && imagesBase64.length < 3) {
-                        await db.query(`UPDATE messages SET property_group_id = 'noise', submission_failed = TRUE, analysis_error = NULL WHERE id = ANY($1)`, [messageIds]);
-                        await deleteMediaFiles(messageIds);
-                        return { success: false, error: `Ignoré: Moins de 3 images fournies (${imagesBase64.length})` };
                     }
 
                     // 4. Analyser avec l'Algorithme Déterministe
@@ -1355,11 +1376,13 @@ Texte à analyser : "${description}"
 
 
                     try {
-                        console.log(`📤 Envoi à NestJS: ${imagesBase64.length} images, groupe: ${whatsappGroupName} (${whatsappGroupId})...`);
+                        console.log(`📤 Envoi à NestJS: ${imagesBase64.length} photo(s), ${mediaUrls.length} vidéo(s) Bunny, groupe: ${whatsappGroupName} (${whatsappGroupId})...`);
                         const response = await axios.post(nestUrl, {
                             description: finalDescription,
+                            description_original: finalDescription,
                             manager_phone: senderPhone,
                             images_base64: imagesBase64,
+                            media_urls: mediaUrls,
                             user_id: process.env.LOCAPAY_BOT_USER_ID || 1,
                             extracted_data: extractedData,
                             // ✅ TRAÇABILITÉ : Métadonnées du groupe WhatsApp source
@@ -1494,16 +1517,23 @@ Texte à analyser : "${description}"
             });
 
             // --- FONCTION DE SOUMISSION EN MASSE ---
-            async function internalBatchSubmitAll(onProgress = null) {
+            async function internalBatchSubmitAll(onProgress = null, { todayOnly = false, waitForMediaSeconds = 0 } = {}) {
                 try {
+                    const dateFilter = todayOnly ? ` AND timestamp >= ${TODAY_START_PORTO_NOVO_SQL}` : '';
+                    const groupAgeFilter = waitForMediaSeconds > 0
+                        ? `HAVING property_group_id NOT LIKE 'auto_prop_text_%' OR MAX(timestamp) <= (EXTRACT(EPOCH FROM NOW()) - ${Number(waitForMediaSeconds)})`
+                        : '';
                     const { rows: groups } = await db.query(`
-                        SELECT DISTINCT property_group_id, chat_id
+                        SELECT property_group_id, chat_id
                         FROM messages
                         WHERE property_group_id IS NOT NULL
                         AND property_group_id != 'noise'
                         AND real_property_id IS NULL
                         AND property_group_id NOT LIKE 'real_prop_%'
                         AND submission_failed = FALSE
+                        ${dateFilter}
+                        GROUP BY property_group_id, chat_id
+                        ${groupAgeFilter}
                     `);
 
                     if (groups.length === 0) return { success: 0, errors: 0, total: 0 };
@@ -1513,7 +1543,7 @@ Texte à analyser : "${description}"
                         const group = groups[i];
                         try {
                             const { rows: msgIds } = await db.query(
-                                "SELECT id FROM messages WHERE property_group_id = $1",
+                                `SELECT id FROM messages WHERE property_group_id = $1${dateFilter}`,
                                 [group.property_group_id]
                             );
                             const result = await internalProcessPropertySubmission(msgIds.map(m => m.id));
@@ -1568,32 +1598,43 @@ Texte à analyser : "${description}"
 
             // 🔄 WORKFLOW AUTOMATISE (CRON)
             async function globalAutomatedWorkflow() {
+                if (autoPropertyWorkflowInProgress) {
+                    console.warn('🕒 Workflow automatisé déjà en cours : exécution ignorée.');
+                    return;
+                }
+
+                autoPropertyWorkflowInProgress = true;
                 console.log('🕒 --- DÉBUT DU WORKFLOW AUTOMATISÉ (2 min) ---');
                 try {
-                    // 1. Purge
-                    console.log('🕒 Étape 1/4 : Grande Purge...');
-                    const purgeCount = await internalPurgeNoise();
-                    console.log(`🕒 Purge terminée : ${purgeCount} messages nettoyés.`);
-
-                    // 2. Analyse / Groupement
-                    console.log('🕒 Étape 2/4 : Analyse et Groupement...');
+                    // L'automatisation ne modifie jamais l'historique : uniquement les
+                    // messages reçus depuis minuit à Porto-Novo. La purge globale reste
+                    // réservée à l'action manuelle dans l'interface.
+                    console.log('🕒 Étape 1/3 : Analyse et groupement des messages du jour...');
                     const runAll = app.get('runAutoGroupHeuristicAllChats');
-                    if (runAll) await runAll();
+                    if (runAll) await runAll({ todayOnly: true });
                     console.log('🕒 Analyse terminée.');
 
-                    // 3. Soumission
-                    console.log('🕒 Étape 3/4 : Soumission en lot...');
-                    const submitResult = await internalBatchSubmitAll();
+                    // 2. Soumission
+                    console.log('🕒 Étape 2/3 : Soumission des groupes du jour...');
+                    // Un texte sans média attend 7 minutes : les photos/vidéos envoyées
+                    // juste après sont alors rattachées au même bien. Sans média, le
+                    // bien complet est tout de même soumis à l'issue de ce délai.
+                    const submitResult = await internalBatchSubmitAll(null, {
+                        todayOnly: true,
+                        waitForMediaSeconds: 7 * 60
+                    });
                     console.log(`🕒 Soumission terminée : ${submitResult.success} succès, ${submitResult.errors} erreurs.`);
 
-                    // 4. Nettoyage des médias
-                    console.log('🕒 Étape 4/4 : Nettoyage des médias...');
+                    // 3. Nettoyage facultatif, activé seulement par MEDIA_RETENTION_PURGE=true
+                    console.log('🕒 Étape 3/3 : Nettoyage optionnel des médias...');
                     const cleanedCount = await cleanupAnalyzedMedia();
                     console.log(`🕒 Nettoyage terminé : ${cleanedCount} fichiers supprimés.`);
 
                     console.log('🕒 --- WORKFLOW AUTOMATISÉ TERMINÉ AVEC SUCCÈS ---');
                 } catch (e) {
                     console.error('🕒 ❌ ERREUR DANS LE WORKFLOW AUTOMATISÉ:', e.message);
+                } finally {
+                    autoPropertyWorkflowInProgress = false;
                 }
             }
             app.set('globalAutomatedWorkflow', globalAutomatedWorkflow);
