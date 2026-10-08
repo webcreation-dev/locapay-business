@@ -1259,8 +1259,10 @@ Texte à analyser : "${description}"
 
                     const externalMsg = fetchedMessages.find(m => !m.is_from_me);
                     if (externalMsg) {
-                        senderPhone = externalMsg.sender_number || '';
-                        if (senderPhone && !senderPhone.startsWith('+')) senderPhone = '+' + senderPhone;
+                        senderPhone = await resolveWhatsAppSenderPhone(
+                            externalMsg.sender_id,
+                            externalMsg.sender_number
+                        );
                     }
 
                     for (const msg of fetchedMessages) {
@@ -1370,7 +1372,7 @@ Texte à analyser : "${description}"
 
                     // ✅ VALIDATION : Numéro de téléphone obligatoire — jamais de fallback
                     if (!senderPhone) {
-                        const errMsg = 'Numéro de téléphone de l\'expéditeur introuvable — post ignoré';
+                        const errMsg = 'Numéro WhatsApp réel de l\'expéditeur introuvable — post ignoré pour éviter un contact @lid non joignable';
                         await db.query(`UPDATE messages SET submission_failed = TRUE, analysis_error = $1 WHERE id = ANY($2)`, [errMsg, messageIds]);
                         console.log(`🚫 [WhatsApp] Groupe ${messageIds} → ignoré (aucun numéro de téléphone extractible)`);
                         return { success: false, error: errMsg };
@@ -2837,6 +2839,50 @@ const client = new Client({
     puppeteer: puppeteerOptions
 });
 let reconnectTimer = null;
+const resolvedWhatsAppPhoneCache = new Map();
+
+function normalizeWhatsAppPhone(value) {
+    const digits = String(value || '').split('@')[0].replace(/\D/g, '');
+    // E.164 autorise au maximum 15 chiffres. Un LID peut ressembler à un
+    // numéro, mais ne doit jamais devenir le contact d'un bien.
+    return /^\d{8,15}$/.test(digits) ? `+${digits}` : '';
+}
+
+async function resolveWhatsAppSenderPhone(senderId, storedNumber) {
+    const isLid = /@lid$/i.test(String(senderId || ''));
+
+    // Les JID classiques @c.us contiennent directement le numéro.
+    if (!isLid) {
+        return normalizeWhatsAppPhone(storedNumber) || normalizeWhatsAppPhone(senderId);
+    }
+
+    if (resolvedWhatsAppPhoneCache.has(senderId)) {
+        return resolvedWhatsAppPhoneCache.get(senderId);
+    }
+
+    let resolvedPhone = '';
+    try {
+        // whatsapp-web.js récent expose la correspondance LID <-> numéro réel.
+        // C'est une lecture de l'annuaire WhatsApp ; aucune action ni message
+        // n'est émis par le compte connecté.
+        const mappings = await client.getContactLidAndPhone([senderId]);
+        resolvedPhone = normalizeWhatsAppPhone(mappings?.[0]?.pn);
+        if (resolvedPhone) {
+            console.log(`✅ [WhatsApp] LID résolu en numéro réel pour ${senderId}.`);
+        } else {
+            console.warn(`⚠️ [WhatsApp] Impossible de résoudre le numéro réel du LID ${senderId}.`);
+        }
+    } catch (error) {
+        console.warn(`⚠️ [WhatsApp] Résolution LID impossible pour ${senderId}: ${error.message}`);
+    }
+
+    // Le cache évite une requête WhatsApp répétée pour chaque message du même auteur.
+    if (resolvedWhatsAppPhoneCache.size >= 5000) {
+        resolvedWhatsAppPhoneCache.delete(resolvedWhatsAppPhoneCache.keys().next().value);
+    }
+    resolvedWhatsAppPhoneCache.set(senderId, resolvedPhone);
+    return resolvedPhone;
+}
 
 function scheduleWhatsAppReconnect() {
     if (process.env.WHATSAPP_ENABLED === 'false' || reconnectTimer) return;
