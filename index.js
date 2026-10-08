@@ -2963,12 +2963,21 @@ async function archiveWhatsAppMessage(message) {
     console.log(`💾 Message WhatsApp archivé : ${messageData.messageId}`);
 }
 
-// message_create couvre les messages entrants et les messages écrits depuis le téléphone.
-// Il n'y a aucun appel à sendMessage dans ce projet.
-client.on('message_create', message => {
+// `message` reçoit les messages entrants, qu'ils viennent d'une discussion privée
+// ou d'un groupe. `message_create` est conservé seulement pour archiver les
+// messages écrits depuis le téléphone connecté. Il n'y a aucun appel à
+// sendMessage dans ce projet.
+function archiveWhatsAppEvent(message) {
     archiveWhatsAppMessage(message).catch(error => {
         console.error(`❌ Archivage WhatsApp impossible: ${error.message}`);
     });
+}
+
+client.on('message', archiveWhatsAppEvent);
+
+client.on('message_create', message => {
+    if (!message.fromMe) return;
+    archiveWhatsAppEvent(message);
 });
 
 
