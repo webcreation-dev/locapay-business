@@ -83,6 +83,10 @@ let autoPropertyWorkflowInProgress = false;
 // WhatsApp sont enregistrés avec un timestamp Unix, donc ce filtre reste exact
 // même si le serveur Docker tourne en UTC.
 const TODAY_START_PORTO_NOVO_SQL = "EXTRACT(EPOCH FROM date_trunc('day', CURRENT_TIMESTAMP AT TIME ZONE 'Africa/Porto-Novo') AT TIME ZONE 'Africa/Porto-Novo')::BIGINT";
+// Fenêtre de création automatique : on traite les annonces récentes, sans jamais
+// reprendre l'archive entière à chaque cron. Les actions manuelles restent sans
+// cette limite afin de pouvoir corriger un cas particulier au besoin.
+const AUTO_PROPERTY_LOOKBACK_START_SQL = "(EXTRACT(EPOCH FROM NOW()) - (7 * 24 * 60 * 60))::BIGINT";
 
 function broadcastRealtimeEvent(type, payload = {}) {
     const message = `event: ${type}\ndata: ${JSON.stringify(payload)}\n\n`;
@@ -705,22 +709,22 @@ Texte à analyser : "${description}"
             });
 
             // 🤖 FONCTION DE BALAYAGE AUTO (HEURISTIQUE)
-            const runAutoGroupHeuristicAllChats = async ({ todayOnly = false } = {}) => {
+            const runAutoGroupHeuristicAllChats = async ({ afterTimestampSql = null } = {}) => {
                 try {
-                    const dateFilter = todayOnly ? ` WHERE timestamp >= ${TODAY_START_PORTO_NOVO_SQL}` : '';
+                    const dateFilter = afterTimestampSql ? ` WHERE timestamp >= ${afterTimestampSql}` : '';
                     const { rows: chats } = await db.query(`SELECT DISTINCT chat_id FROM messages${dateFilter}`);
                     console.log(`🧹 Balayage heuristique sur ${chats.length} conversations...`);
                     for (let chat of chats) {
-                        await internalAnalyzeChat(chat.chat_id, { todayOnly });
+                        await internalAnalyzeChat(chat.chat_id, { afterTimestampSql });
                     }
                 } catch (e) { console.error("❌ Error runAutoGroupHeuristicAllChats:", e); }
             };
 
-            const internalAnalyzeChat = async (chatId, { todayOnly = false } = {}) => {
+            const internalAnalyzeChat = async (chatId, { afterTimestampSql = null } = {}) => {
                 // Mots interdits (ventes, terrains, recherches, etc.)
                 const FORBIDDEN_REGEX = 'vendre|vente|parcelle|terrain|titre\\sfoncier|\\stf\\s|\\stf\n|domaine|\\stf$|opportunite|recherche|pièces\\sà\\sjour|pieces\\sa\\sjour|état\\sboutique|etat\\sboutique|guéridon|gueridon|matelas|galet|toyota|honda|ford';
                 const forbiddenPattern = new RegExp(FORBIDDEN_REGEX.replace(/\\/g, '\\'), 'i');
-                const dateFilter = todayOnly ? ` AND timestamp >= ${TODAY_START_PORTO_NOVO_SQL}` : '';
+                const dateFilter = afterTimestampSql ? ` AND timestamp >= ${afterTimestampSql}` : '';
 
                 await db.query(
                     `UPDATE messages SET property_group_id = 'noise', analysis_error = NULL WHERE chat_id = $1 AND property_group_id IS DISTINCT FROM 'noise' AND real_property_id IS NULL AND body ~* $2${dateFilter}`,
@@ -1517,9 +1521,9 @@ Texte à analyser : "${description}"
             });
 
             // --- FONCTION DE SOUMISSION EN MASSE ---
-            async function internalBatchSubmitAll(onProgress = null, { todayOnly = false, waitForMediaSeconds = 0 } = {}) {
+            async function internalBatchSubmitAll(onProgress = null, { afterTimestampSql = null, waitForMediaSeconds = 0 } = {}) {
                 try {
-                    const dateFilter = todayOnly ? ` AND timestamp >= ${TODAY_START_PORTO_NOVO_SQL}` : '';
+                    const dateFilter = afterTimestampSql ? ` AND timestamp >= ${afterTimestampSql}` : '';
                     const groupAgeFilter = waitForMediaSeconds > 0
                         ? `HAVING property_group_id NOT LIKE 'auto_prop_text_%' OR MAX(timestamp) <= (EXTRACT(EPOCH FROM NOW()) - ${Number(waitForMediaSeconds)})`
                         : '';
@@ -1606,21 +1610,21 @@ Texte à analyser : "${description}"
                 autoPropertyWorkflowInProgress = true;
                 console.log('🕒 --- DÉBUT DU WORKFLOW AUTOMATISÉ (2 min) ---');
                 try {
-                    // L'automatisation ne modifie jamais l'historique : uniquement les
-                    // messages reçus depuis minuit à Porto-Novo. La purge globale reste
+                    // L'automatisation ne modifie jamais l'archive ancienne : uniquement
+                    // les messages des 7 derniers jours. La purge globale reste
                     // réservée à l'action manuelle dans l'interface.
-                    console.log('🕒 Étape 1/3 : Analyse et groupement des messages du jour...');
+                    console.log('🕒 Étape 1/3 : Analyse et groupement des messages des 7 derniers jours...');
                     const runAll = app.get('runAutoGroupHeuristicAllChats');
-                    if (runAll) await runAll({ todayOnly: true });
+                    if (runAll) await runAll({ afterTimestampSql: AUTO_PROPERTY_LOOKBACK_START_SQL });
                     console.log('🕒 Analyse terminée.');
 
                     // 2. Soumission
-                    console.log('🕒 Étape 2/3 : Soumission des groupes du jour...');
+                    console.log('🕒 Étape 2/3 : Soumission des groupes des 7 derniers jours...');
                     // Un texte sans média attend 7 minutes : les photos/vidéos envoyées
                     // juste après sont alors rattachées au même bien. Sans média, le
                     // bien complet est tout de même soumis à l'issue de ce délai.
                     const submitResult = await internalBatchSubmitAll(null, {
-                        todayOnly: true,
+                        afterTimestampSql: AUTO_PROPERTY_LOOKBACK_START_SQL,
                         waitForMediaSeconds: 7 * 60
                     });
                     console.log(`🕒 Soumission terminée : ${submitResult.success} succès, ${submitResult.errors} erreurs.`);
