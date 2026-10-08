@@ -74,6 +74,9 @@ app.get(/^\/(?!api).*/, (req, res) => {
 let botStatus = 'STARTING'; // STARTING, QR, AUTHENTICATED, CONNECTED, DISCONNECTED, ERROR
 let currentQR = null;
 const realtimeClients = new Set();
+const syncedWhatsAppChatTimestamps = new Map();
+let whatsappHistorySyncTimer = null;
+let whatsappHistorySyncInProgress = false;
 // Minuit du jour courant à Porto-Novo, exprimé en timestamp Unix. Les messages
 // WhatsApp sont enregistrés avec un timestamp Unix, donc ce filtre reste exact
 // même si le serveur Docker tourne en UTC.
@@ -2832,6 +2835,10 @@ client.on('auth_failure', (error) => {
 
 client.on('disconnected', (reason) => {
     console.log('❌ Client déconnecté. Veuillez scanner à nouveau !');
+    if (whatsappHistorySyncTimer) {
+        clearInterval(whatsappHistorySyncTimer);
+        whatsappHistorySyncTimer = null;
+    }
     currentQR = null;
     setBotStatus('DISCONNECTED', { reason });
     sendErrorAlert('Bot DISCONNECTED', 'Le collecteur WhatsApp a été déconnecté. Une reconnexion et un nouveau scan peuvent être nécessaires.');
@@ -2995,6 +3002,68 @@ async function archiveWhatsAppEvent(message, source) {
 
 client.on('message', message => archiveWhatsAppEvent(message, 'message'));
 client.on('message_create', message => archiveWhatsAppEvent(message, 'message_create'));
+
+function portoNovoTodayStartUnix() {
+    const parts = new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Africa/Porto-Novo', year: 'numeric', month: '2-digit', day: '2-digit'
+    }).formatToParts(new Date());
+    const value = (type) => parts.find(part => part.type === type)?.value;
+    // Porto-Novo est en UTC+1 toute l'année.
+    return Math.floor(Date.parse(`${value('year')}-${value('month')}-${value('day')}T00:00:00+01:00`) / 1000);
+}
+
+// Filet de sécurité en lecture seule : WhatsApp Web peut occasionnellement ne
+// pas relayer un événement temps réel depuis le téléphone principal. Cette
+// synchronisation récupère alors les messages récents des discussions actives,
+// sans utiliser d'API d'envoi ni écrire quoi que ce soit dans WhatsApp.
+async function syncRecentWhatsAppHistory() {
+    if (whatsappHistorySyncInProgress || !client.info) return;
+    whatsappHistorySyncInProgress = true;
+    try {
+        const todayStart = portoNovoTodayStartUnix();
+        const chats = await client.getChats();
+        const activeChats = chats.filter(chat => {
+            const chatId = chat.id?._serialized;
+            const timestamp = Number(chat.timestamp) || 0;
+            const previousTimestamp = syncedWhatsAppChatTimestamps.get(chatId);
+            return chatId && timestamp >= todayStart && (previousTimestamp === undefined || timestamp > previousTimestamp);
+        });
+
+        for (const chat of activeChats) {
+            const chatId = chat.id._serialized;
+            const timestamp = Number(chat.timestamp) || 0;
+            try {
+                const recentMessages = await chat.fetchMessages({ limit: 50 });
+                for (const message of recentMessages) {
+                    if ((Number(message.timestamp) || 0) >= todayStart) {
+                        await archiveWhatsAppEvent(message, 'history_sync');
+                    }
+                }
+                syncedWhatsAppChatTimestamps.set(chatId, timestamp);
+            } catch (error) {
+                console.error(`⚠️ Synchronisation de ${chatId} impossible: ${error.message}`);
+            }
+        }
+
+        if (activeChats.length > 0) {
+            console.log(`🔄 [WhatsApp] Synchronisation de secours : ${activeChats.length} conversation(s) active(s).`);
+        }
+    } catch (error) {
+        console.error(`⚠️ Synchronisation WhatsApp impossible: ${error.message}`);
+    } finally {
+        whatsappHistorySyncInProgress = false;
+    }
+}
+
+function startWhatsAppHistorySync() {
+    if (whatsappHistorySyncTimer) return;
+    syncRecentWhatsAppHistory();
+    whatsappHistorySyncTimer = setInterval(syncRecentWhatsAppHistory, 30 * 1000);
+}
+
+client.on('ready', () => {
+    startWhatsAppHistorySync();
+});
 
 
 (async () => {
