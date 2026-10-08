@@ -2973,22 +2973,28 @@ async function archiveWhatsAppMessage(message) {
     console.log(`💾 Message WhatsApp archivé : ${messageData.messageId}`);
 }
 
-// `message` reçoit les messages entrants, qu'ils viennent d'une discussion privée
-// ou d'un groupe. `message_create` est conservé seulement pour archiver les
-// messages écrits depuis le téléphone connecté. Il n'y a aucun appel à
-// sendMessage dans ce projet.
-function archiveWhatsAppEvent(message) {
-    archiveWhatsAppMessage(message).catch(error => {
+// whatsapp-web.js émet `message_create` pour tout nouveau message et `message`
+// pour les entrants. On écoute les deux afin de couvrir les messages privés, de
+// groupe et ceux écrits depuis le téléphone connecté, sans jamais en envoyer.
+const messagesBeingArchived = new Set();
+
+async function archiveWhatsAppEvent(message, source) {
+    const messageId = message?.id?._serialized;
+    if (!messageId || messagesBeingArchived.has(messageId)) return;
+
+    messagesBeingArchived.add(messageId);
+    console.log(`📨 [WhatsApp:${source}] Message détecté : ${messageId}`);
+    try {
+        await archiveWhatsAppMessage(message);
+    } catch (error) {
         console.error(`❌ Archivage WhatsApp impossible: ${error.message}`);
-    });
+    } finally {
+        messagesBeingArchived.delete(messageId);
+    }
 }
 
-client.on('message', archiveWhatsAppEvent);
-
-client.on('message_create', message => {
-    if (!message.fromMe) return;
-    archiveWhatsAppEvent(message);
-});
+client.on('message', message => archiveWhatsAppEvent(message, 'message'));
+client.on('message_create', message => archiveWhatsAppEvent(message, 'message_create'));
 
 
 (async () => {
