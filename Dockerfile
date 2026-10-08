@@ -2,7 +2,7 @@
 FROM node:20-slim AS frontend-build
 WORKDIR /app/frontend
 COPY frontend/package*.json ./
-RUN npm install
+RUN npm ci
 COPY frontend/ ./
 # Build Vite et vérifie que index.html est bien généré
 RUN npm run build && echo "✅ Build OK:" && ls dist/
@@ -19,7 +19,7 @@ ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 WORKDIR /usr/src/app
 COPY package*.json ./
-RUN npm install
+RUN npm ci --omit=dev
 COPY . .
 # Copier le build React dans un dossier dédié (séparé de public/)
 COPY --from=frontend-build /app/frontend/dist/ ./frontend-dist/

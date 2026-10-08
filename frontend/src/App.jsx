@@ -195,6 +195,7 @@ function App() {
   const lastSelectedIdRef = useRef(null);       // Point de départ pour la sélection groupée
   const isGroupSelectionRef = useRef(false);    // Ref synchrone du mode groupé
   const messagesRef = useRef([]);               // Ref synchrone de la liste des messages
+  const pollMessagesRef = useRef(null);         // Déclenche un rafraîchissement immédiat via SSE
 
   // Synchronisation synchrone des refs pour garantir l'immédiateté pendant les interactions
   isGroupSelectionRef.current = isGroupSelection;
@@ -232,6 +233,41 @@ function App() {
     const id = setInterval(fetch_, 3000);
     return () => clearInterval(id);
   }, []);
+
+  // Les notifications serveur affichent immédiatement les nouveaux messages.
+  // Le polling existant reste volontairement en secours si un proxy coupe SSE.
+  useEffect(() => {
+    const stream = new EventSource('/api/events');
+
+    stream.addEventListener('bot_status', async (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        setBotStatus(data.status || 'LOADING');
+        if (data.status === 'QR') {
+          const { qr } = await (await fetch('/api/qr')).json();
+          setQrCode(qr || null);
+        } else {
+          setQrCode(null);
+        }
+      } catch (error) {
+        console.error('SSE bot_status', error);
+      }
+    });
+
+    stream.addEventListener('whatsapp_message', (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        fetchChats();
+        if (data.chatId === currentChatIdRef.current) {
+          pollMessagesRef.current?.();
+        }
+      } catch (error) {
+        console.error('SSE whatsapp_message', error);
+      }
+    });
+
+    return () => stream.close();
+  }, [fetchChats]);
 
   // ─── EFFACER TOAST APRÈS 8s (sauf si persistent) ───────────────────────────
   useEffect(() => {
@@ -679,7 +715,7 @@ function App() {
     loadInitial();
 
     // Polling léger : uniquement les NOUVEAUX messages (timestamp > dernier)
-    const poll = setInterval(async () => {
+    const pollMessages = async () => {
       if (pollingLockRef.current) return;
       if (isManualActionRef.current) return; // Ne pas poll pendant une soumission
       pollingLockRef.current = true;
@@ -740,9 +776,16 @@ function App() {
         });
       } catch (e) { console.error('poll messages', e); }
       finally { pollingLockRef.current = false; }
-    }, 2500);
+    };
 
-    return () => { clearInterval(poll); currentChatIdRef.current = null; };
+    pollMessagesRef.current = pollMessages;
+    const poll = setInterval(pollMessages, 2500);
+
+    return () => {
+      clearInterval(poll);
+      pollMessagesRef.current = null;
+      currentChatIdRef.current = null;
+    };
   }, [currentChatId, viewMode]);
 
   // ─── SCROLL AUTO UNIQUEMENT SI DÉJÀ EN BAS ET NOUVEAU MSG ───────────────────
@@ -1384,6 +1427,17 @@ function App() {
             <p>Scannez ce QR Code avec votre téléphone.</p>
             <div id="qrContainer"><QRCodeCanvas value={qrCode} size={250} marginSize={2} /></div>
             <div className="qr-status-text">Prêt pour le scan !</div>
+          </div>
+        </div>
+      )}
+
+      {botStatus !== 'CONNECTED' && botStatus !== 'QR' && (
+        <div className="toast-container" style={{ top: '18px', right: '18px', zIndex: 2000 }}>
+          <div className="toast-content">
+            {botStatus === 'STARTING' && '⏳ Connexion à WhatsApp en cours…'}
+            {botStatus === 'AUTHENTICATED' && '⏳ Session WhatsApp authentifiée, chargement en cours…'}
+            {botStatus === 'DISCONNECTED' && '⚠️ WhatsApp est déconnecté. Tentative de reconnexion…'}
+            {botStatus === 'ERROR' && '❌ WhatsApp doit être reconnecté. Un QR apparaîtra dès que possible.'}
           </div>
         </div>
       )}

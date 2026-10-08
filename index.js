@@ -33,7 +33,11 @@ const upload = multer({
 
 // --- SETUP SERVEUR WEB (Frontend & API) ---
 const app = express();
-app.use(cors());
+const configuredCorsOrigins = (process.env.CORS_ORIGIN || '')
+    .split(',')
+    .map(origin => origin.trim())
+    .filter(Boolean);
+app.use(cors({ origin: configuredCorsOrigins.length ? configuredCorsOrigins : false }));
 app.use(express.json()); // Support pour le JSON dans les requêtes POST
 app.use(express.static(path.join(__dirname, 'frontend-dist')));
 app.use(express.static(path.join(__dirname, 'public')));
@@ -66,9 +70,50 @@ app.get(/^\/(?!api).*/, (req, res) => {
     }
 });
 
-// État global du bot pour le frontend
-let botStatus = 'CONNECTED'; // LOADING, QR, CONNECTED, DISCONNECTED
+// État global du collecteur WhatsApp pour le frontend.
+let botStatus = 'STARTING'; // STARTING, QR, AUTHENTICATED, CONNECTED, DISCONNECTED, ERROR
 let currentQR = null;
+const realtimeClients = new Set();
+
+function broadcastRealtimeEvent(type, payload = {}) {
+    const message = `event: ${type}\ndata: ${JSON.stringify(payload)}\n\n`;
+    for (const clientResponse of realtimeClients) {
+        try {
+            clientResponse.write(message);
+        } catch (_) {
+            realtimeClients.delete(clientResponse);
+        }
+    }
+}
+
+function setBotStatus(status, extra = {}) {
+    botStatus = status;
+    broadcastRealtimeEvent('bot_status', { status, hasQr: Boolean(currentQR), ...extra });
+}
+
+// Ces routes restent accessibles pendant l'initialisation de PostgreSQL :
+// l'interface peut donc immédiatement présenter le QR de connexion.
+app.get('/api/status', (_req, res) => {
+    res.json({ status: botStatus, hasQr: Boolean(currentQR) });
+});
+
+app.get('/api/qr', (_req, res) => {
+    res.json({ qr: currentQR });
+});
+
+app.get('/api/events', (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+    realtimeClients.add(res);
+    res.write(`event: bot_status\ndata: ${JSON.stringify({ status: botStatus, hasQr: Boolean(currentQR) })}\n\n`);
+    const heartbeat = setInterval(() => res.write(': keep-alive\n\n'), 25000);
+    req.on('close', () => {
+        clearInterval(heartbeat);
+        realtimeClients.delete(res);
+    });
+});
 
 app.listen(3000, () => {
     console.log('✅ Frontend et API Web disponibles sur http://localhost:3000');
@@ -148,9 +193,10 @@ async function sendErrorAlert(errorContext, error) {
 }
 
 // Connexion à PostgreSQL
-const db = new Pool({
-    connectionString: process.env.DATABASE_URL || 'postgresql://postgres:password123@db:5432/whatsapp_logs'
-});
+if (!process.env.DATABASE_URL) {
+    throw new Error('DATABASE_URL est obligatoire : configurez-la dans .env avant de démarrer le collecteur.');
+}
+const db = new Pool({ connectionString: process.env.DATABASE_URL });
 
 // PostgreSQL met quelques secondes à démarrer dans Docker. 
 // Nous ajoutons une boucle de réessais (5 tentatives) pour patienter au lieu de crasher
@@ -204,6 +250,10 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
 
             // --- UTILITAIRE DE NETTOYAGE AUTO ---
             const deleteMediaFiles = async (messageIds) => {
+                if (process.env.MEDIA_RETENTION_PURGE !== 'true') {
+                    // Par défaut, l'archive est complète : les pièces jointes restent disponibles.
+                    return;
+                }
                 if (!messageIds || messageIds.length === 0) return;
                 try {
                     const { rows } = await db.query('SELECT media_path FROM messages WHERE id = ANY($1) AND media_path IS NOT NULL', [messageIds]);
@@ -223,6 +273,7 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
 
             // --- NETTOYAGE PÉRIODIQUE DES MÉDIAS ANALYSÉS ---
             const cleanupAnalyzedMedia = async () => {
+                if (process.env.MEDIA_RETENTION_PURGE !== 'true') return 0;
                 try {
                     // Supprimer les médias des messages avec un bien créé, analysés, ou marqués comme noise
                     const { rows } = await db.query(`
@@ -2597,56 +2648,6 @@ Texte à analyser : "${description}"
 
             // ═══════════════════════════════════════════════════════════════
 
-            // -- ROUTES STATUS BOT -test-
-            app.get('/api/status', (req, res) => {
-                res.json({ status: botStatus });
-            });
-
-            app.get('/api/qr', (req, res) => {
-                res.json({ qr: currentQR });
-            });
-
-            // ROUTE POUR ENVOYER UN MESSAGE TEXTE VIA WASENDERAPI
-            app.post('/api/send-message', async (req, res) => {
-                try {
-                    const { phoneNumber, message } = req.body;
-
-                    if (!phoneNumber || !message) {
-                        return res.status(400).json({ error: "Les champs phoneNumber et message sont requis." });
-                    }
-
-                    const cleanNumber = phoneNumber.toString().replace(/^\+/, '');
-
-                    const wasenderApiKey = process.env.WASENDER_API_TOKEN;
-                    if (!wasenderApiKey) {
-                        return res.status(500).json({ error: "WASENDER_API_TOKEN n'est pas configuré dans le .env" });
-                    }
-
-                    const response = await axios.post('https://api.wasenderapi.com/v1/messages/send', {
-                        to: cleanNumber,
-                        type: 'text',
-                        text: {
-                            body: message
-                        }
-                    }, {
-                        headers: {
-                            'Authorization': `Bearer ${wasenderApiKey}`,
-                            'Content-Type': 'application/json'
-                        }
-                    });
-
-                    res.json({
-                        success: true,
-                        message: "Message envoyé avec succès.",
-                        messageId: response.data?.data?.id || 'unknown'
-                    });
-                } catch (error) {
-                    console.error("❌ Erreur lors de l'envoi du message Wasender:", error.response?.data || error.message);
-                    res.status(500).json({ error: error.message });
-                }
-            });
-
-
             // ═══════════════════════════════════════════════════════════════
             // 🤖 CRON AUTO FACEBOOK : Vérification toutes les 2 minutes
             // Lance processFacebookBatch si des posts sont en "pending"
@@ -2703,11 +2704,12 @@ Texte à analyser : "${description}"
             // ═══════════════════════════════════════════════════════════════
 
             // ═══════════════════════════════════════════════════════════════
-            // ✅ ACTIVÉ : Balayage automatique périodique WhatsApp (Purge + Groupement + Soumission)
-            // Déplacé ici pour fonctionner même avec WasenderAPI (WHATSAPP_ENABLED=false)
-            console.log('🤖 [WhatsApp Cron] Activation du workflow automatisé complet (toutes les 2 min)...');
+            // La création automatique de biens est volontairement désactivée par défaut.
+            // L'archivage WhatsApp reste immédiat, mais créer un bien est une action
+            // métier irréversible qui doit être validée dans l'interface.
+            console.log('🤖 [WhatsApp Cron] Workflow automatique:', process.env.AUTO_PROPERTY_WORKFLOW === 'true' ? 'activé' : 'désactivé (mode sûr)');
             const globalWorkflow = app.get('globalAutomatedWorkflow');
-            if (globalWorkflow) {
+            if (globalWorkflow && process.env.AUTO_PROPERTY_WORKFLOW === 'true') {
                 setTimeout(() => {
                     globalWorkflow().catch(e => console.error("❌ Error initial workflow:", e));
                 }, 60 * 1000);
@@ -2730,15 +2732,16 @@ Texte à analyser : "${description}"
 
 
 
-            return;
+            return true;
         } catch (err) {
             console.log(`⚠️ En attente de PostgreSQL... Postgres est peut-être en train de démarrer (tentative ${i + 1}/${retries}).`);
             await new Promise(res => setTimeout(res, delay));
         }
     }
     console.error('❌ Impossible de se connecter à PostgreSQL. L\'erreur ECONNREFUSED persiste.');
+    return false;
 }
-connectToDbWithRetry();
+const databaseReady = connectToDbWithRetry();
 
 const puppeteerOptions = {
     headless: true,
@@ -2769,278 +2772,215 @@ if (process.env.CHROME_BIN) {
 }
 
 const client = new Client({
-    authStrategy: new LocalAuth(),
+    authStrategy: new LocalAuth({
+        dataPath: process.env.WWEBJS_AUTH_PATH || '.wwebjs_auth',
+        clientId: process.env.WWEBJS_CLIENT_ID || undefined
+    }),
     puppeteer: puppeteerOptions
 });
+let reconnectTimer = null;
 
-
+function scheduleWhatsAppReconnect() {
+    if (process.env.WHATSAPP_ENABLED === 'false' || reconnectTimer) return;
+    reconnectTimer = setTimeout(async () => {
+        reconnectTimer = null;
+        try {
+            currentQR = null;
+            setBotStatus('STARTING');
+            await client.initialize();
+        } catch (error) {
+            console.error(`❌ Reconnexion WhatsApp impossible: ${error.message}`);
+            setBotStatus('ERROR', { reason: error.message });
+        }
+    }, 5000);
+}
 
 client.on('qr', (qr) => {
-    // Generate and display in terminal too
     qrcode.generate(qr, { small: true });
     console.log('NOUVEAU QR CODE : Scannez ce QR avec votre application WhatsApp.');
-
-    // Save for UI
-    botStatus = 'QR';
     currentQR = qr;
+    setBotStatus('QR');
 });
 
 client.on('ready', () => {
     console.log('✅ C\'est connecté ! Le client est prêt et écoute les messages !');
-    botStatus = 'CONNECTED';
     currentQR = null;
+    setBotStatus('CONNECTED');
 });
 
 client.on('authenticated', () => {
     console.log('--- AUTHENTICATED: Chargement de la session en cours ---');
-    botStatus = 'AUTHENTICATED';
+    setBotStatus('AUTHENTICATED');
 });
 
-client.on('auth_failure', () => {
+client.on('auth_failure', (error) => {
     console.error('❌ Échec de l\'authentification !');
-    botStatus = 'QR';
+    currentQR = null;
+    setBotStatus('ERROR', { reason: error || 'Échec de l’authentification' });
+    scheduleWhatsAppReconnect();
 });
 
-client.on('disconnected', () => {
+client.on('disconnected', (reason) => {
     console.log('❌ Client déconnecté. Veuillez scanner à nouveau !');
-    botStatus = 'DISCONNECTED';
-    sendErrorAlert("Bot DISCONNECTED", "Le bot a été déconnecté de WhatsApp. Il faut probablement rescanner le QR Code.");
+    currentQR = null;
+    setBotStatus('DISCONNECTED', { reason });
+    sendErrorAlert('Bot DISCONNECTED', 'Le collecteur WhatsApp a été déconnecté. Une reconnexion et un nouveau scan peuvent être nécessaires.');
+    scheduleWhatsAppReconnect();
 });
 
-// NOUVEAU WEBHOOK WASENDERAPI
-app.post('/api/webhook/wasender', async (req, res) => {
-    // On répond tout de suite 200 OK pour WasenderAPI
-    res.status(200).send('OK');
+function safeFilePart(value) {
+    return String(value || 'message').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 180);
+}
 
-    const payload = req.body;
-    console.log('\n======================================');
-    console.log('✅ [WEBHOOK WASENDER] Nouveau POST reçu !');
-    console.log(JSON.stringify(payload, null, 2));
-    console.log('======================================\n');
+function extensionFromMimeType(mimeType) {
+    const subtype = String(mimeType || '').split('/')[1]?.split(/[+;]/)[0]?.toLowerCase();
+    const extensions = { jpeg: 'jpg', png: 'png', gif: 'gif', webp: 'webp', mp4: 'mp4', mpeg: 'mpeg', ogg: 'ogg', opus: 'opus', pdf: 'pdf', plain: 'txt' };
+    return extensions[subtype] || (subtype && /^[a-z0-9]{1,10}$/.test(subtype) ? subtype : 'bin');
+}
 
-    // Gérer le statut de la session
-    if (payload.event === 'session.status') {
-        botStatus = payload.data?.status === 'connected' ? 'CONNECTED' : 'DISCONNECTED';
-        console.log(`📡 Statut session WasenderAPI : ${botStatus}`);
-        return;
-    }
-
-    // Filtrer pour ne garder que les messages entrants
-    if (payload.event !== 'messages.upsert' && payload.event !== 'messages.received') {
-        return;
-    }
-
-    // Mise à jour du timestamp de dernier message (simple variable locale)
-    const receivedAt = Date.now();
-
+async function downloadWhatsAppMedia(message, messageId) {
+    if (!message.hasMedia) return { mediaPath: null, mediaMimeType: null };
     try {
-        // CORRECTION : WasenderAPI envoie les données dans payload.data.messages (pluriel) qui est un tableau
-        let msgObj = payload.data?.messages || payload.data?.message || payload.data || {};
-        if (Array.isArray(msgObj) && msgObj.length > 0) {
-            msgObj = msgObj[0];
+        const media = await message.downloadMedia();
+        if (!media?.data) return { mediaPath: null, mediaMimeType: media?.mimetype || null };
+        const mediaDir = path.join(__dirname, 'media');
+        await fs.promises.mkdir(mediaDir, { recursive: true });
+        const mimeType = media.mimetype || 'application/octet-stream';
+        const fileName = `${safeFilePart(messageId)}.${extensionFromMimeType(mimeType)}`;
+        const localFilePath = path.join(mediaDir, fileName);
+        if (!fs.existsSync(localFilePath)) {
+            await fs.promises.writeFile(localFilePath, Buffer.from(media.data, 'base64'));
         }
-        const messageKey = msgObj.key || {};
-
-        if (messageKey.fromMe) return;
-
-        // remoteJid est disponible dans la clé ET directement dans l'objet message
-        const remoteJid = messageKey.remoteJid || msgObj.remoteJid || "";
-        if (!remoteJid || remoteJid === 'status@broadcast') return;
-
-        const isGroup = remoteJid.endsWith('@g.us');
-
-        let actualSenderId = remoteJid;
-        if (isGroup) {
-            actualSenderId = messageKey.participantPn || messageKey.participant || remoteJid;
-            if (actualSenderId && !actualSenderId.includes('@')) actualSenderId += '@s.whatsapp.net';
-        }
-
-        const senderId = actualSenderId;
-        const senderNumber = senderId.split('@')[0];
-        const senderName = msgObj.pushName || "Inconnu";
-        const chatName = isGroup ? "Groupe Wasender" : senderName;
-
-        const messageId = messageKey.id || msgObj.id || `wasender_${Date.now()}`;
-
-        let timestamp = msgObj.messageTimestamp;
-        if (timestamp && typeof timestamp === 'object' && timestamp.low !== undefined) {
-            timestamp = timestamp.low;
-        }
-        timestamp = timestamp || Math.floor(Date.now() / 1000);
-
-        // Le contenu texte est dans msgObj.message (sous-objet)
-        const msgContent = msgObj.message || {};
-        let body = '';
-        if (msgContent.conversation) body = msgContent.conversation;
-        else if (msgContent.extendedTextMessage?.text) body = msgContent.extendedTextMessage.text;
-        else if (msgContent.imageMessage?.caption) body = msgContent.imageMessage.caption;
-        else if (msgContent.videoMessage?.caption) body = msgContent.videoMessage.caption;
-
-        const hasMedia = !!(msgContent.imageMessage || msgContent.videoMessage || msgContent.documentMessage);
-        let mediaType = 'text';
-        let mediaMimeType = '';
-        if (msgContent.imageMessage) { mediaType = 'image'; mediaMimeType = msgContent.imageMessage.mimetype || 'image/jpeg'; }
-        else if (msgContent.videoMessage) { mediaType = 'video'; mediaMimeType = msgContent.videoMessage.mimetype || 'video/mp4'; }
-
-        // Téléchargement des médias via WasenderAPI (decrypt-media)
-        let savedMediaPath = null;
-        if (hasMedia) {
-            try {
-                const wasenderApiKey = process.env.WASENDER_API_TOKEN;
-                const mediaMsg = msgContent.imageMessage || msgContent.videoMessage || msgContent.documentMessage || null;
-
-                if (wasenderApiKey && mediaMsg && mediaMsg.mediaKey && (mediaMsg.url || mediaMsg.directPath)) {
-                    console.log(`📥 Téléchargement média WasenderAPI pour ${messageId}...`);
-
-                    // Reconstruction de l'URL si elle est vide mais qu'on a le directPath
-                    if (!mediaMsg.url && mediaMsg.directPath) {
-                        mediaMsg.url = `https://mmg.whatsapp.net${mediaMsg.directPath}`;
-                    }
-
-                    // Étape 1 : Déchiffrer le média via WasenderAPI
-                    // L'API attend l'objet message entier emballé dans { data: { messages: {...} } }
-                    const decryptRes = await axios.post(
-                        'https://api.wasenderapi.com/api/decrypt-media',
-                        { data: { messages: msgObj } },
-                        {
-                            headers: {
-                                'Authorization': `Bearer ${wasenderApiKey}`,
-                                'Content-Type': 'application/json'
-                            },
-                            timeout: 30000
-                        }
-                    );
-
-                    const publicUrl = decryptRes.data?.publicUrl || decryptRes.data?.url;
-                    if (publicUrl) {
-                        // Étape 2 : Télécharger le fichier depuis l'URL publique
-                        const ext = mediaMimeType.split('/')[1]?.split(';')[0] || 'jpg';
-                        const fileName = `wasender_${messageId}_${Date.now()}.${ext}`;
-                        const mediaDir = path.join(__dirname, 'media');
-                        if (!fs.existsSync(mediaDir)) fs.mkdirSync(mediaDir, { recursive: true });
-                        const localFilePath = path.join(mediaDir, fileName);
-
-                        const fileRes = await axios.get(publicUrl, { responseType: 'arraybuffer', timeout: 30000 });
-                        fs.writeFileSync(localFilePath, Buffer.from(fileRes.data));
-                        savedMediaPath = `media/${fileName}`;
-                        console.log(`✅ Média sauvegardé : ${savedMediaPath}`);
-                    } else {
-                        console.warn(`⚠️ Pas d'URL publique retournée pour ${messageId}`);
-                    }
-                }
-            } catch (mediaErr) {
-                console.error(`❌ Erreur média Wasender (${messageId}):`, mediaErr.response?.data || mediaErr.message);
-            }
-        }
-
-        const messageData = {
-            messageId: messageId,
-            body: body || "",
-            timestamp: timestamp,
-            isFromMe: false,
-            isGroup: isGroup,
-            chatId: remoteJid,
-            chatName: chatName,
-            senderId: senderId,
-            senderName: senderName,
-            senderNumber: senderNumber,
-            receiverId: "",
-            hasMedia: hasMedia,
-            mediaPath: savedMediaPath,
-            mediaMimeType: mediaMimeType,
-            messageType: mediaType,
-            deviceType: "wasender",
-            rawData: payload
-        };
-
-        const chatQuery = `
-                        INSERT INTO chats (whatsapp_chat_id, chat_name, is_group, last_message_timestamp)
-                        VALUES ($1, $2, $3, $4)
-                        ON CONFLICT (whatsapp_chat_id) 
-                        DO UPDATE SET 
-                            chat_name = EXCLUDED.chat_name,
-                            last_message_timestamp = EXCLUDED.last_message_timestamp,
-                            updated_at = CURRENT_TIMESTAMP;
-                    `;
-        await db.query(chatQuery, [messageData.chatId, messageData.chatName, messageData.isGroup, messageData.timestamp]);
-
-        const query = `
-                        INSERT INTO messages (
-                            message_id, body, timestamp, is_from_me, is_group, chat_id, chat_name,
-                            sender_id, sender_name, sender_number, receiver_id, has_media, message_type, device_type,
-                            media_path, media_mime_type, raw_data
-                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
-                        ON CONFLICT (message_id) DO UPDATE SET message_id = EXCLUDED.message_id RETURNING id;
-                    `;
-
-        const values = [
-            messageData.messageId, messageData.body, messageData.timestamp, messageData.isFromMe,
-            messageData.isGroup, messageData.chatId, messageData.chatName, messageData.senderId,
-            messageData.senderName, messageData.senderNumber, messageData.receiverId,
-            messageData.hasMedia, messageData.messageType, messageData.deviceType,
-            messageData.mediaPath, messageData.mediaMimeType, messageData.rawData
-        ];
-
-        const resInsert = await db.query(query, values);
-        const currId = resInsert.rows[0]?.id;
-        console.log(`💾 Message archivé dans PostgreSQL avec succès (ID: ${currId}) ! ✅`);
-
-        if (messageData.hasMedia && messageData.body && messageData.body.length > 100 &&
-            (messageData.mediaMimeType?.startsWith('image/') || messageData.mediaMimeType?.startsWith('video/')) &&
-            !messageData.isFromMe && currId) {
-            const groupId = `auto_prop_self_${currId}`;
-            await db.query("UPDATE messages SET property_group_id = $1 WHERE id = $2", [groupId, currId]);
-            console.log(`📎 Message complet auto-groupé : ${groupId}`);
-        }
-        else if (messageData.hasMedia && !messageData.isFromMe) {
-            try {
-                const prevMsgQuery = `
-                                SELECT id, body, property_group_id, timestamp, has_media, real_property_id
-                                FROM messages
-                                WHERE chat_id = $1 AND sender_id = $2 AND id < $3
-                                ORDER BY timestamp DESC, id DESC LIMIT 1
-                            `;
-                const { rows: prevRows } = await db.query(prevMsgQuery, [messageData.chatId, messageData.senderId, currId]);
-
-                if (prevRows.length > 0) {
-                    const prevMsg = prevRows[0];
-                    const timeDiff = messageData.timestamp - prevMsg.timestamp;
-
-                    if (currId) {
-                        const prevIsStrictParent = prevMsg.body && prevMsg.body.length > 100 && !prevMsg.has_media;
-                        const currIsStrictChild = messageData.hasMedia && (messageData.mediaMimeType?.startsWith('image/') || messageData.mediaMimeType?.startsWith('video/')) && (!messageData.body || messageData.body.length < 40);
-
-                        if (currIsStrictChild && prevIsStrictParent && timeDiff < 420 && !prevMsg.real_property_id) {
-                            const groupId = prevMsg.property_group_id || `auto_prop_parent_${prevMsg.id}`;
-                            await db.query("UPDATE messages SET property_group_id = $1 WHERE id IN ($2, $3)", [groupId, prevMsg.id, currId]);
-                            console.log(`📎 Heuristique ULTRA-STRICTE : ${groupId}`);
-                        }
-                        else if (messageData.hasMedia && (messageData.mediaMimeType?.startsWith('image/') || messageData.mediaMimeType?.startsWith('video/')) && prevMsg.property_group_id && prevMsg.property_group_id.startsWith('auto_prop_parent_') && timeDiff < 420 && !prevMsg.real_property_id) {
-                            if (!messageData.body || messageData.body.length < 40) {
-                                await db.query("UPDATE messages SET property_group_id = $1 WHERE id = $2", [prevMsg.property_group_id, currId]);
-                                console.log(`📎 Extension Heuristique ULTRA-STRICTE : ${currId}`);
-                            }
-                        }
-                    }
-                }
-            } catch (groupErr) {
-                console.error("❌ Erreur auto-groupement:", groupErr);
-            }
-        }
-
+        return { mediaPath: `media/${fileName}`, mediaMimeType: mimeType };
     } catch (error) {
-        console.error("❌ Erreur lors de l'extraction du message Webhook :", error);
+        // Le texte est tout de même archivé lorsque WhatsApp ne permet pas le téléchargement.
+        console.warn(`⚠️ Média non téléchargé (${messageId}): ${error.message}`);
+        return { mediaPath: null, mediaMimeType: null };
     }
+}
+
+async function applyPropertyGrouping(messageData, messageRowId) {
+    if (messageData.isFromMe || !messageData.hasMedia || !messageRowId) return;
+    const isVisualMedia = messageData.mediaMimeType?.startsWith('image/') || messageData.mediaMimeType?.startsWith('video/');
+    if (!isVisualMedia) return;
+    if (messageData.body && messageData.body.length > 100) {
+        await db.query('UPDATE messages SET property_group_id = $1 WHERE id = $2', [`auto_prop_self_${messageRowId}`, messageRowId]);
+        return;
+    }
+    const { rows } = await db.query(`
+        SELECT id, body, property_group_id, timestamp, has_media, real_property_id
+        FROM messages
+        WHERE chat_id = $1 AND sender_id = $2 AND id < $3
+        ORDER BY timestamp DESC, id DESC LIMIT 1
+    `, [messageData.chatId, messageData.senderId, messageRowId]);
+    const previous = rows[0];
+    if (!previous || previous.real_property_id || messageData.timestamp - previous.timestamp >= 420) return;
+    const previousIsTextParent = previous.body && previous.body.length > 100 && !previous.has_media;
+    const currentIsMediaChild = !messageData.body || messageData.body.length < 40;
+    if (previousIsTextParent && currentIsMediaChild) {
+        const groupId = previous.property_group_id || `auto_prop_parent_${previous.id}`;
+        await db.query('UPDATE messages SET property_group_id = $1 WHERE id IN ($2, $3)', [groupId, previous.id, messageRowId]);
+    } else if (previous.property_group_id?.startsWith('auto_prop_parent_') && currentIsMediaChild) {
+        await db.query('UPDATE messages SET property_group_id = $1 WHERE id = $2', [previous.property_group_id, messageRowId]);
+    }
+}
+
+async function archiveWhatsAppMessage(message) {
+    const messageId = message.id?._serialized;
+    if (!messageId || message.isStatus) return;
+    const chat = await message.getChat();
+    const chatId = chat?.id?._serialized;
+    if (!chatId || chatId === 'status@broadcast') return;
+
+    const isFromMe = Boolean(message.fromMe);
+    const isGroup = Boolean(chat.isGroup);
+    const senderId = message.author || (isFromMe ? client.info?.wid?._serialized : message.from) || chatId;
+    let sender = null;
+    try { sender = await client.getContactById(senderId); } catch (_) { /* LID non résolu : conserver l'identifiant exact. */ }
+    const senderNumber = sender?.number || (/@(c\.us|s\.whatsapp\.net)$/.test(senderId) ? senderId.split('@')[0] : null);
+    const senderName = sender?.pushname || sender?.name || sender?.shortName || senderNumber || 'Inconnu';
+    const chatName = chat.name || chat.formattedTitle || (isGroup ? 'Groupe WhatsApp' : senderName);
+    const timestamp = Number(message.timestamp) || Math.floor(Date.now() / 1000);
+    const { mediaPath, mediaMimeType } = await downloadWhatsAppMedia(message, messageId);
+    const messageData = {
+        messageId,
+        body: message.body || '',
+        timestamp,
+        isFromMe,
+        isGroup,
+        chatId,
+        chatName,
+        senderId,
+        senderName,
+        senderNumber,
+        receiverId: message.to || null,
+        hasMedia: Boolean(message.hasMedia),
+        mediaPath,
+        mediaMimeType,
+        messageType: message.type || 'unknown',
+        deviceType: message.deviceType || null,
+        rawData: {
+            id: messageId, from: message.from, to: message.to, author: message.author,
+            fromMe: isFromMe, timestamp, type: message.type, hasMedia: Boolean(message.hasMedia)
+        }
+    };
+
+    await db.query(`
+        INSERT INTO chats (whatsapp_chat_id, chat_name, is_group, last_message_timestamp)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (whatsapp_chat_id) DO UPDATE SET
+            chat_name = COALESCE(NULLIF(EXCLUDED.chat_name, ''), chats.chat_name),
+            is_group = EXCLUDED.is_group,
+            last_message_timestamp = GREATEST(COALESCE(chats.last_message_timestamp, 0), EXCLUDED.last_message_timestamp),
+            updated_at = CURRENT_TIMESTAMP
+    `, [messageData.chatId, messageData.chatName, messageData.isGroup, messageData.timestamp]);
+    const { rows } = await db.query(`
+        INSERT INTO messages (
+            message_id, body, timestamp, is_from_me, is_group, chat_id, chat_name,
+            sender_id, sender_name, sender_number, receiver_id, has_media, message_type, device_type,
+            media_path, media_mime_type, raw_data
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+        ON CONFLICT (message_id) DO UPDATE SET
+            body = EXCLUDED.body,
+            sender_name = COALESCE(NULLIF(EXCLUDED.sender_name, ''), messages.sender_name),
+            sender_number = COALESCE(EXCLUDED.sender_number, messages.sender_number),
+            media_path = COALESCE(messages.media_path, EXCLUDED.media_path),
+            media_mime_type = COALESCE(messages.media_mime_type, EXCLUDED.media_mime_type),
+            raw_data = EXCLUDED.raw_data
+        RETURNING id
+    `, [
+        messageData.messageId, messageData.body, messageData.timestamp, messageData.isFromMe,
+        messageData.isGroup, messageData.chatId, messageData.chatName, messageData.senderId,
+        messageData.senderName, messageData.senderNumber, messageData.receiverId,
+        messageData.hasMedia, messageData.messageType, messageData.deviceType,
+        messageData.mediaPath, messageData.mediaMimeType, messageData.rawData
+    ]);
+    const messageRowId = rows[0]?.id;
+    await applyPropertyGrouping(messageData, messageRowId);
+    broadcastRealtimeEvent('whatsapp_message', {
+        chatId: messageData.chatId, messageId: messageData.messageId, rowId: messageRowId, isFromMe
+    });
+    console.log(`💾 Message WhatsApp archivé : ${messageData.messageId}`);
+}
+
+// message_create couvre les messages entrants et les messages écrits depuis le téléphone.
+// Il n'y a aucun appel à sendMessage dans ce projet.
+client.on('message_create', message => {
+    archiveWhatsAppMessage(message).catch(error => {
+        console.error(`❌ Archivage WhatsApp impossible: ${error.message}`);
+    });
 });
 
 
 (async () => {
-    // ──────────────────────────────────────────────────────────
-    // Si WHATSAPP_ENABLED=false → on n'initialise pas WhatsApp
-    // Le serveur HTTP et le cron Facebook continuent de tourner
-    // ──────────────────────────────────────────────────────────
+    const databaseIsReady = await databaseReady;
+    if (!databaseIsReady) {
+        setBotStatus('ERROR', { reason: 'PostgreSQL indisponible : le collecteur ne peut pas archiver les messages.' });
+        return;
+    }
     if (process.env.WHATSAPP_ENABLED === 'false') {
-        console.log('⏸️  [WhatsApp] Désactivé via WHATSAPP_ENABLED=false. Seul le pipeline Facebook est actif.');
+        console.log('⏸️  [WhatsApp] Désactivé explicitement via WHATSAPP_ENABLED=false.');
+        setBotStatus('DISCONNECTED', { reason: 'Collecteur désactivé par configuration.' });
         return;
     }
 
@@ -3069,9 +3009,10 @@ app.post('/api/webhook/wasender', async (req, res) => {
             // Nettoyage du verrou avant chaque tentative
             cleanChromeLocks();
 
+            setBotStatus('STARTING');
             console.log(`🔄 Tentative d'initialisation WhatsApp (${attempt}/${maxRetries})...`);
-            // await client.initialize(); // DÉSACTIVÉ POUR WASENDERAPI
-            break; // succès → on sort de la boucle
+            await client.initialize();
+            break;
         } catch (err) {
             console.error(`❌ Echec tentative ${attempt}: ${err.message}`);
 
@@ -3085,8 +3026,8 @@ app.post('/api/webhook/wasender', async (req, res) => {
                 console.log(`⏳ Nouvelle tentative dans 5 secondes...`);
                 await new Promise(r => setTimeout(r, 5000));
             } else {
-                console.error('❌ Toutes les tentatives ont échoué. Arrêt.');
-                process.exit(1);
+                console.error('❌ Toutes les tentatives WhatsApp ont échoué. Le serveur reste disponible.');
+                setBotStatus('ERROR', { reason: err.message });
             }
         }
     }
