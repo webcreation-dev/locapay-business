@@ -78,15 +78,19 @@ const realtimeClients = new Set();
 const syncedWhatsAppChatTimestamps = new Map();
 let whatsappHistorySyncTimer = null;
 let whatsappHistorySyncInProgress = false;
-let autoPropertyWorkflowInProgress = false;
+const scheduledWhatsappPropertyChats = new Map();
+const propertyProcessingDelayMs = Math.max(
+    60 * 1000,
+    Number.parseInt(process.env.WWEBJS_PROPERTY_DEBOUNCE_MS || '', 10) || 7 * 60 * 1000
+);
+const propertyProcessingMaxWaitMs = Math.max(
+    propertyProcessingDelayMs,
+    Number.parseInt(process.env.WWEBJS_PROPERTY_MAX_WAIT_MS || '', 10) || 20 * 60 * 1000
+);
 // Minuit du jour courant à Porto-Novo, exprimé en timestamp Unix. Les messages
 // WhatsApp sont enregistrés avec un timestamp Unix, donc ce filtre reste exact
 // même si le serveur Docker tourne en UTC.
 const TODAY_START_PORTO_NOVO_SQL = "EXTRACT(EPOCH FROM date_trunc('day', CURRENT_TIMESTAMP AT TIME ZONE 'Africa/Porto-Novo') AT TIME ZONE 'Africa/Porto-Novo')::BIGINT";
-// Fenêtre de création automatique : on traite les annonces récentes, sans jamais
-// reprendre l'archive entière à chaque cron. Les actions manuelles restent sans
-// cette limite afin de pouvoir corriger un cas particulier au besoin.
-const AUTO_PROPERTY_LOOKBACK_START_SQL = "(EXTRACT(EPOCH FROM NOW()) - (7 * 24 * 60 * 60))::BIGINT";
 
 function broadcastRealtimeEvent(type, payload = {}) {
     const message = `event: ${type}\ndata: ${JSON.stringify(payload)}\n\n`;
@@ -254,6 +258,7 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
                     media_path TEXT,
                     media_mime_type TEXT,
                     raw_data JSONB,
+                    is_live_event BOOLEAN NOT NULL DEFAULT FALSE,
                     is_analyzed BOOLEAN DEFAULT FALSE,
                     property_group_id VARCHAR(255),
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -328,6 +333,9 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
             await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_path TEXT;');
             await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_mime_type TEXT;');
             await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS raw_data JSONB;');
+            // Seuls les messages reçus en direct après le déploiement peuvent
+            // déclencher une création automatique. L'historique reste archivé.
+            await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS is_live_event BOOLEAN NOT NULL DEFAULT FALSE;');
             await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS is_analyzed BOOLEAN DEFAULT FALSE;');
             await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS property_group_id VARCHAR(255);');
             await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS real_property_id INTEGER;');
@@ -344,6 +352,7 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
             await db.query('CREATE INDEX IF NOT EXISTS idx_messages_unread ON messages(chat_id, is_analyzed, is_from_me) WHERE is_analyzed = FALSE AND is_from_me = FALSE;');
             await db.query('CREATE INDEX IF NOT EXISTS idx_messages_property_group_id ON messages(property_group_id);');
             await db.query('CREATE INDEX IF NOT EXISTS idx_messages_real_property_id ON messages(real_property_id);');
+            await db.query('CREATE INDEX IF NOT EXISTS idx_messages_live_events ON messages(chat_id, timestamp) WHERE is_live_event = TRUE;');
 
             // Optimisation Recherche (GIN Index pour ILIKE rapide)
             await db.query('CREATE EXTENSION IF NOT EXISTS pg_trgm;');
@@ -720,11 +729,14 @@ Texte à analyser : "${description}"
                 } catch (e) { console.error("❌ Error runAutoGroupHeuristicAllChats:", e); }
             };
 
-            const internalAnalyzeChat = async (chatId, { afterTimestampSql = null } = {}) => {
+            const internalAnalyzeChat = async (chatId, { afterTimestampSql = null, liveEventsOnly = false } = {}) => {
                 // Mots interdits (ventes, terrains, recherches, etc.)
                 const FORBIDDEN_REGEX = 'vendre|vente|parcelle|terrain|titre\\sfoncier|\\stf\\s|\\stf\n|domaine|\\stf$|opportunite|recherche|pièces\\sà\\sjour|pieces\\sa\\sjour|état\\sboutique|etat\\sboutique|guéridon|gueridon|matelas|galet|toyota|honda|ford';
                 const forbiddenPattern = new RegExp(FORBIDDEN_REGEX.replace(/\\/g, '\\'), 'i');
-                const dateFilter = afterTimestampSql ? ` AND timestamp >= ${afterTimestampSql}` : '';
+                const filters = [];
+                if (afterTimestampSql) filters.push(`timestamp >= ${afterTimestampSql}`);
+                if (liveEventsOnly) filters.push('is_live_event = TRUE');
+                const dateFilter = filters.length ? ` AND ${filters.join(' AND ')}` : '';
 
                 await db.query(
                     `UPDATE messages SET property_group_id = 'noise', analysis_error = NULL WHERE chat_id = $1 AND property_group_id IS DISTINCT FROM 'noise' AND real_property_id IS NULL AND body ~* $2${dateFilter}`,
@@ -776,8 +788,9 @@ Texte à analyser : "${description}"
                         continue; // Ce message est autonome, on passe au suivant
                     }
 
-                    // Condition 1: Texte long complet sans média. Il peut désormais
-                    // créer un bien seul : le backend valide ensuite tous les champs.
+                    // Condition 1: texte long sans média. Il reste ouvert : il ne
+                    // sera soumis que si une annonce suivante du même expéditeur le
+                    // clôture explicitement comme bien sans média.
                     if (msg.body && msg.body.length > 100 && !msg.has_media) {
                         const groupId = msg.property_group_id || `auto_prop_text_${msg.id}`;
                         await db.query("UPDATE messages SET property_group_id = $1 WHERE id = $2", [groupId, msg.id]);
@@ -1602,48 +1615,103 @@ Texte à analyser : "${description}"
                 }
             });
 
-            // 🔄 WORKFLOW AUTOMATISE (CRON)
-            async function globalAutomatedWorkflow() {
-                if (autoPropertyWorkflowInProgress) {
-                    console.warn('🕒 Workflow automatisé déjà en cours : exécution ignorée.');
-                    return;
+            // Traitement ciblé d'une seule conversation après sa période de calme.
+            // Contrairement à l'ancien cron, cette fonction ne lit jamais l'historique
+            // global : elle ne considère que les messages reçus en direct depuis le
+            // déploiement de cette logique, pour une seule conversation.
+            async function processWhatsAppChatAfterInactivity(chatId, firstEventTimestamp) {
+                const safeFirstTimestamp = Math.max(0, Number.parseInt(firstEventTimestamp, 10) || 0);
+                console.log(`⏳ [WhatsApp] Analyse ciblée de ${chatId} après ${Math.round(propertyProcessingDelayMs / 60000)} min d'inactivité.`);
+
+                // On regroupe tous les messages reçus en direct pour ce chat. Les
+                // messages synchronisés depuis l'historique sont exclus par le marqueur
+                // is_live_event et ne peuvent donc jamais réapparaître comme annonces.
+                await internalAnalyzeChat(chatId, { liveEventsOnly: true });
+
+                const { rows: groups } = await db.query(`
+                    WITH grouped AS (
+                        SELECT
+                            property_group_id,
+                            MIN(timestamp) AS first_timestamp,
+                            MAX(timestamp) AS last_timestamp,
+                            MAX(id) AS last_message_id,
+                            MIN(sender_id) AS sender_id,
+                            BOOL_OR(
+                                has_media = TRUE
+                                AND (media_mime_type LIKE 'image/%' OR media_mime_type LIKE 'video/%')
+                            ) AS has_visual_media
+                        FROM messages
+                        WHERE chat_id = $1
+                          AND is_live_event = TRUE
+                          AND property_group_id IS NOT NULL
+                          AND property_group_id != 'noise'
+                          AND property_group_id NOT LIKE 'real_prop_%'
+                          AND real_property_id IS NULL
+                          AND submission_failed = FALSE
+                        GROUP BY property_group_id
+                    )
+                    SELECT grouped.property_group_id
+                    FROM grouped
+                    WHERE
+                        -- Texte + image/vidéo : le groupe est complet dès qu'il
+                        -- contient un message de la vague courante.
+                        (
+                            grouped.has_visual_media = TRUE
+                            AND EXISTS (
+                                SELECT 1
+                                FROM messages current_message
+                                WHERE current_message.chat_id = $1
+                                  AND current_message.property_group_id = grouped.property_group_id
+                                  AND current_message.timestamp >= $2
+                            )
+                        )
+                        OR
+                        -- Texte seul : il n'est finalisé que lorsqu'une nouvelle
+                        -- annonce du même expéditeur arrive après lui. Le dernier
+                        -- texte ouvert reste donc en attente, même au délai maximum.
+                        (
+                            grouped.has_visual_media = FALSE
+                            AND EXISTS (
+                                SELECT 1
+                                FROM messages next_listing
+                                WHERE next_listing.chat_id = $1
+                                  AND next_listing.is_live_event = TRUE
+                                  AND next_listing.sender_id = grouped.sender_id
+                                  AND next_listing.real_property_id IS NULL
+                                  AND LENGTH(COALESCE(next_listing.body, '')) > 100
+                                  AND (
+                                      next_listing.timestamp > grouped.last_timestamp
+                                      OR (
+                                          next_listing.timestamp = grouped.last_timestamp
+                                          AND next_listing.id > grouped.last_message_id
+                                      )
+                                  )
+                                  AND next_listing.timestamp >= $2
+                            )
+                        )
+                `, [chatId, Math.max(0, safeFirstTimestamp - 1)]);
+
+                let success = 0;
+                let errors = 0;
+                for (const group of groups) {
+                    const { rows: messages } = await db.query(`
+                        SELECT id
+                        FROM messages
+                        WHERE chat_id = $1
+                          AND property_group_id = $2
+                        ORDER BY timestamp ASC, id ASC
+                    `, [chatId, group.property_group_id]);
+
+                    if (messages.length === 0) continue;
+                    const result = await internalProcessPropertySubmission(messages.map(message => message.id));
+                    if (result.success) success++;
+                    else errors++;
                 }
 
-                autoPropertyWorkflowInProgress = true;
-                console.log('🕒 --- DÉBUT DU WORKFLOW AUTOMATISÉ (2 min) ---');
-                try {
-                    // L'automatisation ne modifie jamais l'archive ancienne : uniquement
-                    // les messages des 7 derniers jours. La purge globale reste
-                    // réservée à l'action manuelle dans l'interface.
-                    console.log('🕒 Étape 1/3 : Analyse et groupement des messages des 7 derniers jours...');
-                    const runAll = app.get('runAutoGroupHeuristicAllChats');
-                    if (runAll) await runAll({ afterTimestampSql: AUTO_PROPERTY_LOOKBACK_START_SQL });
-                    console.log('🕒 Analyse terminée.');
-
-                    // 2. Soumission
-                    console.log('🕒 Étape 2/3 : Soumission des groupes des 7 derniers jours...');
-                    // Un texte sans média attend 7 minutes : les photos/vidéos envoyées
-                    // juste après sont alors rattachées au même bien. Sans média, le
-                    // bien complet est tout de même soumis à l'issue de ce délai.
-                    const submitResult = await internalBatchSubmitAll(null, {
-                        afterTimestampSql: AUTO_PROPERTY_LOOKBACK_START_SQL,
-                        waitForMediaSeconds: 7 * 60
-                    });
-                    console.log(`🕒 Soumission terminée : ${submitResult.success} succès, ${submitResult.errors} erreurs.`);
-
-                    // 3. Nettoyage facultatif, activé seulement par MEDIA_RETENTION_PURGE=true
-                    console.log('🕒 Étape 3/3 : Nettoyage optionnel des médias...');
-                    const cleanedCount = await cleanupAnalyzedMedia();
-                    console.log(`🕒 Nettoyage terminé : ${cleanedCount} fichiers supprimés.`);
-
-                    console.log('🕒 --- WORKFLOW AUTOMATISÉ TERMINÉ AVEC SUCCÈS ---');
-                } catch (e) {
-                    console.error('🕒 ❌ ERREUR DANS LE WORKFLOW AUTOMATISÉ:', e.message);
-                } finally {
-                    autoPropertyWorkflowInProgress = false;
-                }
+                console.log(`✅ [WhatsApp] Conversation ${chatId} traitée : ${success} bien(s) créé(s), ${errors} rejet(s)/erreur(s).`);
+                return { success, errors, total: groups.length };
             }
-            app.set('globalAutomatedWorkflow', globalAutomatedWorkflow);
+            app.set('processWhatsAppChatAfterInactivity', processWhatsAppChatAfterInactivity);
 
             // ROUTE DE GROUPEMENT MANUEL (BRUIT SEULEMENT MAINTENANT)
             app.post('/api/messages/manual-group', async (req, res) => {
@@ -2764,20 +2832,14 @@ Texte à analyser : "${description}"
             // ═══════════════════════════════════════════════════════════════
 
             // ═══════════════════════════════════════════════════════════════
-            // La création automatique de biens est volontairement désactivée par défaut.
-            // L'archivage WhatsApp reste immédiat, mais créer un bien est une action
-            // métier irréversible qui doit être validée dans l'interface.
-            console.log('🤖 [WhatsApp Cron] Workflow automatique:', process.env.AUTO_PROPERTY_WORKFLOW === 'true' ? 'activé' : 'désactivé (mode sûr)');
-            const globalWorkflow = app.get('globalAutomatedWorkflow');
-            if (globalWorkflow && process.env.AUTO_PROPERTY_WORKFLOW === 'true') {
-                setTimeout(() => {
-                    globalWorkflow().catch(e => console.error("❌ Error initial workflow:", e));
-                }, 60 * 1000);
-
-                setInterval(() => {
-                    globalWorkflow().catch(err => console.error("❌ Erreur workflow automatisé:", err));
-                }, 2 * 60 * 1000);
-            }
+            // WhatsApp ne lance plus de balayage périodique. Chaque nouveau message
+            // entrant programme uniquement sa conversation après une période de calme.
+            console.log(
+                '🤖 [WhatsApp] Création événementielle:',
+                process.env.AUTO_PROPERTY_WORKFLOW === 'true'
+                    ? `activée (${Math.round(propertyProcessingDelayMs / 60000)} min d\'attente par conversation)`
+                    : 'désactivée (archivage seul)'
+            );
             // ═══════════════════════════════════════════════════════════════
 
             // ── Recalcul initial des Tiers de scraping (au démarrage) ───────
@@ -2993,7 +3055,7 @@ async function applyPropertyGrouping(messageData, messageRowId) {
     }
 }
 
-async function archiveWhatsAppMessage(message) {
+async function archiveWhatsAppMessage(message, { isLiveEvent = false } = {}) {
     const messageId = message.id?._serialized;
     if (!messageId || message.isStatus) return;
     const chat = await message.getChat();
@@ -3046,22 +3108,23 @@ async function archiveWhatsAppMessage(message) {
         INSERT INTO messages (
             message_id, body, timestamp, is_from_me, is_group, chat_id, chat_name,
             sender_id, sender_name, sender_number, receiver_id, has_media, message_type, device_type,
-            media_path, media_mime_type, raw_data
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+            media_path, media_mime_type, raw_data, is_live_event
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
         ON CONFLICT (message_id) DO UPDATE SET
             body = EXCLUDED.body,
             sender_name = COALESCE(NULLIF(EXCLUDED.sender_name, ''), messages.sender_name),
             sender_number = COALESCE(EXCLUDED.sender_number, messages.sender_number),
             media_path = COALESCE(messages.media_path, EXCLUDED.media_path),
             media_mime_type = COALESCE(messages.media_mime_type, EXCLUDED.media_mime_type),
-            raw_data = EXCLUDED.raw_data
+            raw_data = EXCLUDED.raw_data,
+            is_live_event = messages.is_live_event OR EXCLUDED.is_live_event
         RETURNING id
     `, [
         messageData.messageId, messageData.body, messageData.timestamp, messageData.isFromMe,
         messageData.isGroup, messageData.chatId, messageData.chatName, messageData.senderId,
         messageData.senderName, messageData.senderNumber, messageData.receiverId,
         messageData.hasMedia, messageData.messageType, messageData.deviceType,
-        messageData.mediaPath, messageData.mediaMimeType, messageData.rawData
+        messageData.mediaPath, messageData.mediaMimeType, messageData.rawData, isLiveEvent
     ]);
     const messageRowId = rows[0]?.id;
     await applyPropertyGrouping(messageData, messageRowId);
@@ -3069,12 +3132,65 @@ async function archiveWhatsAppMessage(message) {
         chatId: messageData.chatId, messageId: messageData.messageId, rowId: messageRowId, isFromMe
     });
     console.log(`💾 Message WhatsApp archivé : ${messageData.messageId}`);
+    return { chatId: messageData.chatId, timestamp: messageData.timestamp, isFromMe };
 }
 
 // whatsapp-web.js émet `message_create` pour tout nouveau message et `message`
 // pour les entrants. On écoute les deux afin de couvrir les messages privés, de
 // groupe et ceux écrits depuis le téléphone connecté, sans jamais en envoyer.
 const messagesBeingArchived = new Set();
+
+function scheduleWhatsAppPropertyProcessing({ chatId, timestamp }) {
+    if (process.env.AUTO_PROPERTY_WORKFLOW !== 'true' || !chatId) return;
+
+    const previous = scheduledWhatsappPropertyChats.get(chatId);
+    if (previous?.timer) clearTimeout(previous.timer);
+
+    const now = Date.now();
+    const job = {
+        firstEventTimestamp: Math.min(
+            Number(previous?.firstEventTimestamp) || Number(timestamp) || Math.floor(now / 1000),
+            Number(timestamp) || Math.floor(now / 1000)
+        ),
+        firstScheduledAtMs: previous?.firstScheduledAtMs || now,
+        timer: null
+    };
+
+    // Les nouveaux messages repoussent l'analyse pour laisser arriver les
+    // médias, sans jamais bloquer un groupe très actif indéfiniment.
+    const remainingMaxWaitMs = Math.max(
+        0,
+        propertyProcessingMaxWaitMs - (now - job.firstScheduledAtMs)
+    );
+    const effectiveDelayMs = Math.min(propertyProcessingDelayMs, remainingMaxWaitMs);
+
+    job.timer = setTimeout(async () => {
+        // Un nouveau message a pu remplacer ce travail pendant l'attente.
+        if (scheduledWhatsappPropertyChats.get(chatId) !== job) return;
+        scheduledWhatsappPropertyChats.delete(chatId);
+
+        const processChat = app.get('processWhatsAppChatAfterInactivity');
+        if (typeof processChat !== 'function') {
+            console.warn(`⚠️ [WhatsApp] Analyse ciblée indisponible pour ${chatId}; le message reste archivé.`);
+            return;
+        }
+
+        try {
+            await processChat(chatId, job.firstEventTimestamp);
+        } catch (error) {
+            console.error(`❌ [WhatsApp] Analyse ciblée impossible pour ${chatId}: ${error.message}`);
+        }
+    }, effectiveDelayMs);
+
+    scheduledWhatsappPropertyChats.set(chatId, job);
+    const maxDeadlineReached = effectiveDelayMs < propertyProcessingDelayMs;
+    console.log(
+        `⏲️ [WhatsApp] ${chatId} programmé dans ${Math.ceil(effectiveDelayMs / 60000)} min ` +
+        (maxDeadlineReached
+            ? '(délai maximum atteint)'
+            : `après le dernier message ; maximum ${Math.round(propertyProcessingMaxWaitMs / 60000)} min.`)
+    );
+}
 
 async function archiveWhatsAppEvent(message, source) {
     const messageId = message?.id?._serialized;
@@ -3083,7 +3199,11 @@ async function archiveWhatsAppEvent(message, source) {
     messagesBeingArchived.add(messageId);
     console.log(`📨 [WhatsApp:${source}] Message détecté : ${messageId}`);
     try {
-        await archiveWhatsAppMessage(message);
+        const isLiveIncomingMessage = (source === 'message' || source === 'message_create') && !message.fromMe;
+        const archived = await archiveWhatsAppMessage(message, { isLiveEvent: isLiveIncomingMessage });
+        // La synchronisation de secours archive les messages manqués, mais ne
+        // déclenche jamais une création historique au redémarrage du bot.
+        if (isLiveIncomingMessage && !archived?.isFromMe) scheduleWhatsAppPropertyProcessing(archived);
     } catch (error) {
         console.error(`❌ Archivage WhatsApp impossible: ${error.message}`);
     } finally {
