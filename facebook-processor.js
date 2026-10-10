@@ -572,17 +572,9 @@ async function processFacebookPost(post, db, groupInfo) {
   const postId = post.post_id;
 
   try {
-    // ── 0. Filtre plus de 24h (première contrainte d'ancienneté) ────────────
-    const postTime = post.estimated_post_at ? new Date(post.estimated_post_at) : null;
-    const now = new Date();
-    if (postTime && (now.getTime() - postTime.getTime() > 24 * 60 * 60 * 1000)) {
-      await db.query(
-        `UPDATE facebook_posts SET is_noise = TRUE, analysis_error = 'Bien de plus de 24h', updated_at = NOW() WHERE post_id = $1`,
-        [postId]
-      );
-      console.log(`🚫 [Facebook] Post ${postId} → noise (plus de 24h d'ancienneté: ${postTime.toISOString()})`);
-      return { success: false, error: 'Bien de plus de 24h' };
-    }
+    // L'âge source est filtré au moment de l'import. Il ne faut surtout pas
+    // requalifier un post déjà accepté lorsque la file prend du retard : cela
+    // détruirait le catch-up au lieu de le résorber.
 
     // ── 1. Filtre mots interdits ────────────────────────────────────────────
     const forbiddenKw = containsForbiddenKeyword(post.text);
@@ -877,14 +869,27 @@ async function processFacebookPost(post, db, groupInfo) {
 }
 
 /**
- * Traite tous les posts Facebook non traités (batch)
- * Avec pause de 2s entre chaque pour ne pas saturer NestJS/OpenRouter
+ * Traite un lot borné de posts Facebook non traités.
+ * Un lot court évite qu'un gros backlog conserve le verrou du cron pendant
+ * des heures. Le prochain tick prendra naturellement le lot suivant.
  *
  * @param {object} db          - Pool PostgreSQL
  * @param {function} onProgress - Callback de progression optionnel
  * @returns {{ success: number, errors: number, noise: number, total: number }}
  */
 async function processFacebookBatch(db, onProgress = null) {
+  const batchSize = Math.max(
+    1,
+    Number.parseInt(process.env.FACEBOOK_PROCESSING_BATCH_SIZE || '50', 10) || 50,
+  );
+  const useAi = process.env.USE_AI_FACEBOOK_EXTRACTION === 'true';
+  const delayMs = Math.max(
+    0,
+    Number.parseInt(
+      process.env.FACEBOOK_PROCESSING_DELAY_MS || (useAi ? '5000' : '100'),
+      10,
+    ) || 0,
+  );
   const { rows: posts } = await db.query(`
     SELECT fp.*, fg.group_url, fg.group_name
     FROM facebook_posts fp
@@ -893,7 +898,8 @@ async function processFacebookBatch(db, onProgress = null) {
       AND fp.is_noise = FALSE
       AND fp.analysis_error IS NULL
     ORDER BY fp.scraped_at ASC
-  `);
+    LIMIT $1
+  `, [batchSize]);
 
   if (posts.length === 0) {
     return { success: 0, errors: 0, noise: 0, total: 0 };
@@ -921,8 +927,11 @@ async function processFacebookBatch(db, onProgress = null) {
       onProgress({ type: 'progress', current: i + 1, total: posts.length, success, errors, noise });
     }
 
-    // Pause de 5s entre chaque post pour éviter le Rate Limit OpenRouter (429)
-    await new Promise(r => setTimeout(r, 5000));
+    // L'IA requiert une cadence prudente. L'extracteur déterministe local n'a
+    // pas cette contrainte et doit pouvoir résorber un backlog rapidement.
+    if (delayMs > 0 && i < posts.length - 1) {
+      await new Promise(r => setTimeout(r, delayMs));
+    }
   }
 
   console.log(`🏁 [Facebook] Batch terminé — Succès: ${success}, Erreurs: ${errors}, Bruit: ${noise}`);
