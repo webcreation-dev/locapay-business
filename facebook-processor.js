@@ -572,9 +572,21 @@ async function processFacebookPost(post, db, groupInfo) {
   const postId = post.post_id;
 
   try {
-    // L'âge source est filtré au moment de l'import. Il ne faut surtout pas
-    // requalifier un post déjà accepté lorsque la file prend du retard : cela
-    // détruirait le catch-up au lieu de le résorber.
+    // Règle métier : une annonce Facebook de plus de 24 h ne doit jamais
+    // devenir un bien, y compris lorsqu'elle attendait dans la file.
+    const postTime = post.estimated_post_at || post.scraped_at;
+    if (postTime && Date.now() - new Date(postTime).getTime() > 24 * 60 * 60 * 1000) {
+      await db.query(
+        `UPDATE facebook_posts
+         SET is_noise = TRUE,
+             analysis_error = 'Bien de plus de 24h',
+             updated_at = NOW()
+         WHERE post_id = $1`,
+        [postId],
+      );
+      console.log(`🚫 [Facebook] Post ${postId} → noise (plus de 24h d'ancienneté)`);
+      return { success: false, error: 'Bien de plus de 24h' };
+    }
 
     // ── 1. Filtre mots interdits ────────────────────────────────────────────
     const forbiddenKw = containsForbiddenKeyword(post.text);
@@ -897,6 +909,9 @@ async function processFacebookBatch(db, onProgress = null) {
     WHERE fp.is_processed = FALSE
       AND fp.is_noise = FALSE
       AND fp.analysis_error IS NULL
+      -- Ne sélectionne jamais l'historique : seuls les posts encore valides
+      -- au moment du traitement peuvent créer un bien.
+      AND COALESCE(fp.estimated_post_at, fp.scraped_at) >= NOW() - INTERVAL '24 hours'
     ORDER BY fp.scraped_at ASC
     LIMIT $1
   `, [batchSize]);

@@ -2796,6 +2796,7 @@ Texte à analyser : "${description}"
                         WHERE is_processed = FALSE
                           AND is_noise = FALSE
                           AND analysis_error IS NULL
+                          AND COALESCE(estimated_post_at, scraped_at) >= NOW() - INTERVAL '24 hours'
                     `);
 
                     const pendingCount = parseInt(rows[0].pending_count);
