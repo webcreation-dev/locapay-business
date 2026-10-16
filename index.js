@@ -2877,7 +2877,8 @@ const puppeteerOptions = {
         '--disable-dev-shm-usage',
         '--disable-gpu',
         '--no-zygote',
-        '--single-process', // ← FIX: évite la destruction du contexte dans Docker
+        // Ne pas utiliser --single-process : les versions récentes de Chromium
+        // peuvent quitter dès le démarrage avec cette option dans Docker.
         '--no-first-run',
         '--disable-features=IsolateOrigins,site-per-process',
         '--disable-web-security',

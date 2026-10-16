@@ -24,4 +24,4 @@ COPY . .
 # Copier le build React dans un dossier dédié (séparé de public/)
 COPY --from=frontend-build /app/frontend/dist/ ./frontend-dist/
 RUN echo "✅ React build dans frontend-dist:" && ls ./frontend-dist/
-CMD ["sh", "-c", "rm -f /usr/src/app/.wwebjs_auth/session*/SingletonLock && node index.js"]
+CMD ["sh", "-c", "rm -f /usr/src/app/.wwebjs_auth/session*/Singleton* && node index.js"]
