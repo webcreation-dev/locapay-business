@@ -2988,7 +2988,9 @@ client.on('auth_failure', (error) => {
 });
 
 client.on('disconnected', (reason) => {
-    console.log('❌ Client déconnecté. Veuillez scanner à nouveau !');
+    // Conserver la raison fournie par WhatsApp Web : elle permet de distinguer
+    // une révocation de session d'une fermeture/crash du navigateur.
+    console.log(`❌ Client déconnecté (${reason || 'raison inconnue'}). Veuillez scanner à nouveau !`);
     if (whatsappHistorySyncTimer) {
         clearInterval(whatsappHistorySyncTimer);
         whatsappHistorySyncTimer = null;
@@ -3267,6 +3269,11 @@ async function syncRecentWhatsAppHistory() {
                 }
                 syncedWhatsAppChatTimestamps.set(chatId, timestamp);
             } catch (error) {
+                // Le modèle WhatsApp peut disparaître entre la lecture de la
+                // liste et getChatById. Considérer cet état comme traité pour
+                // ne pas refaire les mêmes 22 appels défaillants toutes les
+                // 30 secondes ; une nouvelle activité du chat le réactivera.
+                syncedWhatsAppChatTimestamps.set(chatId, timestamp);
                 console.error(`⚠️ Synchronisation de ${chatId} impossible: ${error.message}`);
             }
         }
