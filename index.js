@@ -3204,7 +3204,12 @@ async function archiveWhatsAppEvent(message, source) {
         const archived = await archiveWhatsAppMessage(message, { isLiveEvent: isLiveIncomingMessage });
         // La synchronisation de secours archive les messages manqués, mais ne
         // déclenche jamais une création historique au redémarrage du bot.
-        if (isLiveIncomingMessage && !archived?.isFromMe) scheduleWhatsAppPropertyProcessing(archived);
+        // Les statuts et les événements ignorés ne renvoient pas de message
+        // archivé. Ne pas tenter de les programmer : cela provoquait une
+        // erreur de destructuration sur `chatId` au redémarrage du client.
+        if (isLiveIncomingMessage && archived && !archived.isFromMe) {
+            scheduleWhatsAppPropertyProcessing(archived);
+        }
     } catch (error) {
         console.error(`❌ Archivage WhatsApp impossible: ${error.message}`);
     } finally {
