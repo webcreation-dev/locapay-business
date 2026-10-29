@@ -237,6 +237,7 @@ async function uploadToBunnyStream(buffer, title) {
     return null;
   }
 
+  let videoId = null;
   try {
     console.log(`📤 [Bunny Stream] Création de la vidéo "${title}"...`);
 
@@ -254,7 +255,7 @@ async function uploadToBunnyStream(buffer, title) {
       }
     );
 
-    const videoId = createResponse.data.guid;
+    videoId = createResponse.data.guid;
     console.log(`✅ [Bunny Stream] Vidéo créée avec ID: ${videoId}`);
 
     // 2. Upload le contenu de la vidéo
@@ -283,7 +284,36 @@ async function uploadToBunnyStream(buffer, title) {
     return { videoId, videoUrl };
   } catch (err) {
     console.error(`❌ [Bunny Stream] Erreur upload: ${err.response?.data?.message || err.message}`);
+    // Une vidéo créée mais non envoyée ne doit pas rester orpheline dans Bunny.
+    // L'appel est volontairement sans échec bloquant : le fichier local est gardé
+    // afin que le worker puisse reprendre l'annonce plus tard.
+    if (videoId) {
+      await deleteBunnyStreamVideo(videoId);
+    }
     return null;
+  }
+}
+
+/**
+ * Supprime une vidéo qui n'est référencée par aucun bien (échec d'upload ou
+ * annonce expirée). Ne jamais appeler ceci pour une vidéo d'un bien créé.
+ */
+async function deleteBunnyStreamVideo(videoId) {
+  if (!videoId || !BUNNY_STREAM_LIBRARY_ID || !BUNNY_STREAM_API_KEY) return false;
+
+  try {
+    await axios.delete(
+      `https://video.bunnycdn.com/library/${BUNNY_STREAM_LIBRARY_ID}/videos/${videoId}`,
+      {
+        headers: { 'AccessKey': BUNNY_STREAM_API_KEY },
+        timeout: 30000,
+      }
+    );
+    console.log(`🗑️ [Bunny Stream] Vidéo orpheline supprimée : ${videoId}`);
+    return true;
+  } catch (err) {
+    console.error(`⚠️ [Bunny Stream] Suppression impossible pour ${videoId}: ${err.response?.data?.message || err.message}`);
+    return false;
   }
 }
 
@@ -1113,5 +1143,6 @@ module.exports = {
   triggerNestPropertyBump,
   extractPropertyDataDeterministic,
   uploadToBunnyStream,
+  deleteBunnyStreamVideo,
   processVideoForBunny, // Pour le backfill des vidéos
 };

@@ -14,7 +14,8 @@ const {
     processFacebookBatch,
     processFacebookPost,
     extractPropertyDataDeterministic,
-    uploadToBunnyStream
+    uploadToBunnyStream,
+    deleteBunnyStreamVideo
 } = require('./facebook-processor');
 const { buildScrapeReportQuery } = require('./facebook-scrape-report-query');
 
@@ -86,6 +87,16 @@ const propertyProcessingDelayMs = Math.max(
 const propertyProcessingMaxWaitMs = Math.max(
     propertyProcessingDelayMs,
     Number.parseInt(process.env.WWEBJS_PROPERTY_MAX_WAIT_MS || '', 10) || 20 * 60 * 1000
+);
+// Les annonces de plus de 24 h ne sont plus créables : les pièces jointes ne
+// doivent donc jamais rester indéfiniment sur le VPS après cette fenêtre.
+const mediaRetentionHours = Math.max(
+    24,
+    Number.parseInt(process.env.MEDIA_RETENTION_HOURS || '', 10) || 24
+);
+const mediaCleanupIntervalMs = Math.max(
+    15 * 60 * 1000,
+    Number.parseInt(process.env.MEDIA_CLEANUP_INTERVAL_MS || '', 10) || 60 * 60 * 1000
 );
 // Minuit du jour courant à Porto-Novo, exprimé en timestamp Unix. Les messages
 // WhatsApp sont enregistrés avec un timestamp Unix, donc ce filtre reste exact
@@ -266,66 +277,146 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
             `);
             console.log('✅ Table "messages" prête dans PostgreSQL.');
 
-            // --- UTILITAIRE DE NETTOYAGE AUTO ---
-            const deleteMediaFiles = async (messageIds) => {
-                if (process.env.MEDIA_RETENTION_PURGE !== 'true') {
-                    // Par défaut, l'archive est complète : les pièces jointes restent disponibles.
-                    return;
-                }
-                if (!messageIds || messageIds.length === 0) return;
-                try {
-                    const { rows } = await db.query('SELECT media_path FROM messages WHERE id = ANY($1) AND media_path IS NOT NULL', [messageIds]);
-                    for (const row of rows) {
-                        const localPath = path.resolve(__dirname, row.media_path);
-                        if (fs.existsSync(localPath)) {
-                            fs.unlinkSync(localPath);
-                            // console.log(`🗑️ Média supprimé (auto-purge): ${row.media_path}`);
-                        }
-                    }
-                    // On vide media_path dans la DB pour acter la suppression
-                    await db.query('UPDATE messages SET media_path = NULL WHERE id = ANY($1)', [messageIds]);
-                } catch (err) {
-                    console.error("❌ Erreur lors de la suppression auto des médias:", err.message);
-                }
+            // --- CYCLE DE VIE DES MÉDIAS WHATSAPP ---------------------------------
+            // Le VPS est seulement un cache de travail. Une copie locale est supprimée
+            // après création confirmée du bien, ou après expiration (>= 24 h). Les
+            // échecs restent donc repris pendant une courte fenêtre, jamais indéfiniment.
+            const mediaDirectory = path.resolve(__dirname, 'media');
+            const resolveManagedMediaPath = (mediaPath) => {
+                if (!mediaPath) return null;
+                const resolved = path.resolve(__dirname, mediaPath);
+                return resolved.startsWith(`${mediaDirectory}${path.sep}`) ? resolved : null;
             };
 
-            // --- NETTOYAGE PÉRIODIQUE DES MÉDIAS ANALYSÉS ---
-            const cleanupAnalyzedMedia = async () => {
-                if (process.env.MEDIA_RETENTION_PURGE !== 'true') return 0;
+            const deleteMediaFiles = async (messageIds, {
+                reason = 'purge automatique',
+                deleteBunnyVideos = false,
+            } = {}) => {
+                const result = { filesDeleted: 0, bunnyDeleted: 0, bunnyPending: 0 };
+                if (process.env.MEDIA_RETENTION_PURGE !== 'true' || !messageIds?.length) return result;
+
                 try {
-                    // Supprimer les médias des messages avec un bien créé, analysés, ou marqués comme noise
-                    const { rows } = await db.query(`
-                        SELECT id, media_path FROM messages
-                        WHERE media_path IS NOT NULL
-                        AND (real_property_id IS NOT NULL OR is_analyzed = TRUE OR property_group_id = 'noise')
-                    `);
+                    const { rows } = await db.query(
+                        `SELECT id, media_path, bunny_video_id
+                         FROM messages
+                         WHERE id = ANY($1)`,
+                        [messageIds]
+                    );
 
-                    if (rows.length === 0) {
-                        console.log('🧹 Aucun média à nettoyer.');
-                        return 0;
-                    }
-
-                    let deletedCount = 0;
                     for (const row of rows) {
-                        const localPath = path.resolve(__dirname, row.media_path);
-                        if (fs.existsSync(localPath)) {
+                        const localPath = resolveManagedMediaPath(row.media_path);
+                        if (localPath && fs.existsSync(localPath)) {
                             fs.unlinkSync(localPath);
-                            deletedCount++;
+                            result.filesDeleted++;
+                        }
+
+                        if (deleteBunnyVideos && row.bunny_video_id) {
+                            const deleted = await deleteBunnyStreamVideo(row.bunny_video_id);
+                            if (deleted) {
+                                await db.query(
+                                    `UPDATE messages
+                                     SET bunny_video_id = NULL, bunny_video_url = NULL, bunny_delete_pending = FALSE
+                                     WHERE id = $1`,
+                                    [row.id]
+                                );
+                                result.bunnyDeleted++;
+                            } else {
+                                // La prochaine purge réessaiera la suppression distante.
+                                await db.query('UPDATE messages SET bunny_delete_pending = TRUE WHERE id = $1', [row.id]);
+                                result.bunnyPending++;
+                            }
                         }
                     }
 
-                    // Mettre à jour la DB
-                    await db.query(`
-                        UPDATE messages SET media_path = NULL
-                        WHERE media_path IS NOT NULL
-                        AND (real_property_id IS NOT NULL OR is_analyzed = TRUE OR property_group_id = 'noise')
-                    `);
-
-                    console.log(`🧹 Nettoyage terminé : ${deletedCount} fichiers supprimés.`);
-                    return deletedCount;
+                    // Même si le fichier avait déjà disparu manuellement, il ne doit plus
+                    // être considéré comme disponible pour une nouvelle soumission.
+                    await db.query(
+                        `UPDATE messages
+                         SET media_path = NULL,
+                             media_cleanup_reason = $2,
+                             media_cleaned_at = CURRENT_TIMESTAMP
+                         WHERE id = ANY($1)`,
+                        [messageIds, reason]
+                    );
                 } catch (err) {
-                    console.error("❌ Erreur nettoyage médias:", err.message);
-                    return 0;
+                    console.error('❌ Erreur lors de la suppression auto des médias:', err.message);
+                }
+                return result;
+            };
+
+            // --- NETTOYAGE DES MÉDIAS TERMINÉS ET EXPIRÉS --------------------------
+            const cleanupAnalyzedMedia = async () => {
+                const total = { filesDeleted: 0, bunnyDeleted: 0, bunnyPending: 0, expiredMessages: 0 };
+                if (process.env.MEDIA_RETENTION_PURGE !== 'true') return total;
+
+                try {
+                    // Succès confirmés : garder les URLs Bunny dans la base, supprimer
+                    // uniquement la copie temporaire locale.
+                    const { rows: completed } = await db.query(`
+                        SELECT id FROM messages
+                        WHERE media_path IS NOT NULL
+                          AND (real_property_id IS NOT NULL OR is_analyzed = TRUE)
+                    `);
+                    const completedResult = await deleteMediaFiles(completed.map(row => row.id), {
+                        reason: 'bien créé ou analyse terminée',
+                    });
+
+                    // Un groupe explicitement déclaré bruit ne doit pas laisser une
+                    // vidéo Bunny orpheline derrière lui.
+                    const { rows: noise } = await db.query(`
+                        SELECT id FROM messages
+                        WHERE (media_path IS NOT NULL OR bunny_delete_pending = TRUE)
+                          AND property_group_id = 'noise'
+                          AND real_property_id IS NULL
+                    `);
+                    const noiseResult = await deleteMediaFiles(noise.map(row => row.id), {
+                        reason: 'annonce rejetée comme bruit',
+                        deleteBunnyVideos: true,
+                    });
+
+                    const expiryTimestamp = Math.floor(Date.now() / 1000) - (mediaRetentionHours * 60 * 60);
+                    // Les échecs, historiques et messages non finalisés expirent. Le
+                    // timestamp WhatsApp est la source de vérité, pas la date du fichier.
+                    const { rows: expired } = await db.query(`
+                        SELECT id FROM messages
+                        WHERE real_property_id IS NULL
+                          AND (
+                            (media_path IS NOT NULL AND timestamp < $1)
+                            OR (bunny_delete_pending = TRUE AND bunny_video_id IS NOT NULL)
+                          )
+                    `, [expiryTimestamp]);
+
+                    if (expired.length > 0) {
+                        await db.query(`
+                            UPDATE messages
+                            SET submission_failed = TRUE,
+                                property_group_id = CASE
+                                    WHEN property_group_id IS NULL OR property_group_id != 'noise' THEN 'expired_media'
+                                    ELSE property_group_id
+                                END,
+                                analysis_error = COALESCE(analysis_error, $2)
+                            WHERE id = ANY($1)
+                        `, [expired.map(row => row.id), `Média expiré après ${mediaRetentionHours} h de conservation`]);
+                    }
+                    const expiredResult = await deleteMediaFiles(expired.map(row => row.id), {
+                        reason: `média expiré après ${mediaRetentionHours} h`,
+                        deleteBunnyVideos: true,
+                    });
+
+                    for (const current of [completedResult, noiseResult, expiredResult]) {
+                        total.filesDeleted += current.filesDeleted;
+                        total.bunnyDeleted += current.bunnyDeleted;
+                        total.bunnyPending += current.bunnyPending;
+                    }
+                    total.expiredMessages = expired.length;
+
+                    if (total.filesDeleted || total.bunnyDeleted || total.bunnyPending) {
+                        console.log(`🧹 [Médias] ${total.filesDeleted} fichier(s) local(aux) supprimé(s), ${total.bunnyDeleted} vidéo(s) Bunny supprimée(s), ${total.bunnyPending} suppression(s) Bunny à réessayer, ${total.expiredMessages} message(s) expiré(s).`);
+                    }
+                    return total;
+                } catch (err) {
+                    console.error('❌ Erreur nettoyage médias:', err.message);
+                    return total;
                 }
             };
 
@@ -345,6 +436,13 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
             await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS analysis_error TEXT;');
             await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS analyzed_at TIMESTAMP;');
             await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS ia_property_id VARCHAR(255);');
+            // Traçabilité du cycle de vie local/Bunny. Les migrations sont
+            // idempotentes pour les volumes PostgreSQL déjà en production.
+            await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS bunny_video_id VARCHAR(255);');
+            await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS bunny_video_url TEXT;');
+            await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS bunny_delete_pending BOOLEAN NOT NULL DEFAULT FALSE;');
+            await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_cleaned_at TIMESTAMP;');
+            await db.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_cleanup_reason TEXT;');
 
             await db.query('CREATE INDEX IF NOT EXISTS idx_messages_chat_id ON messages(chat_id);');
             await db.query('CREATE INDEX IF NOT EXISTS idx_messages_chat_id_ts ON messages(chat_id, timestamp DESC);');
@@ -353,6 +451,7 @@ async function connectToDbWithRetry(retries = 5, delay = 4000) {
             await db.query('CREATE INDEX IF NOT EXISTS idx_messages_property_group_id ON messages(property_group_id);');
             await db.query('CREATE INDEX IF NOT EXISTS idx_messages_real_property_id ON messages(real_property_id);');
             await db.query('CREATE INDEX IF NOT EXISTS idx_messages_live_events ON messages(chat_id, timestamp) WHERE is_live_event = TRUE;');
+            await db.query('CREATE INDEX IF NOT EXISTS idx_messages_media_expiry ON messages(timestamp) WHERE media_path IS NOT NULL AND real_property_id IS NULL;');
 
             // Optimisation Recherche (GIN Index pour ILIKE rapide)
             await db.query('CREATE EXTENSION IF NOT EXISTS pg_trgm;');
@@ -710,8 +809,12 @@ Texte à analyser : "${description}"
             // 🧹 Nettoyage manuel des médias analysés
             app.post('/api/cleanup-media', async (req, res) => {
                 try {
-                    const count = await cleanupAnalyzedMedia();
-                    res.json({ success: true, message: `${count} fichiers médias supprimés.` });
+                    const result = await cleanupAnalyzedMedia();
+                    res.json({
+                        success: true,
+                        message: `${result.filesDeleted} fichiers médias supprimés.`,
+                        ...result,
+                    });
                 } catch (e) {
                     res.status(500).json({ error: e.message });
                 }
@@ -1253,9 +1356,9 @@ Texte à analyser : "${description}"
 
                     if (fetchedMessages.length === 0) return { success: false, error: "Messages introuvables" };
 
-                    // 2. Fusionner les textes, envoyer les vidéos sur Bunny Stream et
-                    // transmettre les photos au backend. Une annonce complète sans média
-                    // reste valide : la validation métier porte sur les informations du bien.
+                    // 2. Fusionner les textes. La validation métier est faite AVANT tout
+                    // upload Bunny : une annonce rejetée ne doit jamais créer une vidéo
+                    // orpheline à distance.
                     const texts = [];
                     const imagesBase64 = [];
                     const mediaUrls = [];
@@ -1281,38 +1384,6 @@ Texte à analyser : "${description}"
                     for (const msg of fetchedMessages) {
                         if (msg.body && msg.body.trim()) {
                             texts.push(msg.body.trim());
-                        }
-                        const isImage = msg.media_mime_type?.startsWith('image/');
-                        const isVideo = msg.media_mime_type?.startsWith('video/');
-                        if (msg.has_media && msg.media_path && (isImage || isVideo)) {
-                            const localPath = msg.media_path.startsWith('./') ? msg.media_path : `./${msg.media_path}`;
-                            if (fs.existsSync(localPath)) {
-                                try {
-                                    const mediaBuffer = fs.readFileSync(localPath);
-                                    if (isVideo) {
-                                        const bunnyVideo = await uploadToBunnyStream(
-                                            mediaBuffer,
-                                            `WhatsApp_${msg.id}_${msg.timestamp || Date.now()}`
-                                        );
-                                        if (bunnyVideo?.videoUrl) {
-                                            mediaUrls.push({
-                                                url: bunnyVideo.videoUrl,
-                                                mimeType: msg.media_mime_type || 'video/mp4'
-                                            });
-                                        } else {
-                                            console.warn(`⚠️ [WhatsApp→Bunny] Vidéo ignorée pour le message ${msg.id}; le bien peut tout de même être créé.`);
-                                        }
-                                    } else {
-                                        imagesBase64.push({
-                                            data: mediaBuffer.toString('base64'),
-                                            mimeType: msg.media_mime_type || 'image/jpeg',
-                                            extension: localPath.split('.').pop() || 'jpg'
-                                        });
-                                    }
-                                } catch (readErr) {
-                                    console.warn(`⚠️ Erreur lecture média: ${localPath} - ${readErr.message}`);
-                                }
-                            }
                         }
                     }
 
@@ -1356,6 +1427,10 @@ Texte à analyser : "${description}"
                             [errMsg, messageIds]
                         );
                         console.log(`🚫 [WhatsApp] Groupe ${messageIds} → noise (location journalière DAILY détectée)`);
+                        await deleteMediaFiles(messageIds, {
+                            reason: 'location journalière non acceptée',
+                            deleteBunnyVideos: true,
+                        });
                         return { success: false, error: errMsg };
                     }
 
@@ -1389,6 +1464,66 @@ Texte à analyser : "${description}"
                         await db.query(`UPDATE messages SET submission_failed = TRUE, analysis_error = $1 WHERE id = ANY($2)`, [errMsg, messageIds]);
                         console.log(`🚫 [WhatsApp] Groupe ${messageIds} → ignoré (aucun numéro de téléphone extractible)`);
                         return { success: false, error: errMsg };
+                    }
+
+                    // Les photos restent locales jusqu'à ce que NestJS confirme le
+                    // bien. Une vidéo Bunny est enregistrée en base dès son upload :
+                    // après une erreur NestJS, une reprise réutilise exactement la même
+                    // URL au lieu de téléverser une seconde vidéo.
+                    for (const msg of fetchedMessages) {
+                        const isImage = msg.media_mime_type?.startsWith('image/');
+                        const isVideo = msg.media_mime_type?.startsWith('video/');
+                        if (!msg.has_media || (!isImage && !isVideo)) continue;
+
+                        if (isVideo && msg.bunny_video_url) {
+                            mediaUrls.push({
+                                url: msg.bunny_video_url,
+                                mimeType: msg.media_mime_type || 'video/mp4',
+                            });
+                            continue;
+                        }
+
+                        const localPath = msg.media_path && resolveManagedMediaPath(msg.media_path);
+                        if (!localPath || !fs.existsSync(localPath)) {
+                            const errMsg = `Média local introuvable pour le message ${msg.id}; reprise impossible.`;
+                            await db.query(`UPDATE messages SET submission_failed = TRUE, analysis_error = $1 WHERE id = ANY($2)`, [errMsg, messageIds]);
+                            return { success: false, error: errMsg };
+                        }
+
+                        try {
+                            const mediaBuffer = fs.readFileSync(localPath);
+                            if (isVideo) {
+                                const bunnyVideo = await uploadToBunnyStream(
+                                    mediaBuffer,
+                                    `WhatsApp_${msg.id}_${msg.timestamp || Date.now()}`
+                                );
+                                if (!bunnyVideo?.videoUrl || !bunnyVideo.videoId) {
+                                    const errMsg = `Échec upload Bunny pour la vidéo du message ${msg.id}; le bien n'est pas créé afin de préserver une reprise complète.`;
+                                    await db.query(`UPDATE messages SET submission_failed = TRUE, analysis_error = $1 WHERE id = ANY($2)`, [errMsg, messageIds]);
+                                    return { success: false, error: errMsg };
+                                }
+                                await db.query(
+                                    `UPDATE messages
+                                     SET bunny_video_id = $1, bunny_video_url = $2, bunny_delete_pending = FALSE
+                                     WHERE id = $3`,
+                                    [bunnyVideo.videoId, bunnyVideo.videoUrl, msg.id]
+                                );
+                                mediaUrls.push({
+                                    url: bunnyVideo.videoUrl,
+                                    mimeType: msg.media_mime_type || 'video/mp4',
+                                });
+                            } else {
+                                imagesBase64.push({
+                                    data: mediaBuffer.toString('base64'),
+                                    mimeType: msg.media_mime_type || 'image/jpeg',
+                                    extension: localPath.split('.').pop() || 'jpg',
+                                });
+                            }
+                        } catch (readErr) {
+                            const errMsg = `Erreur lecture média ${msg.id}: ${readErr.message}`;
+                            await db.query(`UPDATE messages SET submission_failed = TRUE, analysis_error = $1 WHERE id = ANY($2)`, [errMsg, messageIds]);
+                            return { success: false, error: errMsg };
+                        }
                     }
 
                     const nestUrl = process.env.NESTJS_API_URL || 'http://host.docker.internal:4000/properties/create-from-whatsapp';
@@ -1428,6 +1563,7 @@ Texte à analyser : "${description}"
                                     district = $4, 
                                     municipality = $5, 
                                     is_analyzed = TRUE, 
+                                    submission_failed = FALSE,
                                     analyzed_at = CURRENT_TIMESTAMP, 
                                     analysis_error = NULL 
                                 WHERE id = ANY($6)`,
@@ -2841,6 +2977,30 @@ Texte à analyser : "${description}"
                     ? `activée (${Math.round(propertyProcessingDelayMs / 60000)} min d\'attente par conversation)`
                     : 'désactivée (archivage seul)'
             );
+            // ═══════════════════════════════════════════════════════════════
+
+            // ── PURGE DE RÉTENTION DES MÉDIAS WHATSAPP ─────────────────────
+            // Elle couvre aussi les échecs qui ne sont jamais repris par un
+            // opérateur. Elle ne s'exécute que si la purge est explicitement
+            // activée dans l'environnement de production.
+            let isMediaCleanupRunning = false;
+            async function runScheduledMediaCleanup() {
+                if (process.env.MEDIA_RETENTION_PURGE !== 'true' || isMediaCleanupRunning) return;
+                isMediaCleanupRunning = true;
+                try {
+                    await cleanupAnalyzedMedia();
+                } finally {
+                    isMediaCleanupRunning = false;
+                }
+            }
+
+            if (process.env.MEDIA_RETENTION_PURGE === 'true') {
+                console.log(`🧹 [Médias] Purge automatique activée : succès immédiat, échecs après ${mediaRetentionHours} h, contrôle toutes les ${Math.round(mediaCleanupIntervalMs / 60000)} min.`);
+                setTimeout(() => runScheduledMediaCleanup().catch(err => console.error('❌ [Médias] Purge initiale:', err.message)), 60 * 1000);
+                setInterval(() => runScheduledMediaCleanup().catch(err => console.error('❌ [Médias] Purge planifiée:', err.message)), mediaCleanupIntervalMs);
+            } else {
+                console.log('ℹ️ [Médias] Purge automatique désactivée (MEDIA_RETENTION_PURGE=false).');
+            }
             // ═══════════════════════════════════════════════════════════════
 
             // ── Recalcul initial des Tiers de scraping (au démarrage) ───────
