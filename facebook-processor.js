@@ -68,6 +68,86 @@ function normalizeText(text) {
   return result.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 }
 
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Les annonceurs écrivent fréquemment les quartiers selon la prononciation.
+// Chaque valeur est le nom canonique transmis à NestJS, qui le résout ensuite
+// avec son référentiel géographique complet. Cette liste est volontairement
+// courte et explicite : elle évite de créer un bien dans un mauvais quartier.
+const LOCATION_ALIASES = Object.freeze({
+  avotourou: 'akpakpa avotrou',
+  avotouro: 'akpakpa avotrou',
+  avotrou: 'akpakpa avotrou',
+});
+
+function levenshteinDistance(left, right) {
+  const source = String(left || '');
+  const target = String(right || '');
+  if (source === target) return 0;
+  if (!source.length) return target.length;
+  if (!target.length) return source.length;
+
+  let previous = Array.from({ length: target.length + 1 }, (_, index) => index);
+  for (let sourceIndex = 1; sourceIndex <= source.length; sourceIndex++) {
+    const current = [sourceIndex];
+    for (let targetIndex = 1; targetIndex <= target.length; targetIndex++) {
+      current[targetIndex] = Math.min(
+        current[targetIndex - 1] + 1,
+        previous[targetIndex] + 1,
+        previous[targetIndex - 1] + (source[sourceIndex - 1] === target[targetIndex - 1] ? 0 : 1),
+      );
+    }
+    previous = current;
+  }
+  return previous[target.length];
+}
+
+/**
+ * Retourne une localisation exploitable sans deviner : d'abord une occurrence
+ * exacte, puis un alias connu, enfin une faute de frappe proche d'un mot de
+ * quartier long. NestJS garde le dernier mot et valide avec son référentiel.
+ */
+function extractLocationHint(text) {
+  const normalizedText = normalizeText(text).replace(/\s+/g, ' ').trim();
+  if (!normalizedText) return null;
+
+  try {
+    const locations = require('./locations_dict.json');
+    for (const location of locations) {
+      const normalizedLocation = normalizeText(location).replace(/\s+/g, ' ').trim();
+      if (normalizedLocation && new RegExp(`\\b${escapeRegExp(normalizedLocation)}\\b`, 'i').test(normalizedText)) {
+        return location;
+      }
+    }
+
+    for (const [alias, canonicalLocation] of Object.entries(LOCATION_ALIASES)) {
+      if (new RegExp(`\\b${escapeRegExp(alias)}\\b`, 'i').test(normalizedText)) {
+        return canonicalLocation;
+      }
+    }
+
+    // Dernier filet de sécurité pour "avotourou"/"avotrou" et les fautes
+    // comparables. Le seuil est volontairement strict et ne s'applique qu'aux
+    // mots d'au moins 7 lettres, afin de ne pas confondre deux quartiers courts.
+    const messageWords = [...new Set(normalizedText.match(/[a-z]{7,}/g) || [])];
+    const knownWords = [...new Set(locations
+      .flatMap(location => normalizeText(location).match(/[a-z]{7,}/g) || []))];
+    for (const messageWord of messageWords) {
+      const candidates = knownWords.filter((knownWord) => {
+        const maxDistance = messageWord.length >= 9 && knownWord.length >= 7 ? 2 : 1;
+        return levenshteinDistance(messageWord, knownWord) <= maxDistance;
+      });
+      if (candidates.length === 1) return candidates[0];
+    }
+  } catch (error) {
+    console.warn(`⚠️ [Localisation] Dictionnaire indisponible: ${error.message}`);
+  }
+
+  return null;
+}
+
 /**
  * Vérifie si le texte est du bruit en s'assurant qu'il contient
  * au moins un mot-clé du vocabulaire immobilier.
@@ -572,15 +652,7 @@ function extractPropertyDataDeterministic(text) {
     if (/(?:sanitaire|douche|wc|toilette|wcd)/i.test(textLower)) result.sanitary = 'YES';
     else result.sanitary = 'NO';
 
-    try {
-        const locations = require('./locations_dict.json');
-        for (const loc of locations) {
-            const regex = new RegExp(`\\b${loc.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, 'i');
-            if (regex.test(textLower)) { result.localisation = loc; break; }
-        }
-    } catch (e) {
-        console.warn('⚠️ [Facebook] Impossible de charger locations_dict.json');
-    }
+    result.localisation = extractLocationHint(textLower);
 
     return result;
 }
@@ -1140,6 +1212,7 @@ module.exports = {
   containsForbiddenKeyword,
   isNoiseBeforeAI,
   normalizeText,
+  extractLocationHint,
   triggerNestPropertyBump,
   extractPropertyDataDeterministic,
   uploadToBunnyStream,

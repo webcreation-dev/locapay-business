@@ -1582,13 +1582,32 @@ Texte à analyser : "${description}"
 
                             return { success: true, propertyId: property_id };
                         } else {
+                            const missingFields = Array.isArray(nestData.missingFields)
+                                ? nestData.missingFields
+                                    .map(field => field?.field || field?.message)
+                                    .filter(Boolean)
+                                    .join(', ')
+                                : '';
                             let errMsg = nestData.error || nestData.message || "Erreur de traitement";
-                            await db.query(`UPDATE messages SET submission_failed = TRUE, property_group_id = NULL, real_property_id = NULL, is_analyzed = FALSE, analysis_error = $1 WHERE id = ANY($2)`, [errMsg, messageIds]);
+                            if (missingFields) errMsg += ` — champs: ${missingFields}`;
+                            // Garder le groupe : il permet une reprise ciblée si une
+                            // correction de dictionnaire/parseur arrive avant 24 h.
+                            await db.query(`UPDATE messages SET submission_failed = TRUE, real_property_id = NULL, is_analyzed = FALSE, analysis_error = $1 WHERE id = ANY($2)`, [errMsg, messageIds]);
                             return { success: false, error: errMsg };
                         }
                     } catch (err) {
-                        let errMsg = err.response ? (err.response.data.error || err.response.data.message || `Erreur ${err.response.status}`) : err.message;
-                        await db.query(`UPDATE messages SET submission_failed = TRUE, property_group_id = NULL, real_property_id = NULL, is_analyzed = FALSE, analysis_error = $1 WHERE id = ANY($2)`, [errMsg, messageIds]);
+                        const errorData = err.response?.data || {};
+                        const missingFields = Array.isArray(errorData.missingFields)
+                            ? errorData.missingFields
+                                .map(field => field?.field || field?.message)
+                                .filter(Boolean)
+                                .join(', ')
+                            : '';
+                        let errMsg = err.response ? (errorData.error || errorData.message || `Erreur ${err.response.status}`) : err.message;
+                        if (missingFields) errMsg += ` — champs: ${missingFields}`;
+                        // Ne pas casser property_group_id : le média et le groupe
+                        // restent récupérables jusqu'à leur expiration.
+                        await db.query(`UPDATE messages SET submission_failed = TRUE, real_property_id = NULL, is_analyzed = FALSE, analysis_error = $1 WHERE id = ANY($2)`, [errMsg, messageIds]);
                         return { success: false, error: errMsg };
                     }
                 } catch (e) {
@@ -1596,6 +1615,62 @@ Texte à analyser : "${description}"
                     return { success: false, error: e.message };
                 }
             }
+
+            // Rejoue une seule fois les annonces WhatsApp récentes rejetées par
+            // NestJS pour champs manquants. Leur média reste local jusqu'à 24 h,
+            // donc une correction de dictionnaire ou de parseur peut les sauver.
+            // Les messages historiques et les annonces de plus de 24 h restent
+            // volontairement exclus : ils ne doivent jamais recréer de vieux biens.
+            let isRecentRejectedRetryRunning = false;
+            app.post('/api/whatsapp/retry-recent-missing-fields', async (_req, res) => {
+                if (isRecentRejectedRetryRunning) {
+                    return res.status(409).json({ success: false, error: 'Une reprise est déjà en cours.' });
+                }
+
+                const retryAfter = Math.floor(Date.now() / 1000) - (mediaRetentionHours * 60 * 60);
+                const { rows: groups } = await db.query(`
+                    SELECT property_group_id, chat_id, ARRAY_AGG(id ORDER BY timestamp ASC, id ASC) AS message_ids
+                    FROM messages
+                    WHERE is_live_event = TRUE
+                      AND submission_failed = TRUE
+                      AND real_property_id IS NULL
+                      AND timestamp >= $1
+                      AND property_group_id LIKE 'auto_prop_%'
+                      AND analysis_error ILIKE 'Champs manquants%'
+                    GROUP BY property_group_id, chat_id
+                    ORDER BY MIN(timestamp) ASC
+                `, [retryAfter]);
+
+                res.status(202).json({
+                    success: true,
+                    message: `${groups.length} annonce(s) récente(s) vont être réessayées.`,
+                    candidates: groups.length,
+                });
+
+                isRecentRejectedRetryRunning = true;
+                void (async () => {
+                    let success = 0;
+                    let errors = 0;
+                    try {
+                        for (const group of groups) {
+                            await db.query(
+                                `UPDATE messages
+                                 SET submission_failed = FALSE, analysis_error = NULL
+                                 WHERE id = ANY($1)`,
+                                [group.message_ids]
+                            );
+                            const result = await internalProcessPropertySubmission(group.message_ids);
+                            if (result.success) success++;
+                            else errors++;
+                        }
+                        console.log(`🔁 [WhatsApp] Reprise champs manquants terminée : ${success} créé(s), ${errors} rejet(s), ${groups.length} total.`);
+                    } catch (error) {
+                        console.error(`❌ [WhatsApp] Reprise champs manquants interrompue: ${error.message}`);
+                    } finally {
+                        isRecentRejectedRetryRunning = false;
+                    }
+                })();
+            });
 
             // ROUTE DE GROUPEMENT MANUEL + SOUMISSION À NESTJS
 
